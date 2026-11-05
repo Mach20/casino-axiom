@@ -447,6 +447,7 @@ async def snake_game_endpoint(
     websocket: WebSocket,
     room_id: str,
     user_id: str = Query(""),
+    access_token: str = Query(""),
     bet: float = Query(1.00),
     wallet: str = Query("play"),
     color: str = Query("#34d399")
