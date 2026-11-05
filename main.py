@@ -47,7 +47,6 @@ def deduct_balance(user_id: str, bet: float, wallet: str) -> bool:
             print("Error: deduct_balance llamado sin user_id")
             return False
 
-        # Consultamos las columnas exactas de tu tabla profiles
         res = supabase.table("profiles").select("balance, bonus_balance").eq("id", user_id).execute()
         if not res.data:
             print(f"Error: No se encontró perfil para el usuario {user_id}")
@@ -166,6 +165,10 @@ async def game_endpoint(
         await websocket.close()
         return
 
+    # CORRECCIÓN CLAVE: 
+    # Si len(room["players"]) == 0, significa que el que entra es el creador (Host). 
+    # Como el creador YA PAGÓ en el lobby, AQUÍ NO SE LE DESCUENTA NADA.
+    # Si len(room["players"]) == 1, significa que el que entra es el retador (Guest). A él SÍ se le descuenta aquí.
     if len(room["players"]) == 1 and user_id:
         success = deduct_balance(user_id, room["bet"], wallet)
         if not success:
@@ -196,7 +199,7 @@ async def game_endpoint(
         while True:
             data = await websocket.receive_json()
             if data["type"] == "MOVE":
-                idx = data["index"]
+                idx = data["index"]  
                 symbol = data["symbol"]
 
                 if room["board"][idx] is None and room["turn"] == symbol:
@@ -249,7 +252,7 @@ async def game_endpoint(
                     break
 
     except WebSocketDisconnect:
-        room["players"] = [p for p in room["players"] if p.get("ws") is not websocket]
+        room["players"] = [p for p in room["players"] if p.get("ws"] is not websocket]
         if len(room["players"]) == 0 and room_id in lobbies:
             del lobbies[room_id]
         await manager.broadcast_lobby()
