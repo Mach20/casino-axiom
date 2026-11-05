@@ -44,34 +44,44 @@ manager = GameManager()
 def deduct_balance(user_id: str, bet: float, wallet: str) -> bool:
     try:
         if not user_id:
+            print("Error: deduct_balance llamado sin user_id")
             return False
 
+        # Consultamos las columnas exactas de tu tabla profiles
         res = supabase.table("profiles").select("balance, bonus_balance").eq("id", user_id).execute()
         if not res.data:
+            print(f"Error: No se encontró perfil para el usuario {user_id}")
             return False
         
         profile = res.data[0]
+        
         if wallet == "bonus":
-            current_val = float(profile.get("bonus_balance", 0.0))
+            current_val = float(profile.get("bonus_balance") or 0.0)
             if current_val < bet:
+                print(f"Error: Saldo bono insuficiente ({current_val} < {bet})")
                 return False
-            supabase.table("profiles").update({"bonus_balance": current_val - bet}).eq("id", user_id).execute()
+            new_val = round(current_val - bet, 2)
+            supabase.table("profiles").update({"bonus_balance": new_val}).eq("id", user_id).execute()
         else:
-            current_val = float(profile.get("balance", 0.0))
+            current_val = float(profile.get("balance") or 0.0)
             if current_val < bet:
+                print(f"Error: Saldo normal insuficiente ({current_val} < {bet})")
                 return False
-            supabase.table("profiles").update({"balance": current_val - bet}).eq("id", user_id).execute()
+            new_val = round(current_val - bet, 2)
+            supabase.table("profiles").update({"balance": new_val}).eq("id", user_id).execute()
+            
         return True
     except Exception as e:
-        print(f"Error deduciendo saldo: {e}")
+        print(f"Excepción en deduct_balance: {e}")
         return False
 
 def credit_withdraw_balance(user_id: str, prize: float):
     try:
         res = supabase.table("profiles").select("withdraw_balance").eq("id", user_id).execute()
         if res.data:
-            current_withdraw = float(res.data[0].get("withdraw_balance", 0.0))
-            supabase.table("profiles").update({"withdraw_balance": current_withdraw + prize}).eq("id", user_id).execute()
+            current_withdraw = float(res.data[0].get("withdraw_balance") or 0.0)
+            new_withdraw = round(current_withdraw + prize, 2)
+            supabase.table("profiles").update({"withdraw_balance": new_withdraw}).eq("id", user_id).execute()
     except Exception as e:
         print(f"Error acreditando premio: {e}")
 
