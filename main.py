@@ -245,7 +245,7 @@ async def game_endpoint(
                     break
 
     except WebSocketDisconnect:
-        room["players"] = [p for p in room["players"] if p["ws"]["ws"] != websocket if isinstance(p, dict) and p.get("ws") != websocket]
+        room["players"] = [p for p in room["players"] if p.get("ws") != websocket]
         if len(room["players"]) == 0 and room_id in lobbies:
             del lobbies[room_id]
         await manager.broadcast_lobby()
