@@ -1,19 +1,48 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
-from typing import Dict, List
+from typing import Dict, List, Tuple
 import random
+import os
+from supabase import create_client, Client
 
 app = FastAPI()
+
+# Configuración de Supabase en el Backend
+SUPABASE_URL = os.getenv("SUPABASE_URL", "TU_SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "TU_SUPABASE_SERVICE_ROLE_KEY")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 lobbies: Dict[str, dict] = {}
 
 class GameManager:
     def __init__(self):
         self.active_connections: Dict[str, List[WebSocket]] = {}
+        # Control de sesión única: { user_id: (websocket, session_token) }
+        self.user_sessions: Dict[str, Tuple[WebSocket, str]] = {}
 
     def calculate_commission(self, total_pot: float) -> float:
         if total_pot < 0.25:
             return 0.02
         return round(total_pot * 0.05, 2)
+
+    async def register_session(self, user_id: str, websocket: WebSocket, token: str):
+        if user_id in self.user_sessions:
+            old_ws, old_token = self.user_sessions[user_id]
+            if old_token != token:
+                try:
+                    await old_ws.send_json({
+                        "type": "FORCE_LOGOUT",
+                        "message": "Tu cuenta se ha abierto en otro dispositivo o pestaña."
+                    })
+                    await old_ws.close()
+                except:
+                    pass
+        self.user_sessions[user_id] = (websocket, token)
+
+    async def unregister_session(self, user_id: str, token: str):
+        if user_id in self.user_sessions:
+            _, current_token = self.user_sessions[user_id]
+            if current_token == token:
+                del self.user_sessions[user_id]
 
     async def broadcast_lobby(self):
         room_list = [
@@ -36,9 +65,45 @@ class GameManager:
 
 manager = GameManager()
 
+def deduct_balance(user_id: str, bet: float, wallet: str) -> bool:
+    try:
+        res = supabase.table("profiles").select("balance, bonus_balance").eq("id", user_id).execute()
+        if not res.data:
+            return False
+        
+        profile = res.data[0]
+        if wallet == "bonus":
+            current_val = float(profile.get("bonus_balance", 0.0))
+            if current_val < bet:
+                return False
+            supabase.table("profiles").update({"bonus_balance": current_val - bet}).eq("id", user_id).execute()
+        else:
+            current_val = float(profile.get("balance", 0.0))
+            if current_val < bet:
+                return False
+            supabase.table("profiles").update({"balance": current_val - bet}).eq("id", user_id).execute()
+        return True
+    except Exception as e:
+        print(f"Error deduciendo saldo: {e}")
+        return False
+
+def credit_withdraw_balance(user_id: str, prize: float):
+    try:
+        res = supabase.table("profiles").select("withdraw_balance").eq("id", user_id).execute()
+        if res.data:
+            current_withdraw = float(res.data[0].get("withdraw_balance", 0.0))
+            supabase.table("profiles").update({"withdraw_balance": current_withdraw + prize}).eq("id", user_id).execute()
+    except Exception as e:
+        print(f"Error acreditando premio: {e}")
+
+
 @app.websocket("/ws/lobby")
-async def lobby_endpoint(websocket: WebSocket):
+async def lobby_endpoint(websocket: WebSocket, token: str = Query(""), user_id: str = Query("")):
     await websocket.accept()
+    
+    if user_id and token:
+        await manager.register_session(user_id, websocket, token)
+
     if "lobby" not in manager.active_connections:
         manager.active_connections["lobby"] = []
     manager.active_connections["lobby"].append(websocket)
@@ -56,10 +121,17 @@ async def lobby_endpoint(websocket: WebSocket):
             data = await websocket.receive_json()
             if data["type"] == "CREATE_ROOM":
                 bet = float(data["bet"])
-                
-                # Validación estricta del mínimo de apuesta
+                wallet = data.get("wallet", "play")
+                creator_uid = data.get("user_id", user_id)
+
                 if bet < 0.10:
                     await websocket.send_json({"type": "ERROR", "message": "La apuesta minima es de $0.10"})
+                    continue
+
+                # Descuento inmediato de la apuesta
+                success = deduct_balance(creator_uid, bet, wallet)
+                if not success:
+                    await websocket.send_json({"type": "ERROR", "message": "Saldo insuficiente para crear la partida."})
                     continue
 
                 room_id = f"room_{random.randint(10000, 99999)}"
@@ -84,8 +156,18 @@ async def lobby_endpoint(websocket: WebSocket):
 
 
 @app.websocket("/ws/game/{room_id}")
-async def game_endpoint(websocket: WebSocket, room_id: str, password: str = Query("")):
+async def game_endpoint(
+    websocket: WebSocket, 
+    room_id: str, 
+    password: str = Query(""), 
+    wallet: str = Query("play"),
+    token: str = Query(""),
+    user_id: str = Query("")
+):
     await websocket.accept()
+
+    if user_id and token:
+        await manager.register_session(user_id, websocket, token)
     
     if room_id not in lobbies:
         await websocket.send_json({"type": "ERROR", "message": "La sala no existe."})
@@ -105,7 +187,15 @@ async def game_endpoint(websocket: WebSocket, room_id: str, password: str = Quer
         await websocket.close()
         return
 
-    room["players"].append(websocket)
+    # Si es el segundo jugador en unirse, se le descuenta la apuesta aquí mismo
+    if len(room["players"]) == 1 and user_id:
+        success = deduct_balance(user_id, room["bet"], wallet)
+        if not success:
+            await websocket.send_json({"type": "ERROR", "message": "Saldo insuficiente para unirte a esta sala."})
+            await websocket.close()
+            return
+
+    room["players"].append({"ws": websocket, "user_id": user_id})
     is_host = len(room["players"]) == 1
     player_symbol = "X" if is_host else "O"
     
@@ -121,8 +211,8 @@ async def game_endpoint(websocket: WebSocket, room_id: str, password: str = Quer
     })
 
     if len(room["players"]) == 2:
-        for ws in room["players"]:
-            await ws.send_json({"type": "START", "turn": room["turn"]})
+        for p in room["players"]:
+            await p["ws"].send_json({"type": "START", "turn": room["turn"]})
 
     try:
         while True:
@@ -139,8 +229,24 @@ async def game_endpoint(websocket: WebSocket, room_id: str, password: str = Quer
                     commission = manager.calculate_commission(total_pot)
                     net_prize = total_pot - commission
 
-                    for ws in room["players"]:
-                        await ws.send_json({
+                    # Verificar si hay ganador o empate
+                    board = room["board"]
+                    winning_lines = [
+                        [0,1,2],[3,4,5],[6,7,8],
+                        [0,3,6],[1,4,7],[2,5,8],
+                        [0,4,8],[2,4,6]
+                    ]
+                    
+                    winner_symbol = None
+                    for line in winning_lines:
+                        if board[line[0]] and board[line[0]] == board[line[1]] == board[line[2]]:
+                            winner_symbol = board[line[0]]
+                            break
+
+                    is_draw = all(cell is not None for cell in board) and not winner_symbol
+
+                    for p in room["players"]:
+                        await p["ws"].send_json({
                             "type": "MOVE_MADE",
                             "index": idx,
                             "symbol": symbol,
@@ -149,19 +255,28 @@ async def game_endpoint(websocket: WebSocket, room_id: str, password: str = Quer
                             "net_prize": net_prize,
                             "commission": commission
                         })
+
+                    # Si alguien gana, acreditar directo al withdraw_balance
+                    if winner_symbol:
+                        winner_idx = 0 if winner_symbol == "X" else 1
+                        if len(room["players"]) > winner_idx:
+                            winner_uid = room["players"][winner_idx].get("user_id")
+                            if winner_uid:
+                                credit_withdraw_balance(winner_uid, net_prize)
+
             elif data["type"] == "CLOSE_ROOM":
                 if is_host:
-                    for ws in room["players"]:
-                        await ws.send_json({"type": "ROOM_CLOSED_BY_HOST"})
-                        await ws.close()
+                    for p in room["players"]:
+                        await p["ws"].send_json({"type": "ROOM_CLOSED_BY_HOST"})
+                        await p["ws"].close()
                     if room_id in lobbies:
                         del lobbies[room_id]
                     await manager.broadcast_lobby()
                     break
 
     except WebSocketDisconnect:
-        if websocket in room["players"]:
-            room["players"].remove(websocket)
+        # Remover jugador desconectado
+        room["players"] = [p for p in room["players"] if p["ws"] != websocket]
         if len(room["players"]) == 0 and room_id in lobbies:
             del lobbies[room_id]
         await manager.broadcast_lobby()
