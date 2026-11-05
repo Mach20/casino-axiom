@@ -1,5 +1,5 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
-from typing import Dict, List, Tuple
+from typing import Dict, List
 import random
 import os
 from supabase import create_client, Client
@@ -16,26 +16,11 @@ lobbies: Dict[str, dict] = {}
 class GameManager:
     def __init__(self):
         self.active_connections: Dict[str, List[WebSocket]] = {}
-        self.user_sessions: Dict[str, Tuple[WebSocket, str]] = {}
 
     def calculate_commission(self, total_pot: float) -> float:
         if total_pot < 0.25:
             return 0.02
         return round(total_pot * 0.05, 2)
-
-    async def register_session(self, user_id: str, websocket: WebSocket, token: str):
-        if user_id in self.user_sessions:
-            old_ws, old_token = self.user_sessions[user_id]
-            if old_token != token:
-                try:
-                    await old_ws.send_json({
-                        "type": "FORCE_LOGOUT",
-                        "message": "Tu cuenta se ha abierto en otro dispositivo o pestaña."
-                    })
-                    await old_ws.close()
-                except:
-                    pass
-        self.user_sessions[user_id] = (websocket, token)
 
     async def broadcast_lobby(self):
         room_list = [
@@ -61,12 +46,10 @@ manager = GameManager()
 def deduct_balance(user_id: str, bet: float, wallet: str) -> bool:
     try:
         if not user_id:
-            print("Error: user_id está vacío al intentar descontar saldo.")
             return False
 
         res = supabase.table("profiles").select("balance, bonus_balance").eq("id", user_id).execute()
         if not res.data:
-            print(f"Error: No se encontró perfil en Supabase para el ID: {user_id}")
             return False
         
         profile = res.data[0]
@@ -96,11 +79,8 @@ def credit_withdraw_balance(user_id: str, prize: float):
 
 
 @app.websocket("/ws/lobby")
-async def lobby_endpoint(websocket: WebSocket, token: str = Query(""), user_id: str = Query("")):
+async def lobby_endpoint(websocket: WebSocket, user_id: str = Query("")):
     await websocket.accept()
-    
-    if user_id and token:
-        await manager.register_session(user_id, websocket, token)
 
     if "lobby" not in manager.active_connections:
         manager.active_connections["lobby"] = []
@@ -120,7 +100,6 @@ async def lobby_endpoint(websocket: WebSocket, token: str = Query(""), user_id: 
             if data["type"] == "CREATE_ROOM":
                 bet = float(data["bet"])
                 wallet = data.get("wallet", "play")
-                # Respaldo doble para asegurar que el ID no se pierda
                 creator_uid = data.get("user_id") or user_id
 
                 if bet < 0.10:
@@ -159,13 +138,9 @@ async def game_endpoint(
     room_id: str, 
     password: str = Query(""), 
     wallet: str = Query("play"),
-    token: str = Query(""),
     user_id: str = Query("")
 ):
     await websocket.accept()
-
-    if user_id and token:
-        await manager.register_session(user_id, websocket, token)
     
     if room_id not in lobbies:
         await websocket.send_json({"type": "ERROR", "message": "La sala no existe."})
