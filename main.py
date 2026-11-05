@@ -44,15 +44,19 @@ manager = GameManager()
 def deduct_balance(user_id: str, bet: float, wallet: str) -> bool:
     try:
         if not user_id:
-            print("Error: deduct_balance llamado sin user_id")
+            print("ERROR CRÍTICO: deduct_balance recibió un user_id vacío o nulo.")
             return False
 
-        res = supabase.table("profiles").select("balance, bonus_balance").eq("id", user_id).execute()
-        if not res.data:
-            print(f"Error: No se encontró perfil para el usuario {user_id}")
+        print(f"Intentando descontar ${bet} de la billetera '{wallet}' al usuario ID: {user_id}")
+
+        res = supabase.table("profiles").select("id, balance, bonus_balance").eq("id", user_id).execute()
+        
+        if not res.data or len(res.data) == 0:
+            print(f"ERROR: Supabase no encontró ningún perfil con el ID: {user_id}")
             return False
         
         profile = res.data[0]
+        print(f"Perfil encontrado en Supabase: {profile}")
         
         if wallet == "bonus":
             current_val = float(profile.get("bonus_balance") or 0.0)
@@ -60,18 +64,20 @@ def deduct_balance(user_id: str, bet: float, wallet: str) -> bool:
                 print(f"Error: Saldo bono insuficiente ({current_val} < {bet})")
                 return False
             new_val = round(current_val - bet, 2)
-            supabase.table("profiles").update({"bonus_balance": new_val}).eq("id", user_id).execute()
+            update_res = supabase.table("profiles").update({"bonus_balance": new_val}).eq("id", user_id).execute()
+            print(f"Resultado update bonus: {update_res}")
         else:
             current_val = float(profile.get("balance") or 0.0)
             if current_val < bet:
                 print(f"Error: Saldo normal insuficiente ({current_val} < {bet})")
                 return False
             new_val = round(current_val - bet, 2)
-            supabase.table("profiles").update({"balance": new_val}).eq("id", user_id).execute()
+            update_res = supabase.table("profiles").update({"balance": new_val}).eq("id", user_id).execute()
+            print(f"Resultado update balance normal: {update_res}")
             
         return True
     except Exception as e:
-        print(f"Excepción en deduct_balance: {e}")
+        print(f"EXCEPCIÓN CRÍTICA en deduct_balance: {str(e)}")
         return False
 
 def credit_withdraw_balance(user_id: str, prize: float):
@@ -165,10 +171,6 @@ async def game_endpoint(
         await websocket.close()
         return
 
-    # CORRECCIÓN CLAVE: 
-    # Si len(room["players"]) == 0, significa que el que entra es el creador (Host). 
-    # Como el creador YA PAGÓ en el lobby, AQUÍ NO SE LE DESCUENTA NADA.
-    # Si len(room["players"]) == 1, significa que el que entra es el retador (Guest). A él SÍ se le descuenta aquí.
     if len(room["players"]) == 1 and user_id:
         success = deduct_balance(user_id, room["bet"], wallet)
         if not success:
@@ -252,7 +254,7 @@ async def game_endpoint(
                     break
 
     except WebSocketDisconnect:
-        room["players"] = [p for p in room["players"] if p.get("ws"] is not websocket]
+        room["players"] = [p for p in room["players"] if p.get("ws") is not websocket]
         if len(room["players"]) == 0 and room_id in lobbies:
             del lobbies[room_id]
         await manager.broadcast_lobby()
