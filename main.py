@@ -1,3 +1,163 @@
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from typing import Dict, List, Tuple
+import random
+from supabase import create_client, Client
+
+app = FastAPI()
+
+SUPABASE_URL = "https://djdzytfdztctusnuuvrm.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqZHp5dGZkenRjdHVzbnV1dnJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk1MTkxNzcsImV4cCI6MjEwNTA5NTE3N30.Pvqp1Hl4zfKzQj0pxrohZaj1sHR9HJAT1ESPv2P-ot4"
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+lobbies: Dict[str, dict] = {}
+
+class GameManager:
+    def __init__(self):
+        self.active_connections: Dict[str, List[WebSocket]] = {}
+
+    def calculate_commission(self, total_pot: float) -> float:
+        if total_pot < 0.25:
+            return 0.02
+        return round(total_pot * 0.05, 2)
+
+    async def broadcast_lobby(self):
+        room_list = [
+            {
+                "room_id": rid,
+                "creator": r["creator"],
+                "bet": r["bet"],
+                "is_public": r["is_public"],
+                "players_count": len(r["players"])
+            }
+            for rid, r in lobbies.items() if len(r["players"]) < 2
+        ]
+        
+        if "lobby" in self.active_connections:
+            for ws in self.active_connections["lobby"]:
+                try:
+                    await ws.send_json({"type": "LOBBY_UPDATE", "rooms": room_list})
+                except:
+                    pass
+
+manager = GameManager()
+
+def deduct_balance(user_id: str, bet: float, wallet: str) -> Tuple[bool, str]:
+    """Descuenta la apuesta e informa el motivo real si no puede hacerlo."""
+    try:
+        if not user_id:
+            return False, "No se recibió el ID del usuario."
+
+        if wallet not in ("play", "bonus"):
+            return False, "Tipo de saldo no válido."
+
+        if bet < 0.10:
+            return False, "La apuesta mínima es de $0.10."
+
+        column = "bonus_balance" if wallet == "bonus" else "balance"
+        print(
+            f"Intentando descontar ${bet:.2f} de {column} "
+            f"para el usuario {user_id}"
+        )
+
+        res = (
+            supabase.table("profiles")
+            .select(f"id, {column}")
+            .eq("id", user_id)
+            .execute()
+        )
+
+        if not res.data:
+            print(f"ERROR: No existe perfil para user_id={user_id}")
+            return False, "No se encontró el perfil de tu cuenta."
+
+        profile = res.data[0]
+        current_val = float(profile.get(column) or 0.0)
+        print(f"Saldo consultado: {current_val:.2f}; apuesta: {bet:.2f}")
+
+        if current_val < bet:
+            return False, (
+                f"Saldo insuficiente. Disponible: ${current_val:.2f}; "
+                f"apuesta: ${bet:.2f}."
+            )
+
+        new_val = round(current_val - bet, 2)
+        update_res = (
+            supabase.table("profiles")
+            .update({column: new_val})
+            .eq("id", user_id)
+            .select("id")
+            .execute()
+        )
+
+        if not update_res.data:
+            print("ERROR: Supabase no confirmó la actualización del saldo.")
+            return False, "Supabase no confirmó el descuento del saldo."
+
+        print(f"DESCUENTO CORRECTO: {current_val:.2f} -> {new_val:.2f}")
+        return True, ""
+
+    except Exception as e:
+        print(f"ERROR REAL EN deduct_balance: {repr(e)}")
+        return False, "Error al consultar o actualizar tu saldo. Revisa los registros del servidor."
+
+def credit_withdraw_balance(user_id: str, prize: float):
+    try:
+        res = supabase.table("profiles").select("withdraw_balance").eq("id", user_id).execute()
+        if res.data:
+            current_withdraw = float(res.data[0].get("withdraw_balance") or 0.0)
+            new_withdraw = round(current_withdraw + prize, 2)
+            supabase.table("profiles").update({"withdraw_balance": new_withdraw}).eq("id", user_id).execute()
+    except Exception as e:
+        print(f"Error acreditando premio: {e}")
+
+@app.websocket("/ws/lobby")
+async def lobby_endpoint(websocket: WebSocket, user_id: str = Query("")):
+    await websocket.accept()
+    if "lobby" not in manager.active_connections:
+        manager.active_connections["lobby"] = []
+    manager.active_connections["lobby"].append(websocket)
+    
+    await websocket.send_json({
+        "type": "LOBBY_UPDATE",
+        "rooms": [
+            {"room_id": rid, "creator": r["creator"], "bet": r["bet"], "is_public": r["is_public"], "players_count": len(r["players"])}
+            for rid, r in lobbies.items() if len(r["players"]) < 2
+        ]
+    })
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            if data["type"] == "CREATE_ROOM":
+                bet = float(data["bet"])
+                wallet = data.get("wallet", "play")
+                creator_uid = data.get("user_id") or user_id
+                
+                if bet < 0.10:
+                    await websocket.send_json({"type": "ERROR", "message": "La apuesta minima es de $0.10"})
+                    continue
+
+                success, error_message = deduct_balance(creator_uid, bet, wallet)
+                if not success:
+                    await websocket.send_json({"type": "ERROR", "message": error_message})
+                    continue
+
+                room_id = f"room_{random.randint(10000, 99999)}"
+                is_public = data["is_public"]
+                password = data.get("password", "")
+                creator = data["creator"]
+
+                lobbies[room_id] = {
+                    "creator": creator,
+                    "bet": bet,
+                    "is_public": is_public,
+                    "password": password,
+                    "players": [],
+                    "board": [None] * 9,
+                    "turn": "X"
+                }
+                await manager.broadcast_lobby()
+                await websocket.send_json({"type": "ROOM_CREATED", "room_id": room_id, "password": password})
     except WebSocketDisconnect:
         if websocket in manager.active_connections.get("lobby", []):
             manager.active_connections["lobby"].remove(websocket)
