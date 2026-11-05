@@ -1,14 +1,12 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from typing import Dict, List
 import random
-import os
 from supabase import create_client, Client
 
 app = FastAPI()
 
-# Configuración de Supabase en el Backend
-SUPABASE_URL = os.getenv("SUPABASE_URL", "TU_SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "TU_SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_URL = "https://djdzytfdztctusnuuvrm.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqZHp5dGZkenRjdHVzbnV1dnJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk1MTkxNzcsImV4cCI6MjEwNTA5NTE3N30.Pvqp1Hl4zfKzQj0pxrohZaj1sHR9HJAT1ESPv2P-ot4"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 lobbies: Dict[str, dict] = {}
@@ -241,8 +239,7 @@ async def game_endpoint(
                     break
 
     except WebSocketDisconnect:
-        room["players"] = [p for p in room["players"] if p.get("ws") != websocket]
+        room["players"] = [p for p in room["players"] if p.get("ws") is not websocket]
         if len(room["players"]) == 0 and room_id in lobbies:
             del lobbies[room_id]
         await manager.broadcast_lobby()
-```[cite: 3]
