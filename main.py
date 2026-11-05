@@ -22,6 +22,11 @@ class GameManager:
     def __init__(self):
         self.active_connections: Dict[str, List[WebSocket]] = {}
 
+    def calculate_commission(self, total_pot: float) -> float:
+        if total_pot < 0.25:
+            return 0.02
+        return round(total_pot * 0.05, 2)
+
     async def broadcast_lobby(self):
         room_list = [
             {
@@ -45,6 +50,7 @@ manager = GameManager()
 
 
 def verify_user_token(access_token: str, expected_user_id: str) -> bool:
+    """Comprueba el JWT de Supabase antes de aceptar operaciones de dinero."""
     if not access_token or not expected_user_id:
         return False
     try:
@@ -57,6 +63,7 @@ def verify_user_token(access_token: str, expected_user_id: str) -> bool:
 
 
 def rpc_json(name: str, params: dict) -> dict:
+    """Ejecuta una función SQL y normaliza la respuesta JSON de Supabase."""
     response = supabase.rpc(name, params).execute()
     result = response.data
     if isinstance(result, list) and result:
@@ -79,10 +86,11 @@ def deduct_balance(user_id: str, bet: float, wallet: str, room_id: str, transact
             "p_wallet": wallet,
             "p_amount": round(float(bet), 2),
         })
+        print(f"DEBIT {transaction_key}: {result}")
         return bool(result.get("success")), str(result.get("message", "No se pudo descontar el saldo."))
     except Exception as exc:
         print(f"ERROR debit_game_balance: {exc!r}")
-        return False, "No se pudo descontar la apuesta."
+        return False, "No se pudo descontar la apuesta. Revisa la configuración SQL y los registros del servidor."
 
 
 def credit_winner(user_id: str, prize: float, room_id: str):
@@ -92,11 +100,26 @@ def credit_winner(user_id: str, prize: float, room_id: str):
             "p_user_id": user_id,
             "p_amount": round(float(prize), 2),
         })
+        print(f"PAYOUT {room_id}: {result}")
         return bool(result.get("success")), str(result.get("message", "No se pudo acreditar el premio."))
     except Exception as exc:
         print(f"ERROR credit_game_winner: {exc!r}")
-        return False, "No se pudo acreditar el premio."
+        return False, "No se pudo acreditar el premio en saldo retirable."
 
+
+def refund_player(room_id: str, user_id: str):
+    try:
+        result = rpc_json("refund_game_bet", {"p_transaction_key": f"join:{room_id}:{user_id}"})
+        print(f"REFUND join:{room_id}:{user_id}: {result}")
+        return bool(result.get("success")), str(result.get("message", "No se pudo devolver la apuesta."))
+    except Exception as exc:
+        print(f"ERROR refund jugador {user_id}: {exc!r}")
+        return False, "No se pudo devolver la apuesta."
+
+
+# ==========================================
+# ENDPOINTS DE X VS O (INTACTOS)
+# ==========================================
 
 @app.websocket("/ws/lobby")
 async def lobby_endpoint(
@@ -122,8 +145,17 @@ async def lobby_endpoint(
 
             wallet = data.get("wallet", "play")
             creator_uid = data.get("user_id") or user_id
+            if creator_uid != user_id or not verify_user_token(access_token, creator_uid):
+                await websocket.send_json({"type": "ERROR", "message": "Tu sesión no es válida. Cierra sesión y vuelve a entrar."})
+                continue
             if bet < 0.10:
                 await websocket.send_json({"type": "ERROR", "message": "La apuesta mínima es de $0.10."})
+                continue
+            if wallet not in ("play", "bonus"):
+                await websocket.send_json({"type": "ERROR", "message": "Tipo de saldo no válido."})
+                continue
+            if not creator_uid:
+                await websocket.send_json({"type": "ERROR", "message": "No se identificó tu usuario. Cierra sesión y vuelve a entrar."})
                 continue
 
             room_id = f"room_{random.randint(10000, 99999)}_{random.randint(100, 999)}"
@@ -136,6 +168,13 @@ async def lobby_endpoint(
 
             is_public = bool(data.get("is_public", True))
             password = "" if is_public else str(data.get("password", ""))
+            if not is_public and not password.strip():
+                try:
+                    rpc_json("refund_game_bet", {"p_transaction_key": f"create:{room_id}:{creator_uid}"})
+                except Exception as exc:
+                    print(f"ERROR devolviendo apuesta de sala inválida: {exc!r}")
+                await websocket.send_json({"type": "ERROR", "message": "Debes establecer una contraseña para la sala privada."})
+                continue
 
             lobbies[room_id] = {
                 "creator": str(data.get("creator") or "Jugador"),
@@ -151,6 +190,7 @@ async def lobby_endpoint(
                 "finished": False,
             }
             room_locks[room_id] = asyncio.Lock()
+            print(f"SALA CREADA {room_id}: creador={creator_uid}, apuesta={bet}, cartera={wallet}")
             await manager.broadcast_lobby()
             await websocket.send_json({"type": "ROOM_CREATED", "room_id": room_id, "password": password})
 
@@ -171,6 +211,10 @@ async def game_endpoint(
     access_token: str = Query(""),
 ):
     await websocket.accept()
+    if not verify_user_token(access_token, user_id):
+        await websocket.send_json({"type": "ERROR", "message": "Tu sesión no es válida. Vuelve a iniciar sesión."})
+        await websocket.close()
+        return
     room = lobbies.get(room_id)
     if not room:
         await websocket.send_json({"type": "ERROR", "message": "La sala no existe o ya fue cerrada."})
@@ -190,8 +234,16 @@ async def game_endpoint(
                 await websocket.send_json({"type": "ERROR", "message": "Contraseña incorrecta."})
                 await websocket.close()
                 return
+            if not user_id:
+                await websocket.send_json({"type": "ERROR", "message": "No se recibió el ID de tu usuario."})
+                await websocket.close()
+                return
             if user_id == room["creator_user_id"]:
-                await websocket.send_json({"type": "ERROR", "message": "No puedes unirte a tu propia sala."})
+                await websocket.send_json({"type": "ERROR", "message": "No puedes unirte a tu propia sala con la misma cuenta."})
+                await websocket.close()
+                return
+            if wallet not in ("play", "bonus"):
+                await websocket.send_json({"type": "ERROR", "message": "Tipo de saldo no válido."})
                 await websocket.close()
                 return
 
@@ -204,14 +256,15 @@ async def game_endpoint(
                 return
         else:
             if user_id != room["creator_user_id"]:
-                await websocket.send_json({"type": "ERROR", "message": "Sala reservada."})
+                await websocket.send_json({"type": "ERROR", "message": "Esta sala está reservada para quien la creó."})
                 await websocket.close()
                 return
             wallet = room["creator_wallet"]
 
         player = {"ws": websocket, "user_id": user_id, "wallet": wallet}
         room["players"].append(player)
-        is_host = len(room["players"]) == 1
+        player_index = len(room["players"]) - 1
+        is_host = player_index == 0
         player_symbol = "X" if is_host else "O"
 
     await manager.broadcast_lobby()
@@ -221,9 +274,9 @@ async def game_endpoint(
     })
     if len(room["players"]) == 2:
         room["started"] = True
-        for p in room["players"]:
+        for player in room["players"]:
             try:
-                await p["ws"].send_json({"type": "START", "turn": room["turn"]})
+                await player["ws"].send_json({"type": "START", "turn": room["turn"]})
             except Exception:
                 pass
 
@@ -231,12 +284,16 @@ async def game_endpoint(
         while True:
             data = await websocket.receive_json()
             if data.get("type") == "MOVE":
+                outcome_payload = None
                 async with lock:
                     if room["finished"] or len(room["players"]) != 2:
                         continue
                     idx = data.get("index")
+                    symbol = data.get("symbol")
+                    if not isinstance(idx, int) or idx < 0 or idx > 8:
+                        continue
                     expected_symbol = "X" if room["players"][0]["ws"] is websocket else "O"
-                    if room["turn"] != expected_symbol or room["board"][idx] is not None:
+                    if symbol != expected_symbol or room["turn"] != expected_symbol or room["board"][idx] is not None:
                         continue
 
                     room["board"][idx] = expected_symbol
@@ -258,7 +315,19 @@ async def game_endpoint(
                         room["settled"] = True
                         if winner_symbol:
                             winner_index = 0 if winner_symbol == "X" else 1
-                            credit_winner(room["players"][winner_index]["user_id"], net_prize, room_id)
+                            winner_uid = room["players"][winner_index]["user_id"]
+                            paid, payout_message = credit_winner(winner_uid, net_prize, room_id)
+                            if not paid:
+                                print(f"ALERTA: partida {room_id} terminó pero el premio no se acreditó: {payout_message}")
+                        else:
+                            refund_results = []
+                            for player in room["players"]:
+                                key = f"create:{room_id}:{player['user_id']}" if player["user_id"] == room["creator_user_id"] else f"join:{room_id}:{player['user_id']}"
+                                try:
+                                    refund_results.append(rpc_json("refund_game_bet", {"p_transaction_key": key}))
+                                except Exception as exc:
+                                    refund_results.append({"success": False, "message": str(exc)})
+                            print(f"EMPATE {room_id}, devoluciones: {refund_results}")
 
                     outcome_payload = {
                         "type": "MOVE_MADE", "index": idx, "symbol": expected_symbol,
@@ -267,25 +336,33 @@ async def game_endpoint(
                         "winner": winner_symbol, "draw": draw,
                     }
 
-                for p in list(room["players"]):
+                for player in list(room["players"]):
                     try:
-                        await p["ws"].send_json(outcome_payload)
+                        await player["ws"].send_json(outcome_payload)
+                        if outcome_payload["winner"] or outcome_payload["draw"]:
+                            await player["ws"].send_json({
+                                "type": "GAME_SETTLED",
+                                "winner": outcome_payload["winner"],
+                                "draw": outcome_payload["draw"],
+                                "net_prize": outcome_payload["net_prize"],
+                            })
                     except Exception:
                         pass
 
             elif data.get("type") == "CLOSE_ROOM":
-                async with lock:
-                    room["finished"] = True
-                    for p in list(room["players"]):
-                        try:
-                            await p["ws"].send_json({"type": "ROOM_CLOSED_BY_HOST"})
-                            await p["ws"].close()
-                        except Exception:
-                            pass
-                    lobbies.pop(room_id, None)
-                    room_locks.pop(room_id, None)
-                await manager.broadcast_lobby()
-                break
+                if is_host:
+                    async with lock:
+                        room["finished"] = True
+                        for player in list(room["players"]):
+                            try:
+                                await player["ws"].send_json({"type": "ROOM_CLOSED_BY_HOST"})
+                                await player["ws"].close()
+                            except Exception:
+                                pass
+                        lobbies.pop(room_id, None)
+                        room_locks.pop(room_id, None)
+                    await manager.broadcast_lobby()
+                    break
 
     except WebSocketDisconnect:
         async with lock:
@@ -297,7 +374,7 @@ async def game_endpoint(
 
 
 # ==========================================
-# SNAKE ARENA MULTIJUGADOR
+# ENDPOINT DE SNAKE ARENA (NUEVO Y COMPLETO)
 # ==========================================
 
 class SnakeRoom:
