@@ -100,12 +100,10 @@ async def lobby_endpoint(websocket: WebSocket, user_id: str = Query("")):
                 wallet = data.get("wallet", "play")
                 creator_uid = data.get("user_id") or user_id
                 
-                # Validación estricta del mínimo de apuesta
                 if bet < 0.10:
                     await websocket.send_json({"type": "ERROR", "message": "La apuesta minima es de $0.10"})
                     continue
 
-                # Descuento del saldo al creador
                 success = deduct_balance(creator_uid, bet, wallet)
                 if not success:
                     await websocket.send_json({"type": "ERROR", "message": "Saldo insuficiente para crear la partida."})
@@ -160,7 +158,6 @@ async def game_endpoint(
         await websocket.close()
         return
 
-    # Si es el segundo jugador en unirse, se le descuenta la apuesta aquí mismo
     if len(room["players"]) == 1 and user_id:
         success = deduct_balance(user_id, room["bet"], wallet)
         if not success:
@@ -226,7 +223,6 @@ async def game_endpoint(
                             "commission": commission
                         })
 
-                    # Si hay un ganador, se le acredita el premio neto al withdraw_balance
                     if winner_symbol:
                         winner_idx = 0 if winner_symbol == "X" else 1
                         if len(room["players"]) > winner_idx:
@@ -249,3 +245,4 @@ async def game_endpoint(
         if len(room["players"]) == 0 and room_id in lobbies:
             del lobbies[room_id]
         await manager.broadcast_lobby()
+```[cite: 3]
