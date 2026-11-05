@@ -16,7 +16,6 @@ lobbies: Dict[str, dict] = {}
 class GameManager:
     def __init__(self):
         self.active_connections: Dict[str, List[WebSocket]] = {}
-        # Control de sesión única: { user_id: (websocket, session_token) }
         self.user_sessions: Dict[str, Tuple[WebSocket, str]] = {}
 
     def calculate_commission(self, total_pot: float) -> float:
@@ -37,12 +36,6 @@ class GameManager:
                 except:
                     pass
         self.user_sessions[user_id] = (websocket, token)
-
-    async def unregister_session(self, user_id: str, token: str):
-        if user_id in self.user_sessions:
-            _, current_token = self.user_sessions[user_id]
-            if current_token == token:
-                del self.user_sessions[user_id]
 
     async def broadcast_lobby(self):
         room_list = [
@@ -67,8 +60,13 @@ manager = GameManager()
 
 def deduct_balance(user_id: str, bet: float, wallet: str) -> bool:
     try:
+        if not user_id:
+            print("Error: user_id está vacío al intentar descontar saldo.")
+            return False
+
         res = supabase.table("profiles").select("balance, bonus_balance").eq("id", user_id).execute()
         if not res.data:
+            print(f"Error: No se encontró perfil en Supabase para el ID: {user_id}")
             return False
         
         profile = res.data[0]
@@ -122,13 +120,13 @@ async def lobby_endpoint(websocket: WebSocket, token: str = Query(""), user_id: 
             if data["type"] == "CREATE_ROOM":
                 bet = float(data["bet"])
                 wallet = data.get("wallet", "play")
-                creator_uid = data.get("user_id", user_id)
+                # Respaldo doble para asegurar que el ID no se pierda
+                creator_uid = data.get("user_id") or user_id
 
                 if bet < 0.10:
                     await websocket.send_json({"type": "ERROR", "message": "La apuesta minima es de $0.10"})
                     continue
 
-                # Descuento inmediato de la apuesta
                 success = deduct_balance(creator_uid, bet, wallet)
                 if not success:
                     await websocket.send_json({"type": "ERROR", "message": "Saldo insuficiente para crear la partida."})
@@ -187,7 +185,6 @@ async def game_endpoint(
         await websocket.close()
         return
 
-    # Si es el segundo jugador en unirse, se le descuenta la apuesta aquí mismo
     if len(room["players"]) == 1 and user_id:
         success = deduct_balance(user_id, room["bet"], wallet)
         if not success:
@@ -229,7 +226,6 @@ async def game_endpoint(
                     commission = manager.calculate_commission(total_pot)
                     net_prize = total_pot - commission
 
-                    # Verificar si hay ganador o empate
                     board = room["board"]
                     winning_lines = [
                         [0,1,2],[3,4,5],[6,7,8],
@@ -243,8 +239,6 @@ async def game_endpoint(
                             winner_symbol = board[line[0]]
                             break
 
-                    is_draw = all(cell is not None for cell in board) and not winner_symbol
-
                     for p in room["players"]:
                         await p["ws"].send_json({
                             "type": "MOVE_MADE",
@@ -256,7 +250,6 @@ async def game_endpoint(
                             "commission": commission
                         })
 
-                    # Si alguien gana, acreditar directo al withdraw_balance
                     if winner_symbol:
                         winner_idx = 0 if winner_symbol == "X" else 1
                         if len(room["players"]) > winner_idx:
@@ -275,7 +268,6 @@ async def game_endpoint(
                     break
 
     except WebSocketDisconnect:
-        # Remover jugador desconectado
         room["players"] = [p for p in room["players"] if p["ws"] != websocket]
         if len(room["players"]) == 0 and room_id in lobbies:
             del lobbies[room_id]
