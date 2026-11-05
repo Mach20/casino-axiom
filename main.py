@@ -471,15 +471,18 @@ async def snake_game_endpoint(
     room = snake_rooms[room_id]
     room.connections[user_id] = websocket
 
-    spawn_x = random.randint(200, 1600)
-    spawn_y = random.randint(200, 800)
+    # POSICIÓN INICIAL SEGURA (al centro para evitar choque inmediato con los bordes)
+    spawn_x = 960  # Mitade de 1920
+    spawn_y = 540  # Mitad de 1080
+    
     room.snakes[user_id] = {
         "body": [{"x": spawn_x - (i * 10), "y": spawn_y} for i in range(8)],
         "angle": 0,
         "score": 0,
         "color": color,
         "wallet": wallet,
-        "alive": True
+        "alive": True,
+        "ready": False  # <-- NUEVO: Espera a que el cliente mande la señal de listo
     }
 
     if not room.is_running:
@@ -490,8 +493,12 @@ async def snake_game_endpoint(
             data = await websocket.receive_json()
             msg_type = data.get("type")
             
-            if msg_type == "STEER":
-                if user_id in room.snakes and room.snakes[user_id]["alive"]:
+            if msg_type == "READY":
+                if user_id in room.snakes:
+                    room.snakes[user_id]["ready"] = True  # <-- Activa el movimiento solo cuando el cliente avisa
+
+            elif msg_type == "STEER":
+                if user_id in room.snakes and room.snakes[user_id]["alive"] and room.snakes[user_id]["ready"]:
                     room.snakes[user_id]["angle"] = data.get("angle", 0)
 
             elif msg_type == "CASH_OUT":
