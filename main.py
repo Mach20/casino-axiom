@@ -401,7 +401,10 @@ class SnakeRoom:
                     continue
 
                 if not snake.get("ready", False):
-                    snake["body"][0] = {"x": 960, "y": 540}
+                    # Mantener la serpiente segura y extendida en el centro mientras no mande READY
+                    spawn_x = 960
+                    spawn_y = 540
+                    snake["body"] = [{"x": spawn_x - (i * 10), "y": spawn_y} for i in range(8)]
                     continue
 
                 head = snake["body"][0]
@@ -431,7 +434,7 @@ class SnakeRoom:
                     snake["body"].pop()
 
                 for other_uid, other_snake in self.snakes.items():
-                    if not other_snake["alive"]:
+                    if not other_snake["alive"] or other_uid == uid:
                         continue
                     for segment in other_snake["body"][2:]:
                         if math.hypot(new_x - segment["x"], new_y - segment["y"]) < 14:
@@ -491,7 +494,7 @@ async def snake_game_endpoint(
     if not room.is_running:
         asyncio.create_task(room.game_loop())
 
-    # 👇 FORZAR EL ENVÍO DEL ESTADO INICIAL INMEDIATAMENTE AL CONECTARSE 👇
+    # Forzar el envío del estado inicial inmediatamente
     try:
         await websocket.send_json({
             "type": "GAME_STATE",
