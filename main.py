@@ -491,6 +491,16 @@ async def snake_game_endpoint(
     if not room.is_running:
         asyncio.create_task(room.game_loop())
 
+    # 👇 FORZAR EL ENVÍO DEL ESTADO INICIAL INMEDIATAMENTE AL CONECTARSE 👇
+    try:
+        await websocket.send_json({
+            "type": "GAME_STATE",
+            "snakes": room.snakes,
+            "foods": room.foods
+        })
+    except Exception as e:
+        print(f"Error al enviar estado inicial: {e}")
+
     try:
         while True:
             data = await websocket.receive_json()
