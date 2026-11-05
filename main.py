@@ -8,10 +8,8 @@ from supabase import create_client, Client
 
 app = FastAPI(title="AXIOM Game Backend")
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://djdzytfdztctusnuuvrm.supabase.co")
-SUPABASE_SERVICE_ROLE_KEY = os.environ.get("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqZHp5dGZkenRjdHVzbnV1dnJtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4OTUxOTE3NywiZXhwIjoyMTA1MDk1MTc3fQ.45n4zgBGqXTtqI3LJOhefxSNckxnddsKGZjoSajkihM")
-if not SUPABASE_SERVICE_ROLE_KEY:
-    raise RuntimeError("Falta configurar SUPABASE_SERVICE_ROLE_KEY en las variables de entorno del backend.")
+SUPABASE_URL = "https://djdzytfdztctusnuuvrm.supabase.co"
+SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqZHp5dGZkenRjdHVzbnV1dnJtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4OTUxOTE3NywiZXhwIjoyMTA1MDk1MTc3fQ.45n4zgBGqXTtqI3LJOhefxSNckxnddsKGZjoSajkihM"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 lobbies: Dict[str, dict] = {}
@@ -165,7 +163,6 @@ async def lobby_endpoint(
             is_public = bool(data.get("is_public", True))
             password = "" if is_public else str(data.get("password", ""))
             if not is_public and not password.strip():
-                # No debería ocurrir porque Next valida antes; evita dejar una apuesta cobrada.
                 try:
                     rpc_json("refund_game_bet", {"p_transaction_key": f"create:{room_id}:{creator_uid}"})
                 except Exception as exc:
@@ -252,7 +249,6 @@ async def game_endpoint(
                 await websocket.close()
                 return
         else:
-            # El creador ya pagó al crear la sala: no se le descuenta otra vez.
             if user_id != room["creator_user_id"]:
                 await websocket.send_json({"type": "ERROR", "message": "Esta sala está reservada para quien la creó."})
                 await websocket.close()
@@ -318,7 +314,6 @@ async def game_endpoint(
                             if not paid:
                                 print(f"ALERTA: partida {room_id} terminó pero el premio no se acreditó: {payout_message}")
                         else:
-                            # Empate: devuelve a cada usuario su apuesta a la misma cartera usada.
                             refund_results = []
                             for player in room["players"]:
                                 key = f"create:{room_id}:{player['user_id']}" if player["user_id"] == room["creator_user_id"] else f"join:{room_id}:{player['user_id']}"
@@ -335,7 +330,6 @@ async def game_endpoint(
                         "winner": winner_symbol, "draw": draw,
                     }
 
-                # El abono o devolución se procesa antes de notificar el final al frontend.
                 for player in list(room["players"]):
                     try:
                         await player["ws"].send_json(outcome_payload)
@@ -367,9 +361,7 @@ async def game_endpoint(
     except WebSocketDisconnect:
         async with lock:
             room["players"] = [p for p in room["players"] if p["ws"] is not websocket]
-            # Si todavía no empezó y el creador sale, se cierra la sala.
             if len(room["players"]) == 0 and not room.get("started"):
                 lobbies.pop(room_id, None)
                 room_locks.pop(room_id, None)
-            # Si un jugador abandona una partida iniciada, no se paga automáticamente.
         await manager.broadcast_lobby()
