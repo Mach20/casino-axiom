@@ -1,6 +1,7 @@
 import os
 import random
 import asyncio
+import math
 from typing import Dict, List
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
@@ -14,6 +15,9 @@ SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdX
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 lobbies: Dict[str, dict] = {}
 room_locks: Dict[str, asyncio.Lock] = {}
+
+# Almacén específico para las salas de Snake multijugador
+snake_rooms: Dict[str, dict] = {}
 
 
 class GameManager:
@@ -365,3 +369,153 @@ async def game_endpoint(
                 lobbies.pop(room_id, None)
                 room_locks.pop(room_id, None)
         await manager.broadcast_lobby()
+
+
+# ==========================================
+# LÓGICA DEL JUEGO DE SNAKE MULTIJUGADOR
+# ==========================================
+
+class SnakeRoom:
+    def __init__(self, room_id: str, bet_amount: float):
+        self.room_id = room_id
+        self.bet_amount = bet_amount
+        self.connections: Dict[str, WebSocket] = {}
+        self.snakes: Dict[str, dict] = {}
+        self.foods = [{"x": random.randint(50, 750), "y": random.randint(50, 550)} for _ in range(30)]
+        self.is_running = False
+
+    async def broadcast(self, message: dict):
+        for ws in list(self.connections.values()):
+            try:
+                await ws.send_text(str(message).replace("'", '"')) # Envío seguro JSON
+                await ws.send_json(message)
+            except Exception:
+                pass
+
+    async def game_loop(self):
+        self.is_running = True
+        while self.is_running and len(self.connections) > 0:
+            for uid, snake in self.snakes.items():
+                if not snake["alive"]:
+                    continue
+
+                head = snake["body"][0]
+                angle = snake.get("angle", 0)
+                speed = 3.5
+
+                new_x = head["x"] + math.cos(angle) * speed
+                new_y = head["y"] + math.sin(angle) * speed
+
+                # Límites del mapa (800x600)
+                if new_x < 0 or new_x > 800 or new_y < 0 or new_y > 600:
+                    snake["alive"] = False
+                    continue
+
+                new_head = {"x": new_x, "y": new_y}
+                snake["body"].insert(0, new_head)
+
+                # Comer comida
+                eaten = False
+                for food in self.foods[:]:
+                    if math.hypot(new_x - food["x"], new_y - food["y"]) < 15:
+                        self.foods.remove(food)
+                        self.foods.append({"x": random.randint(50, 750), "y": random.randint(50, 550)})
+                        snake["score"] += 1
+                        eaten = True
+                        break
+
+                if not eaten:
+                    snake["body"].pop()
+
+                # Colisiones con otras serpientes
+                for other_uid, other_snake in self.snakes.items():
+                    if not other_snake["alive"]:
+                        continue
+                    for segment in other_snake["body"][2:]:
+                        if math.hypot(new_x - segment["x"], new_y - segment["y"]) < 12:
+                            snake["alive"] = False
+                            break
+
+            # Transmitir estado actual
+            await self.broadcast({
+                "type": "GAME_STATE",
+                "snakes": self.snakes,
+                "foods": self.foods
+            })
+
+            await asyncio.sleep(0.03)
+
+
+@app.websocket("/ws/snake/{room_id}")
+async def snake_game_endpoint(
+    websocket: WebSocket,
+    room_id: str,
+    user_id: str = Query(""),
+    access_token: str = Query(""),
+    bet: float = Query(1.00),
+    wallet: str = Query("play")
+):
+    await websocket.accept()
+
+    if not verify_user_token(access_token, user_id):
+        await websocket.send_json({"type": "ERROR", "message": "Sesión no válida para Snake."})
+        await websocket.close()
+        return
+
+    # Descontar la apuesta de entrada al unirse al Snake
+    success, message = deduct_balance(user_id, bet, wallet, room_id, f"snake:{room_id}:{user_id}:{random.randint(1000,9999)}")
+    if not success:
+        await websocket.send_json({"type": "ERROR", "message": message})
+        await websocket.close()
+        return
+
+    if room_id not in snake_rooms:
+        snake_rooms[room_id] = SnakeRoom(room_id, bet)
+
+    room = snake_rooms[room_id]
+    room.connections[user_id] = websocket
+
+    room.snakes[user_id] = {
+        "body": [{"x": random.randint(100, 700), "y": random.randint(100, 500)} for _ in range(5)],
+        "angle": 0,
+        "score": 0,
+        "wallet": wallet,
+        "alive": True
+    }
+
+    if not room.is_running:
+        asyncio.create_task(room.game_loop())
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            
+            if data.get("type") == "STEER":
+                if user_id in room.snakes and room.snakes[user_id]["alive"]:
+                    room.snakes[user_id]["angle"] = data.get("angle", 0)
+
+            elif data.get("type") == "CASH_OUT":
+                if user_id in room.snakes and room.snakes[user_id]["alive"]:
+                    snake = room.snakes[user_id]
+                    snake["alive"] = False
+                    
+                    # Cálculo de premio por retiro voluntario (ej. Apuesta devuelta + bono por puntuación)
+                    earned_prize = round(room.bet_amount + (snake["score"] * 0.05), 2)
+                    
+                    # Acreditar al saldo de retiro
+                    credit_winner(user_id, earned_prize, room_id)
+                    
+                    await websocket.send_json({
+                        "type": "CASHOUT_SUCCESS",
+                        "payout": earned_prize
+                    })
+
+    except WebSocketDisconnect:
+        if user_id in room.connections:
+            del room.connections[user_id]
+        if user_id in room.snakes:
+            room.snakes[user_id]["alive"] = False
+
+        if len(room.connections) == 0:
+            room.is_running = False
+            snake_rooms.pop(room_id, None)
