@@ -77,11 +77,9 @@ def credit_withdraw_balance(user_id: str, prize: float):
     except Exception as e:
         print(f"Error acreditando premio: {e}")
 
-
 @app.websocket("/ws/lobby")
 async def lobby_endpoint(websocket: WebSocket, user_id: str = Query("")):
     await websocket.accept()
-
     if "lobby" not in manager.active_connections:
         manager.active_connections["lobby"] = []
     manager.active_connections["lobby"].append(websocket)
@@ -101,11 +99,13 @@ async def lobby_endpoint(websocket: WebSocket, user_id: str = Query("")):
                 bet = float(data["bet"])
                 wallet = data.get("wallet", "play")
                 creator_uid = data.get("user_id") or user_id
-
+                
+                # Validación estricta del mínimo de apuesta
                 if bet < 0.10:
                     await websocket.send_json({"type": "ERROR", "message": "La apuesta minima es de $0.10"})
                     continue
 
+                # Descuento del saldo al creador
                 success = deduct_balance(creator_uid, bet, wallet)
                 if not success:
                     await websocket.send_json({"type": "ERROR", "message": "Saldo insuficiente para crear la partida."})
@@ -160,6 +160,7 @@ async def game_endpoint(
         await websocket.close()
         return
 
+    # Si es el segundo jugador en unirse, se le descuenta la apuesta aquí mismo
     if len(room["players"]) == 1 and user_id:
         success = deduct_balance(user_id, room["bet"], wallet)
         if not success:
@@ -225,6 +226,7 @@ async def game_endpoint(
                             "commission": commission
                         })
 
+                    # Si hay un ganador, se le acredita el premio neto al withdraw_balance
                     if winner_symbol:
                         winner_idx = 0 if winner_symbol == "X" else 1
                         if len(room["players"]) > winner_idx:
@@ -243,7 +245,7 @@ async def game_endpoint(
                     break
 
     except WebSocketDisconnect:
-        room["players"] = [p for p in room["players"] if p["ws"] != websocket]
+        room["players"] = [p for p in room["players"] if p["ws"]["ws"] != websocket if isinstance(p, dict) and p.get("ws") != websocket]
         if len(room["players"]) == 0 and room_id in lobbies:
             del lobbies[room_id]
         await manager.broadcast_lobby()
