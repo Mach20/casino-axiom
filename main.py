@@ -808,11 +808,17 @@ async def refund_xo_creator(room_id: str, user_id: str):
 # SNAKE: CONFIGURACIÓN
 # ============================================================
 
-WORLD_WIDTH = 1920
-WORLD_HEIGHT = 1080
+# ============================================================
+# SNAKE: CONFIGURACIÓN
+# ============================================================
 
+# Mundo mucho más grande
+WORLD_WIDTH = 100000
+WORLD_HEIGHT = 100000
+
+# Velocidades
 SNAKE_SPEED = 7.5
-SNAKE_BOOST_SPEED = 12.0
+SNAKE_BOOST_SPEED = 20.0
 
 SNAKE_SEGMENT_DISTANCE = 10
 SNAKE_INITIAL_LENGTH = 8
@@ -823,8 +829,11 @@ COIN_RADIUS = 16
 COIN_VALUE_MICROS = 100_000
 INITIAL_BALANCE_MICROS = 1_000_000
 
+# Cada moneda cuesta $0.10
 BOOST_COST_MICROS = 100_000
-BOOST_COIN_INTERVAL = 1.0
+
+# Suelta una moneda cada 0.25 segundos mientras acelera
+BOOST_COIN_INTERVAL = 0.25
 
 FOOD_RADIUS = 9
 FOOD_INITIAL_COUNT = 80
@@ -900,13 +909,13 @@ class SnakeRoom:
     def create_spawn(self):
 
         positions = [
-            (220, 220, 0),
-            (1700, 850, math.pi),
-            (1700, 220, math.pi),
-            (220, 850, 0),
-            (960, 250, math.pi / 2),
-            (960, 830, -math.pi / 2),
-        ]
+    (10000, 10000, 0),
+    (90000, 90000, math.pi),
+    (90000, 10000, math.pi),
+    (10000, 90000, 0),
+    (50000, 15000, math.pi / 2),
+    (50000, 85000, -math.pi / 2),
+]
 
         occupied = [
             (s["body"][0]["x"], s["body"][0]["y"])
