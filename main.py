@@ -1,4 +1,3 @@
-
 import os
 import random
 import asyncio
@@ -16,17 +15,9 @@ app = FastAPI(title="AXIOM Game Backend")
 # SUPABASE
 # ============================================================
 
-SUPABASE_URL = os.getenv(
-    "SUPABASE_URL",
-    "https://djdzytfdztctusnuuvrm.supabase.co"
-)
+SUPABASE_URL = "https://djdzytfdztctusnuuvrm.supabase.co"
+SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqZHp5dGZkenRjdHVzbnV1dnJtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4OTUxOTE3NywiZXhwIjoyMTA1MDk1MTc3fQ.45n4zgBGqXTtqI3LJOhefxSNckxnddsKGZjoSajkihM"
 
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-
-if not SUPABASE_SERVICE_ROLE_KEY:
-    raise RuntimeError(
-        "Configura SUPABASE_SERVICE_ROLE_KEY en las variables de Render."
-    )
 
 supabase: Client = create_client(
     SUPABASE_URL,
@@ -792,8 +783,8 @@ async def refund_xo_creator(room_id: str, user_id: str):
 # SNAKE: CONFIGURACIÓN
 # ============================================================
 
-WORLD_WIDTH = 1000
-WORLD_HEIGHT = 1000
+WORLD_WIDTH = 20000
+WORLD_HEIGHT = 20000
 
 SNAKE_SPEED = 7.5
 SNAKE_BOOST_SPEED = 20.0
@@ -815,7 +806,7 @@ BOOST_COST_MICROS = 100_000
 BOOST_COIN_INTERVAL = 0.5
 
 FOOD_RADIUS = 9
-FOOD_INITIAL_COUNT = 300
+FOOD_INITIAL_COUNT = 400
 
 FOOD_COLORS = [
     "#ff3b30",
@@ -880,26 +871,26 @@ class SnakeRoom:
 
     def spawn_food(self, amount: int = 1):
 
-    for _ in range(amount):
-        self.foods.append({
-            "id": f"food_{uuid.uuid4().hex}",
-            "x": random.uniform(25, WORLD_WIDTH - 25),
-            "y": random.uniform(25, WORLD_HEIGHT - 25),
-            "color": random.choice(FOOD_COLORS),
-            "radius": FOOD_RADIUS,
-            "growth": 1,
-        })
+        for _ in range(amount):
+            self.foods.append({
+                "id": f"food_{uuid.uuid4().hex}",
+                "x": random.uniform(25, WORLD_WIDTH - 25),
+                "y": random.uniform(25, WORLD_HEIGHT - 25),
+                "color": random.choice(FOOD_COLORS),
+                "radius": FOOD_RADIUS,
+                "growth": 1,
+            })
 
     def create_spawn(self):
 
         positions = [
-    (120, 120, 0),
-    (880, 880, math.pi),
-    (880, 120, math.pi),
-    (120, 880, 0),
-    (500, 150, math.pi / 2),
-    (500, 850, -math.pi / 2),
-]
+            (2000, 2000, 0),
+            (18000, 18000, math.pi),
+            (18000, 2000, math.pi),
+            (2000, 18000, 0),
+            (10000, 3000, math.pi / 2),
+            (10000, 17000, -math.pi / 2),
+        ]
 
         occupied = [
             (s["body"][0]["x"], s["body"][0]["y"])
