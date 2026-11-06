@@ -792,8 +792,8 @@ async def refund_xo_creator(room_id: str, user_id: str):
 # SNAKE: CONFIGURACIÓN
 # ============================================================
 
-WORLD_WIDTH = 100000
-WORLD_HEIGHT = 100000
+WORLD_WIDTH = 1000
+WORLD_HEIGHT = 1000
 
 SNAKE_SPEED = 7.5
 SNAKE_BOOST_SPEED = 20.0
@@ -815,7 +815,7 @@ BOOST_COST_MICROS = 100_000
 BOOST_COIN_INTERVAL = 0.5
 
 FOOD_RADIUS = 9
-FOOD_INITIAL_COUNT = 80
+FOOD_INITIAL_COUNT = 300
 
 FOOD_COLORS = [
     "#ff3b30",
@@ -880,26 +880,26 @@ class SnakeRoom:
 
     def spawn_food(self, amount: int = 1):
 
-        for _ in range(amount):
-            self.foods.append({
-                "id": f"food_{uuid.uuid4().hex}",
-                "x": random.uniform(30, WORLD_WIDTH - 30),
-                "y": random.uniform(30, WORLD_HEIGHT - 30),
-                "color": random.choice(FOOD_COLORS),
-                "radius": FOOD_RADIUS,
-                "growth": 1,
-            })
+    for _ in range(amount):
+        self.foods.append({
+            "id": f"food_{uuid.uuid4().hex}",
+            "x": random.uniform(25, WORLD_WIDTH - 25),
+            "y": random.uniform(25, WORLD_HEIGHT - 25),
+            "color": random.choice(FOOD_COLORS),
+            "radius": FOOD_RADIUS,
+            "growth": 1,
+        })
 
     def create_spawn(self):
 
         positions = [
-            (10000, 10000, 0),
-            (90000, 90000, math.pi),
-            (90000, 10000, math.pi),
-            (10000, 90000, 0),
-            (50000, 15000, math.pi / 2),
-            (50000, 85000, -math.pi / 2),
-        ]
+    (120, 120, 0),
+    (880, 880, math.pi),
+    (880, 120, math.pi),
+    (120, 880, 0),
+    (500, 150, math.pi / 2),
+    (500, 850, -math.pi / 2),
+]
 
         occupied = [
             (s["body"][0]["x"], s["body"][0]["y"])
