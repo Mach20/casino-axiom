@@ -17,9 +17,8 @@ app = FastAPI(title="AXIOM Game Backend")
 # ============================================================
 
 SUPABASE_URL = "https://djdzytfdztctusnuuvrm.supabase.co"
+SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqZHp5dGZkenRjdHVzbnV1dnJtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4OTUxOTE3NywiZXhwIjoyMTA1MDk1MTc3fQ.45n4zgBGqXTtqI3LJOhefxSNckxnddsKGZjoSajkihM"
 
-# Pega aquí tu NUEVA clave service_role después de rotar la anterior.
-SUPABASE_SERVICE_ROLE_KEY = "PEGA_AQUI_TU_NUEVA_SERVICE_ROLE_KEY"
 
 supabase: Client = create_client(
     SUPABASE_URL,
