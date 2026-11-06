@@ -1,3 +1,4 @@
+
 import os
 import random
 import asyncio
@@ -16,8 +17,9 @@ app = FastAPI(title="AXIOM Game Backend")
 # ============================================================
 
 SUPABASE_URL = "https://djdzytfdztctusnuuvrm.supabase.co"
-SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqZHp5dGZkenRjdHVzbnV1dnJtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4OTUxOTE3NywiZXhwIjoyMTA1MDk1MTc3fQ.45n4zgBGqXTtqI3LJOhefxSNckxnddsKGZjoSajkihM"
 
+# Pega aquí tu NUEVA clave service_role después de rotar la anterior.
+SUPABASE_SERVICE_ROLE_KEY = "PEGA_AQUI_TU_NUEVA_SERVICE_ROLE_KEY"
 
 supabase: Client = create_client(
     SUPABASE_URL,
@@ -799,14 +801,23 @@ COIN_VALUE_MICROS = 100_000
 
 INITIAL_BALANCE_MICROS = 1_000_000
 
-# Cada moneda de aceleración cuesta $0.10.
 BOOST_COST_MICROS = 100_000
-
-# Una moneda de $0.10 cada medio segundo mientras se mantenga pulsado.
 BOOST_COIN_INTERVAL = 0.5
 
 FOOD_RADIUS = 9
 FOOD_INITIAL_COUNT = 10000
+
+# ============================================================
+# OPTIMIZACIÓN ESPACIAL DE COMIDA
+# ============================================================
+
+# El mapa se divide en sectores de 300 x 300.
+# Cada sector contiene solamente las comidas de esa zona.
+FOOD_CELL_SIZE = 300
+
+# El servidor envía al frontend comidas dentro de este radio.
+# Las 10.000 comidas siguen existiendo en el servidor.
+FOOD_VIEW_RADIUS = 1800
 
 FOOD_COLORS = [
     "#ff3b30",
@@ -858,20 +869,121 @@ class SnakeRoom:
     def __init__(self, room_id: str):
 
         self.room_id = room_id
+
         self.connections: Dict[str, WebSocket] = {}
         self.snakes: Dict[str, dict] = {}
 
         self.foods: List[dict] = []
         self.coins: List[dict] = []
 
+        # Índice espacial de comida.
+        self.food_grid: Dict[tuple, list] = {}
+
+        # Comidas consumidas durante el tick actual.
+        self.consumed_food_ids = set()
+
         self.is_running = False
         self.lock = asyncio.Lock()
 
         self.spawn_food(FOOD_INITIAL_COUNT)
+        self.rebuild_food_grid()
+
+    # --------------------------------------------------------
+    # ÍNDICE ESPACIAL
+    # --------------------------------------------------------
+
+    def food_cell(self, x: float, y: float):
+
+        return (
+            int(x // FOOD_CELL_SIZE),
+            int(y // FOOD_CELL_SIZE)
+        )
+
+    def rebuild_food_grid(self):
+
+        grid = {}
+
+        for food in self.foods:
+
+            cell = self.food_cell(
+                food["x"],
+                food["y"]
+            )
+
+            if cell not in grid:
+                grid[cell] = []
+
+            grid[cell].append(food)
+
+        self.food_grid = grid
+
+    def get_food_near(
+        self,
+        x: float,
+        y: float,
+        radius: float
+    ):
+
+        min_cell_x = int((x - radius) // FOOD_CELL_SIZE)
+        max_cell_x = int((x + radius) // FOOD_CELL_SIZE)
+
+        min_cell_y = int((y - radius) // FOOD_CELL_SIZE)
+        max_cell_y = int((y + radius) // FOOD_CELL_SIZE)
+
+        for cell_x in range(min_cell_x, max_cell_x + 1):
+
+            for cell_y in range(min_cell_y, max_cell_y + 1):
+
+                foods = self.food_grid.get(
+                    (cell_x, cell_y),
+                    []
+                )
+
+                for food in foods:
+
+                    if food["id"] in self.consumed_food_ids:
+                        continue
+
+                    if (
+                        abs(food["x"] - x) <= radius
+                        and abs(food["y"] - y) <= radius
+                    ):
+                        yield food
+
+    def nearby_foods_for_players(self):
+
+        visible = {}
+        radius = FOOD_VIEW_RADIUS
+
+        for snake in self.snakes.values():
+
+            if not snake.get("alive"):
+                continue
+
+            body = snake.get("body", [])
+
+            if not body:
+                continue
+
+            head = body[0]
+
+            for food in self.get_food_near(
+                head["x"],
+                head["y"],
+                radius
+            ):
+                visible[food["id"]] = food
+
+        return list(visible.values())
+
+    # --------------------------------------------------------
+    # CREAR COMIDA
+    # --------------------------------------------------------
 
     def spawn_food(self, amount: int = 1):
 
         for _ in range(amount):
+
             self.foods.append({
                 "id": f"food_{uuid.uuid4().hex}",
                 "x": random.uniform(25, WORLD_WIDTH - 25),
@@ -880,6 +992,10 @@ class SnakeRoom:
                 "radius": FOOD_RADIUS,
                 "growth": 1,
             })
+
+    # --------------------------------------------------------
+    # POSICIÓN INICIAL
+    # --------------------------------------------------------
 
     def create_spawn(self):
 
@@ -926,6 +1042,10 @@ class SnakeRoom:
             WORLD_HEIGHT / 2,
             random.uniform(-math.pi, math.pi)
         )
+
+    # --------------------------------------------------------
+    # AGREGAR SERPIENTE
+    # --------------------------------------------------------
 
     def add_snake(
         self,
@@ -1064,7 +1184,6 @@ class SnakeRoom:
             snake["boosting"] = False
             return False
 
-        # Descontar exactamente $0.10.
         snake["balance_micros"] -= BOOST_COST_MICROS
         snake["boost_spent_micros"] += BOOST_COST_MICROS
 
@@ -1079,7 +1198,6 @@ class SnakeRoom:
 
         self.update_balance(snake)
 
-        # La moneda aparece detrás de la cola.
         tail = body[-1]
 
         angle = snake.get("angle", 0) + math.pi
@@ -1119,7 +1237,7 @@ class SnakeRoom:
 
         collected = []
 
-        for coin in list(self.coins):
+        for coin in self.coins:
 
             distance = math.hypot(
                 head["x"] - coin["x"],
@@ -1146,29 +1264,30 @@ class SnakeRoom:
         self.update_balance(snake)
 
     # --------------------------------------------------------
-    # RECOGER COMIDA
+    # RECOGER COMIDA OPTIMIZADO
     # --------------------------------------------------------
 
     def collect_food(self, snake: dict, head: dict):
 
-        collected = []
+        # En vez de recorrer las 10.000 comidas,
+        # consulta solamente los sectores cercanos a la cabeza.
 
-        for food in list(self.foods):
-
-            distance = math.hypot(
-                head["x"] - food["x"],
-                head["y"] - food["y"]
+        collected = list(
+            self.get_food_near(
+                head["x"],
+                head["y"],
+                FOOD_RADIUS + 8
             )
-
-            if distance <= FOOD_RADIUS + 8:
-                collected.append(food)
+        )
 
         for food in collected:
 
-            if food not in self.foods:
+            food_id = food["id"]
+
+            if food_id in self.consumed_food_ids:
                 continue
 
-            self.foods.remove(food)
+            self.consumed_food_ids.add(food_id)
 
             growth = max(1, int(food.get("growth", 1)))
 
@@ -1221,8 +1340,6 @@ class SnakeRoom:
 
         now = time.monotonic()
 
-        # Mientras BOOST_START siga activo, se genera una moneda
-        # cada medio segundo y se descuenta $0.10.
         if snake.get("boosting"):
 
             if now >= snake.get("next_boost_coin_at", 0):
@@ -1271,7 +1388,7 @@ class SnakeRoom:
             snake["body"].pop()
 
     # --------------------------------------------------------
-    # ESTADO PÚBLICO
+    # ESTADO PÚBLICO OPTIMIZADO
     # --------------------------------------------------------
 
     def public_state(self):
@@ -1297,11 +1414,39 @@ class SnakeRoom:
                 "boosting": snake["boosting"],
             }
 
+        # IMPORTANTE:
+        # Ya no enviamos las 10.000 comidas en cada actualización.
+        # Solo enviamos las que están cerca de las serpientes.
+        visible_foods = self.nearby_foods_for_players()
+
+        # Las monedas también se filtran por proximidad.
+        visible_coins = {}
+
+        for snake in self.snakes.values():
+
+            if not snake.get("alive"):
+                continue
+
+            body = snake.get("body", [])
+
+            if not body:
+                continue
+
+            head = body[0]
+
+            for coin in self.coins:
+
+                if (
+                    abs(coin["x"] - head["x"]) <= FOOD_VIEW_RADIUS
+                    and abs(coin["y"] - head["y"]) <= FOOD_VIEW_RADIUS
+                ):
+                    visible_coins[coin["id"]] = coin
+
         return {
             "type": "GAME_STATE",
             "snakes": public_snakes,
-            "foods": self.foods,
-            "coins": self.coins,
+            "foods": visible_foods,
+            "coins": list(visible_coins.values()),
             "world": {
                 "width": WORLD_WIDTH,
                 "height": WORLD_HEIGHT,
@@ -1320,7 +1465,7 @@ class SnakeRoom:
                 pass
 
     # --------------------------------------------------------
-    # BUCLE DEL JUEGO
+    # BUCLE DEL JUEGO OPTIMIZADO
     # --------------------------------------------------------
 
     async def game_loop(self):
@@ -1336,13 +1481,34 @@ class SnakeRoom:
 
                 async with self.lock:
 
+                    # Limpiar el registro de comidas consumidas
+                    # al comenzar cada ciclo.
+                    self.consumed_food_ids.clear()
+
+                    # Actualizar serpientes.
                     for uid in list(self.snakes.keys()):
                         self.update_snake(uid)
 
-                    missing_food = FOOD_INITIAL_COUNT - len(self.foods)
+                    # Eliminar de la lista las comidas consumidas.
+                    if self.consumed_food_ids:
+
+                        self.foods = [
+                            food
+                            for food in self.foods
+                            if food["id"] not in self.consumed_food_ids
+                        ]
+
+                    # Mantener siempre las 10.000 comidas.
+                    missing_food = (
+                        FOOD_INITIAL_COUNT - len(self.foods)
+                    )
 
                     if missing_food > 0:
                         self.spawn_food(min(missing_food, 5))
+
+                    # Reconstruir el índice espacial una sola vez
+                    # por ciclo, no una vez por serpiente.
+                    self.rebuild_food_grid()
 
                 await self.broadcast()
                 await asyncio.sleep(GAME_TICK)
@@ -1386,7 +1552,7 @@ async def snake_game_endpoint(
         await websocket.close()
         return
 
-    # La entrada de Snake se mantiene en $1.00.
+    # Entrada fija de Snake.
     bet = 1.00
 
     if room_id not in snake_rooms:
@@ -1421,6 +1587,7 @@ async def snake_game_endpoint(
         room.connections[user_id] = websocket
         room.add_snake(user_id, bet, wallet, color)
 
+    # El estado inicial ya incluye únicamente comida cercana.
     await websocket.send_json(room.public_state())
 
     if not room.is_running:
@@ -1495,8 +1662,7 @@ async def snake_game_endpoint(
 
                             snake["boosting"] = True
 
-                            # La primera moneda aparece inmediatamente
-                            # después de pulsar el botón.
+                            # Primera moneda al comenzar.
                             snake["next_boost_coin_at"] = time.monotonic()
 
                 await room.broadcast()
@@ -1646,7 +1812,7 @@ async def snake_game_endpoint(
 
                 refund = money_from_micros(refund_micros)
 
-                # Comisión del 5% de la apuesta inicial ($1.00).
+                # Comisión del 5% de la apuesta inicial.
                 commission = 0.05
 
                 refund_net = max(
@@ -1666,8 +1832,7 @@ async def snake_game_endpoint(
                     "commission": commission,
                 }
 
-                # El saldo que no se devuelve queda en monedas
-                # dentro del mapa.
+                # El saldo que no se devuelve queda en monedas.
                 remaining = max(
                     0,
                     balance_micros - refund_micros
