@@ -578,6 +578,11 @@ async def game_endpoint(
             data = await websocket.receive_json()
             msg_type = data.get("type")
 
+            # Manejo de PING/PONG para evitar desconexiones por timeout (Código 1006)
+            if msg_type == "PING":
+                await websocket.send_json({"type": "PONG"})
+                continue
+
             if msg_type in ("MOVE", "MAKE_MOVE", "PLAY"):
                 async with lock:
                     if room.get("finished") or room["status"] != "PLAYING":
