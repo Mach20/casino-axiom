@@ -1122,6 +1122,10 @@ class SnakeRoom:
 
         self.update_balance(snake)
 
+        # ========================================================
+    # MUERTE DE SERPIENTE
+    # ========================================================
+
     def kill_snake(self, snake: dict):
         if not snake.get("alive"):
             return
@@ -1131,3 +1135,758 @@ class SnakeRoom:
 
         self.drop_food(snake)
         self.drop_coins(snake)
+
+    # ========================================================
+    # COMIDA
+    # ========================================================
+
+    def consume_food(self, snake: dict):
+        if not snake.get("alive") or not snake.get("body"):
+            return
+
+        head = snake["body"][0]
+        eaten = []
+
+        for food in self.get_food_near(
+            head["x"],
+            head["y"],
+            FOOD_RADIUS + 15
+        ):
+            distance = math.hypot(
+                head["x"] - food["x"],
+                head["y"] - food["y"]
+            )
+
+            if distance <= FOOD_RADIUS + 12:
+                eaten.append(food)
+
+        if not eaten:
+            return
+
+        for food in eaten:
+            self.consumed_food_ids.add(food["id"])
+
+            snake["food_eaten"] += 1
+            snake["score"] += 1
+            snake["grow_pending"] += FOOD_GROWTH_PER_ITEM
+
+        if len(self.consumed_food_ids) > 10000:
+            self.foods = [
+                food for food in self.foods
+                if food["id"] not in self.consumed_food_ids
+            ]
+            self.consumed_food_ids.clear()
+            self.rebuild_food_grid()
+
+    # ========================================================
+    # RECOGER MONEDAS
+    # ========================================================
+
+    def consume_coins(self, snake: dict):
+        if not snake.get("alive") or not snake.get("body"):
+            return
+
+        head = snake["body"][0]
+        remaining = []
+
+        for coin in self.coins:
+            distance = math.hypot(
+                head["x"] - coin["x"],
+                head["y"] - coin["y"]
+            )
+
+            if distance <= COIN_RADIUS + 18:
+                value = max(
+                    0,
+                    int(coin.get("value_micros", 0))
+                )
+
+                snake["balance_micros"] += value
+                snake["collected_micros"] += value
+                snake["score"] += 1
+
+                self.update_balance(snake)
+            else:
+                remaining.append(coin)
+
+        self.coins = remaining
+
+    # ========================================================
+    # MOVIMIENTO
+    # ========================================================
+
+    def move_snake(self, snake: dict, delta_time: float):
+        if not snake.get("alive"):
+            return
+
+        if not snake.get("ready"):
+            return
+
+        body = snake.get("body", [])
+
+        if not body:
+            return
+
+        angle = float(snake.get("angle", 0))
+
+        speed = (
+            SNAKE_BOOST_SPEED
+            if snake.get("boosting")
+            else SNAKE_SPEED
+        )
+
+        distance = speed * delta_time * 30
+
+        head = body[0]
+
+        new_x = head["x"] + math.cos(angle) * distance
+        new_y = head["y"] + math.sin(angle) * distance
+
+        # Los límites del mapa provocan la muerte.
+        if (
+            new_x < 10
+            or new_y < 10
+            or new_x > WORLD_WIDTH - 10
+            or new_y > WORLD_HEIGHT - 10
+        ):
+            self.kill_snake(snake)
+            return
+
+        new_body = [{"x": new_x, "y": new_y}]
+
+        # Mantener la separación entre segmentos.
+        for point in body:
+            previous = new_body[-1]
+
+            dx = point["x"] - previous["x"]
+            dy = point["y"] - previous["y"]
+            distance_between = math.hypot(dx, dy)
+
+            if distance_between >= SNAKE_SEGMENT_DISTANCE:
+                ratio = SNAKE_SEGMENT_DISTANCE / distance_between
+
+                new_body.append({
+                    "x": previous["x"] + dx * ratio,
+                    "y": previous["y"] + dy * ratio,
+                })
+
+        if snake.get("grow_pending", 0) > 0:
+            last = new_body[-1]
+
+            new_body.append({
+                "x": last["x"],
+                "y": last["y"],
+            })
+
+            snake["grow_pending"] -= 1
+
+        snake["body"] = new_body
+
+        self.consume_food(snake)
+        self.consume_coins(snake)
+
+    # ========================================================
+    # COLISIONES
+    # ========================================================
+
+    def check_collisions(self):
+        alive_snakes = [
+            (user_id, snake)
+            for user_id, snake in self.snakes.items()
+            if snake.get("alive")
+            and snake.get("ready")
+            and snake.get("body")
+        ]
+
+        for user_id, snake in alive_snakes:
+            if not snake.get("alive"):
+                continue
+
+            head = snake["body"][0]
+
+            # Colisión contra el propio cuerpo.
+            for segment in snake["body"][10:]:
+                if math.hypot(
+                    head["x"] - segment["x"],
+                    head["y"] - segment["y"]
+                ) < 9:
+                    self.kill_snake(snake)
+                    break
+
+            if not snake.get("alive"):
+                continue
+
+            # Colisión contra las demás serpientes.
+            for other_id, other in alive_snakes:
+                if user_id == other_id or not other.get("alive"):
+                    continue
+
+                other_body = other.get("body", [])
+
+                if not other_body:
+                    continue
+
+                for segment in other_body[1:]:
+                    if math.hypot(
+                        head["x"] - segment["x"],
+                        head["y"] - segment["y"]
+                    ) < 12:
+                        self.kill_snake(snake)
+
+                        if other.get("alive"):
+                            other["kills"] += 1
+                            other["score"] += 5
+
+                        break
+
+                if not snake.get("alive"):
+                    break
+
+    # ========================================================
+    # IMPULSO
+    # ========================================================
+
+    def process_boost(self, snake: dict):
+        if not snake.get("alive") or not snake.get("boosting"):
+            return
+
+        now = time.time()
+
+        if now < snake.get("next_boost_coin_at", 0):
+            return
+
+        balance = int(snake.get("balance_micros", 0))
+
+        if balance < BOOST_COST_MICROS:
+            snake["boosting"] = False
+            return
+
+        snake["balance_micros"] -= BOOST_COST_MICROS
+        snake["boost_spent_micros"] += BOOST_COST_MICROS
+
+        snake["next_boost_coin_at"] = (
+            now + BOOST_COIN_INTERVAL
+        )
+
+        self.update_balance(snake)
+
+    # ========================================================
+    # ESTADO DEL JUEGO
+    # ========================================================
+
+    def get_game_state(self):
+        snakes_data = {}
+
+        for user_id, snake in self.snakes.items():
+            snakes_data[user_id] = {
+                "user_id": user_id,
+                "body": snake["body"],
+                "angle": snake["angle"],
+                "score": snake["score"],
+                "kills": snake["kills"],
+                "color": snake["color"],
+                "alive": snake["alive"],
+                "ready": snake["ready"],
+                "boosting": snake["boosting"],
+                "balance": money_from_micros(
+                    snake["balance_micros"]
+                ),
+                "balance_micros": snake["balance_micros"],
+                "earned": money_from_micros(
+                    snake["collected_micros"]
+                ),
+                "wallet": snake["wallet"],
+            }
+
+        return {
+            "type": "GAME_STATE",
+            "room_id": self.room_id,
+            "world": {
+                "width": WORLD_WIDTH,
+                "height": WORLD_HEIGHT,
+            },
+            "snakes": snakes_data,
+            "foods": self.nearby_foods_for_players(),
+            "coins": self.coins,
+            "players_count": len([
+                s for s in self.snakes.values()
+                if s.get("alive")
+            ]),
+        }
+
+    # ========================================================
+    # TRANSMITIR ESTADO
+    # ========================================================
+
+    async def broadcast(self):
+        if not self.connections:
+            return
+
+        state = self.get_game_state()
+
+        disconnected = []
+
+        for user_id, websocket in list(self.connections.items()):
+            try:
+                await websocket.send_json(state)
+            except Exception:
+                disconnected.append(user_id)
+
+        for user_id in disconnected:
+            self.connections.pop(user_id, None)
+
+    # ========================================================
+    # BUCLE PRINCIPAL
+    # ========================================================
+
+    async def game_loop(self):
+        if self.is_running:
+            return
+
+        self.is_running = True
+        previous_time = time.monotonic()
+
+        try:
+            while self.is_running:
+                start = time.monotonic()
+                delta_time = min(
+                    start - previous_time,
+                    0.1
+                )
+                previous_time = start
+
+                async with self.lock:
+                    for snake in list(self.snakes.values()):
+                        self.process_boost(snake)
+                        self.move_snake(snake, delta_time)
+
+                    self.check_collisions()
+
+                    # Reponer comida si disminuye demasiado.
+                    if len(self.foods) < FOOD_INITIAL_COUNT:
+                        missing = min(
+                            100,
+                            FOOD_INITIAL_COUNT - len(self.foods)
+                        )
+
+                        self.spawn_food(missing)
+                        self.rebuild_food_grid()
+
+                    await self.broadcast()
+
+                elapsed = time.monotonic() - start
+                await asyncio.sleep(
+                    max(0, GAME_TICK - elapsed)
+                )
+
+        except asyncio.CancelledError:
+            raise
+
+        except Exception as exc:
+            print(
+                f"ERROR en game_loop Snake {self.room_id}: {exc!r}"
+            )
+
+        finally:
+            self.is_running = False
+
+
+# ============================================================
+# COMISIONES SNAKE
+# ============================================================
+
+def registrar_comision_snake(
+    user_id: str,
+    room_id: str,
+    monto_retiro: float,
+    transaction_key: str
+):
+    monto_retiro = round(max(0, float(monto_retiro)), 2)
+    porcentaje = 5.00
+
+    comision = round(monto_retiro * 0.05, 2)
+    monto_jugador = round(
+        monto_retiro - comision,
+        2
+    )
+
+    try:
+        registro = {
+            "user_id": user_id,
+            "room_id": room_id,
+            "game": "snake",
+            "monto_retiro": monto_retiro,
+            "porcentaje": porcentaje,
+            "comision": comision,
+            "monto_jugador": monto_jugador,
+            "transaction_key": transaction_key,
+        }
+
+        supabase.table("comisiones").upsert(
+            registro,
+            on_conflict="transaction_key",
+            ignore_duplicates=True
+        ).execute()
+
+        return True
+
+    except Exception as exc:
+        print(
+            f"ERROR registrando comisión Snake: {exc!r}"
+        )
+        return False
+
+
+# ============================================================
+# OBTENER O CREAR SALA SNAKE
+# ============================================================
+
+def get_snake_room(room_id: str) -> SnakeRoom:
+    if room_id not in snake_rooms:
+        snake_rooms[room_id] = SnakeRoom(room_id)
+
+    return snake_rooms[room_id]
+
+
+# ============================================================
+# ENDPOINT PRINCIPAL SNAKE
+# ============================================================
+
+@app.websocket("/ws/snake/{room_id}")
+async def snake_endpoint(
+    websocket: WebSocket,
+    room_id: str,
+    user_id: str = Query(""),
+    access_token: str = Query(""),
+    bet: float = Query(1.00),
+    wallet: str = Query("play"),
+    color: str = Query("#34d399"),
+):
+    await websocket.accept()
+
+    if not verify_user_token(access_token, user_id):
+        await send_error(
+            websocket,
+            "Tu sesión no es válida."
+        )
+        await websocket.close()
+        return
+
+    if wallet not in ("play", "bonus"):
+        await send_error(
+            websocket,
+            "Billetera no válida."
+        )
+        await websocket.close()
+        return
+
+    try:
+        bet = round(float(bet), 2)
+    except (ValueError, TypeError):
+        await send_error(
+            websocket,
+            "La apuesta no es válida."
+        )
+        await websocket.close()
+        return
+
+    if not math.isfinite(bet) or bet != 1.00:
+        await send_error(
+            websocket,
+            "La entrada a Snake es de $1.00."
+        )
+        await websocket.close()
+        return
+
+    if not room_id or len(room_id) > 100:
+        await send_error(
+            websocket,
+            "Sala no válida."
+        )
+        await websocket.close()
+        return
+
+    room = get_snake_room(room_id)
+
+    async with room.lock:
+        existing = room.snakes.get(user_id)
+
+        if existing and existing.get("alive"):
+            await send_error(
+                websocket,
+                "Ya tienes una serpiente activa en esta sala."
+            )
+            await websocket.close()
+            return
+
+        if existing and existing.get("cashed_out"):
+            await send_error(
+                websocket,
+                "Ya retiraste tu saldo de esta partida."
+            )
+            await websocket.close()
+            return
+
+        if existing and not existing.get("alive"):
+            await send_error(
+                websocket,
+                "Tu partida terminó. Ingresa a una nueva sala."
+            )
+            await websocket.close()
+            return
+
+        if any(
+            uid == user_id
+            and snake.get("alive")
+            for other_room in snake_rooms.values()
+            for uid, snake in other_room.snakes.items()
+        ):
+            await send_error(
+                websocket,
+                "Ya tienes una partida Snake activa."
+            )
+            await websocket.close()
+            return
+
+        transaction_key = (
+            f"snake-entry:{room_id}:{user_id}"
+        )
+
+        success, message = deduct_balance(
+            user_id,
+            bet,
+            wallet,
+            room_id,
+            transaction_key
+        )
+
+        if not success:
+            await send_error(websocket, message)
+            await websocket.close()
+            return
+
+        room.add_snake(
+            user_id,
+            bet,
+            wallet,
+            color
+        )
+
+        room.connections[user_id] = websocket
+
+        snake = room.snakes[user_id]
+
+    try:
+        await websocket.send_json({
+            "type": "GAME_STATE",
+            **room.get_game_state(),
+        })
+
+        if not room.is_running:
+            asyncio.create_task(room.game_loop())
+
+        await room.broadcast()
+
+        while True:
+            data = await websocket.receive_json()
+            msg_type = str(data.get("type", "")).upper()
+
+            async with room.lock:
+                current = room.snakes.get(user_id)
+
+                if not current:
+                    await send_error(
+                        websocket,
+                        "No se encontró tu serpiente."
+                    )
+                    continue
+
+                if msg_type == "PING":
+                    await websocket.send_json({
+                        "type": "PONG"
+                    })
+                    continue
+
+                if msg_type == "READY":
+                    if current.get("alive"):
+                        current["ready"] = True
+
+                elif msg_type == "STEER":
+                    if not current.get("alive"):
+                        continue
+
+                    try:
+                        angle = float(data.get("angle", 0))
+                    except (ValueError, TypeError):
+                        continue
+
+                    if math.isfinite(angle):
+                        current["angle"] = angle
+
+                elif msg_type == "BOOST_START":
+                    if current.get("alive"):
+                        current["boosting"] = True
+
+                elif msg_type == "BOOST_STOP":
+                    current["boosting"] = False
+
+                elif msg_type in (
+                    "CASH_OUT",
+                    "CASHOUT"
+                ):
+                    if (
+                        not current.get("alive")
+                        or current.get("cashed_out")
+                    ):
+                        await send_error(
+                            websocket,
+                            "No puedes retirar en este momento."
+                        )
+                        continue
+
+                    current["boosting"] = False
+
+                    gross_micros = max(
+                        0,
+                        int(current.get("balance_micros", 0))
+                    )
+
+                    gross = money_from_micros(
+                        gross_micros
+                    )
+
+                    if gross <= 0:
+                        await send_error(
+                            websocket,
+                            "No tienes saldo para retirar."
+                        )
+                        continue
+
+                    commission = round(gross * 0.05, 2)
+                    payout = round(
+                        gross - commission,
+                        2
+                    )
+
+                    cashout_key = (
+                        f"snake-cashout:"
+                        f"{room_id}:{user_id}:"
+                        f"{current['session_id']}"
+                    )
+
+                    current["cashed_out"] = True
+                    current["alive"] = False
+                    current["balance_micros"] = 0
+                    room.update_balance(current)
+
+                    # El retiro se procesa mediante el RPC existente.
+                    paid, payment_message = settle_snake_cashout(
+                        user_id=user_id,
+                        room_id=room_id,
+                        wallet=current["wallet"],
+                        refund=0,
+                        payout=payout,
+                        transaction_key=cashout_key
+                    )
+
+                    if not paid:
+                        current["cashed_out"] = False
+                        current["alive"] = True
+                        current["balance_micros"] = gross_micros
+                        room.update_balance(current)
+
+                        await send_error(
+                            websocket,
+                            payment_message
+                        )
+                        continue
+
+                    # Registro de comisión con clave única.
+                    commission_saved = registrar_comision_snake(
+                        user_id=user_id,
+                        room_id=room_id,
+                        monto_retiro=gross,
+                        transaction_key=(
+                            f"{cashout_key}:commission"
+                        )
+                    )
+
+                    await websocket.send_json({
+                        "type": "CASHOUT_SUCCESS",
+                        "amount": payout,
+                        "payout": payout,
+                        "gross": gross,
+                        "commission": commission,
+                        "wallet": current["wallet"],
+                        "commission_registered": commission_saved,
+                    })
+
+                    room.connections.pop(user_id, None)
+
+                elif msg_type == "LEAVE":
+                    current["boosting"] = False
+                    room.kill_snake(current)
+
+                else:
+                    continue
+
+            await room.broadcast()
+
+    except WebSocketDisconnect:
+        pass
+
+    except Exception as exc:
+        print(
+            f"ERROR WebSocket Snake {room_id}: {exc!r}"
+        )
+
+        try:
+            await send_error(
+                websocket,
+                "Ocurrió un error en la partida."
+            )
+        except Exception:
+            pass
+
+    finally:
+        async with room.lock:
+            current = room.snakes.get(user_id)
+
+            if room.connections.get(user_id) is websocket:
+                room.connections.pop(user_id, None)
+
+            # Si se desconecta durante la partida, pierde la serpiente
+            # y su saldo restante cae al mapa en monedas.
+            if (
+                current
+                and current.get("alive")
+                and not current.get("cashed_out")
+            ):
+                room.kill_snake(current)
+
+        await room.broadcast()
+
+
+# ============================================================
+# RUTAS DE SALUD
+# ============================================================
+
+@app.get("/")
+async def root():
+    return {
+        "status": "online",
+        "name": "AXIOM Game Backend",
+        "games": [
+            "xo",
+            "snake",
+        ],
+    }
+
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "healthy",
+        "snake_rooms": len(snake_rooms),
+        "xo_rooms": len(lobbies),
+    })
