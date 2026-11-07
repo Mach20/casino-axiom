@@ -1,5 +1,3 @@
-
-import os
 import random
 import asyncio
 import math
@@ -37,9 +35,6 @@ snake_rooms: Dict[str, object] = {}
 class GameManager:
     def __init__(self):
         self.active_connections: Dict[str, List[WebSocket]] = {}
-
-    def calculate_commission(self, amount: float) -> float:
-        return round(max(0, amount) * 0.05, 2)
 
     async def broadcast_lobby(self):
         rooms = [
@@ -856,6 +851,9 @@ class SnakeRoom:
         grid = {}
 
         for food in self.foods:
+            if food["id"] in self.consumed_food_ids:
+                continue
+
             cell = self.food_cell(food["x"], food["y"])
 
             if cell not in grid:
@@ -1006,17 +1004,22 @@ class SnakeRoom:
             random.uniform(-math.pi, math.pi)
         )
 
+    # ========================================================
+    # CREAR SERPIENTE
+    # ========================================================
+
     def add_snake(
         self,
         user_id: str,
         bet: float,
         wallet: str,
-        color: str
+        color: str,
+        session_id: str
     ):
         x, y, angle = self.create_spawn()
 
         self.snakes[user_id] = {
-            "session_id": uuid.uuid4().hex,
+            "session_id": session_id,
             "body": create_snake_body(x, y, angle),
             "angle": angle,
             "score": 0,
@@ -1051,7 +1054,7 @@ class SnakeRoom:
         snake["earned"] = money_from_micros(earned)
 
     # ========================================================
-    # SOLTAR COMIDA: 50% DE LA COMIDA RECOGIDA
+    # SOLTAR 50% DE LA COMIDA RECOGIDA
     # ========================================================
 
     def drop_food(self, snake: dict):
@@ -1155,7 +1158,7 @@ class SnakeRoom:
         # Suelta el 50% de la comida recogida.
         self.drop_food(snake)
 
-        # Suelta todo el saldo restante en monedas.
+        # Suelta todo el saldo restante.
         self.drop_coins(snake)
 
     # ========================================================
@@ -1191,7 +1194,7 @@ class SnakeRoom:
             snake["food_eaten"] += 1
             snake["score"] += 1
 
-            # Cada alimento agrega tres segmentos.
+            # Cada comida agrega exactamente tres segmentos.
             snake["grow_pending"] += FOOD_GROWTH_PER_ITEM
 
         if len(self.consumed_food_ids) > 10000:
@@ -1273,37 +1276,105 @@ class SnakeRoom:
             self.kill_snake(snake)
             return
 
+        # La trayectoria contiene la nueva cabeza y el cuerpo anterior.
+        path = [{"x": new_x, "y": new_y}] + body
+
+        # El tamaño solo cambia por crecimiento pendiente de comida.
+        pending_growth = max(
+            0,
+            int(snake.get("grow_pending", 0))
+        )
+
+        target_length = len(body) + pending_growth
+
         new_body = [{"x": new_x, "y": new_y}]
 
-        # Reconstruye el cuerpo conservando su longitud.
-        for point in body:
-            previous = new_body[-1]
+        path_index = 0
+        accumulated_distance = 0.0
 
-            dx = point["x"] - previous["x"]
-            dy = point["y"] - previous["y"]
-            distance_between = math.hypot(dx, dy)
+        for segment_index in range(1, target_length):
+            target_distance = (
+                segment_index * SNAKE_SEGMENT_DISTANCE
+            )
 
-            if distance_between >= SNAKE_SEGMENT_DISTANCE:
-                ratio = SNAKE_SEGMENT_DISTANCE / distance_between
+            found = False
+
+            while path_index < len(path) - 1:
+                point_a = path[path_index]
+                point_b = path[path_index + 1]
+
+                segment_distance = math.hypot(
+                    point_b["x"] - point_a["x"],
+                    point_b["y"] - point_a["y"]
+                )
+
+                if segment_distance <= 0:
+                    path_index += 1
+                    accumulated_distance = 0.0
+                    continue
+
+                next_accumulated = (
+                    accumulated_distance + segment_distance
+                )
+
+                if next_accumulated >= target_distance:
+                    distance_from_a = (
+                        target_distance - accumulated_distance
+                    )
+
+                    ratio = (
+                        distance_from_a / segment_distance
+                    )
+
+                    ratio = max(0.0, min(1.0, ratio))
+
+                    new_body.append({
+                        "x": point_a["x"] + (
+                            point_b["x"] - point_a["x"]
+                        ) * ratio,
+                        "y": point_a["y"] + (
+                            point_b["y"] - point_a["y"]
+                        ) * ratio,
+                    })
+
+                    found = True
+                    break
+
+                accumulated_distance = next_accumulated
+                path_index += 1
+
+            if not found:
+                # Si la trayectoria disponible no alcanza,
+                # extender desde la cola siguiendo su dirección.
+                last = new_body[-1]
+
+                if len(new_body) >= 2:
+                    previous = new_body[-2]
+
+                    dx = last["x"] - previous["x"]
+                    dy = last["y"] - previous["y"]
+
+                    length = math.hypot(dx, dy)
+
+                    if length > 0:
+                        dx /= length
+                        dy /= length
+                    else:
+                        dx = -math.cos(angle)
+                        dy = -math.sin(angle)
+                else:
+                    dx = -math.cos(angle)
+                    dy = -math.sin(angle)
 
                 new_body.append({
-                    "x": previous["x"] + dx * ratio,
-                    "y": previous["y"] + dy * ratio,
+                    "x": last["x"] + dx * SNAKE_SEGMENT_DISTANCE,
+                    "y": last["y"] + dy * SNAKE_SEGMENT_DISTANCE,
                 })
 
-        # Solo crecer cuando se recoge comida.
-        # BOOST no modifica grow_pending ni agrega segmentos.
-        if snake.get("grow_pending", 0) > 0:
-            last = new_body[-1]
-
-            new_body.append({
-                "x": last["x"],
-                "y": last["y"],
-            })
-
-            snake["grow_pending"] -= 1
-
         snake["body"] = new_body
+
+        # El crecimiento pendiente ya quedó incorporado al cuerpo.
+        snake["grow_pending"] = 0
 
         self.consume_food(snake)
         self.consume_coins(snake)
@@ -1327,6 +1398,7 @@ class SnakeRoom:
 
             head = snake["body"][0]
 
+            # Colisión con el propio cuerpo.
             for segment in snake["body"][10:]:
                 if math.hypot(
                     head["x"] - segment["x"],
@@ -1338,6 +1410,7 @@ class SnakeRoom:
             if not snake.get("alive"):
                 continue
 
+            # Colisión con el cuerpo de otros jugadores.
             for other_id, other in alive_snakes:
                 if user_id == other_id or not other.get("alive"):
                     continue
@@ -1387,7 +1460,9 @@ class SnakeRoom:
         snake["balance_micros"] -= BOOST_COST_MICROS
         snake["boost_spent_micros"] += BOOST_COST_MICROS
 
-        snake["next_boost_coin_at"] = now + BOOST_COIN_INTERVAL
+        snake["next_boost_coin_at"] = (
+            now + BOOST_COIN_INTERVAL
+        )
 
         # La cantidad descontada aparece como moneda en el mapa.
         body = snake.get("body", [])
@@ -1403,9 +1478,7 @@ class SnakeRoom:
 
         self.update_balance(snake)
 
-        # IMPORTANTE:
-        # Aquí no se modifica el cuerpo.
-        # Aquí no se modifica grow_pending.
+        # No se modifica el cuerpo ni grow_pending.
         # Acelerar nunca hace crecer la serpiente.
 
     # ========================================================
@@ -1501,11 +1574,15 @@ class SnakeRoom:
 
                     self.check_collisions()
 
-                    # Reponer comida si disminuye demasiado.
-                    if len(self.foods) < FOOD_INITIAL_COUNT:
+                    # Contar únicamente comida que sigue disponible.
+                    active_food_count = (
+                        len(self.foods) - len(self.consumed_food_ids)
+                    )
+
+                    if active_food_count < FOOD_INITIAL_COUNT:
                         missing = min(
                             100,
-                            FOOD_INITIAL_COUNT - len(self.foods)
+                            FOOD_INITIAL_COUNT - active_food_count
                         )
 
                         self.spawn_food(missing)
@@ -1632,9 +1709,13 @@ async def snake_endpoint(
 
     room = get_snake_room(room_id)
 
+    # Cada entrada tiene una sesión independiente.
+    session_id = uuid.uuid4().hex
+
     async with room.lock:
         existing = room.snakes.get(user_id)
 
+        # Solo se impide entrar si ya existe una serpiente viva.
         if existing and existing.get("alive"):
             await send_error(
                 websocket,
@@ -1643,27 +1724,15 @@ async def snake_endpoint(
             await websocket.close()
             return
 
-        if existing and existing.get("cashed_out"):
-            await send_error(
-                websocket,
-                "Ya retiraste tu saldo de esta partida."
-            )
-            await websocket.close()
-            return
-
-        if existing and not existing.get("alive"):
-            await send_error(
-                websocket,
-                "Tu partida terminó. Ingresa a una nueva sala."
-            )
-            await websocket.close()
-            return
-
-        if any(
+        # No permitir que el usuario tenga otra serpiente viva
+        # en otra sala Snake.
+        active_elsewhere = any(
             uid == user_id and snake.get("alive")
             for other_room in snake_rooms.values()
             for uid, snake in other_room.snakes.items()
-        ):
+        )
+
+        if active_elsewhere:
             await send_error(
                 websocket,
                 "Ya tienes una partida Snake activa."
@@ -1671,7 +1740,11 @@ async def snake_endpoint(
             await websocket.close()
             return
 
-        transaction_key = f"snake-entry:{room_id}:{user_id}"
+        # La clave cambia en cada entrada para permitir reingresar
+        # después de morir o terminar una partida.
+        transaction_key = (
+            f"snake-entry:{room_id}:{user_id}:{session_id}"
+        )
 
         success, message = deduct_balance(
             user_id,
@@ -1690,7 +1763,8 @@ async def snake_endpoint(
             user_id,
             bet,
             wallet,
-            color
+            color,
+            session_id
         )
 
         room.connections[user_id] = websocket
@@ -1708,15 +1782,20 @@ async def snake_endpoint(
             data = await websocket.receive_json()
             msg_type = str(data.get("type", "")).upper()
 
+            should_close_connection = False
+
             async with room.lock:
                 current = room.snakes.get(user_id)
 
-                if not current:
+                if (
+                    not current
+                    or current.get("session_id") != session_id
+                ):
                     await send_error(
                         websocket,
-                        "No se encontró tu serpiente."
+                        "Esta sesión de Snake ya no está activa."
                     )
-                    continue
+                    break
 
                 if msg_type == "PING":
                     await websocket.send_json({"type": "PONG"})
@@ -1785,6 +1864,7 @@ async def snake_endpoint(
                         f"{current['session_id']}"
                     )
 
+                    # Marcar temporalmente el retiro.
                     current["cashed_out"] = True
                     current["alive"] = False
                     current["balance_micros"] = 0
@@ -1828,16 +1908,25 @@ async def snake_endpoint(
                         "commission_registered": commission_saved,
                     })
 
-                    room.connections.pop(user_id, None)
+                    # No dejar que esta sesión siga controlando
+                    # la serpiente después del retiro.
+                    if room.connections.get(user_id) is websocket:
+                        room.connections.pop(user_id, None)
+
+                    should_close_connection = True
 
                 elif msg_type == "LEAVE":
                     current["boosting"] = False
                     room.kill_snake(current)
+                    should_close_connection = True
 
                 else:
                     continue
 
             await room.broadcast()
+
+            if should_close_connection:
+                break
 
     except WebSocketDisconnect:
         pass
@@ -1857,15 +1946,19 @@ async def snake_endpoint(
         async with room.lock:
             current = room.snakes.get(user_id)
 
-            if room.connections.get(user_id) is websocket:
-                room.connections.pop(user_id, None)
-
+            # Una conexión antigua nunca debe tocar la sesión nueva.
             if (
                 current
-                and current.get("alive")
-                and not current.get("cashed_out")
+                and current.get("session_id") == session_id
             ):
-                room.kill_snake(current)
+                if room.connections.get(user_id) is websocket:
+                    room.connections.pop(user_id, None)
+
+                if (
+                    current.get("alive")
+                    and not current.get("cashed_out")
+                ):
+                    room.kill_snake(current)
 
         await room.broadcast()
 
