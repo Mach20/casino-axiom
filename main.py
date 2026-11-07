@@ -1985,6 +1985,7 @@ async def root():
         "games": [
             "xo",
             "snake",
+            "billar",
         ],
     }
 
@@ -1995,6 +1996,8 @@ async def health():
         "status": "healthy",
         "snake_rooms": len(snake_rooms),
         "xo_rooms": len(lobbies),
+        "billar_rooms": len(BILLAR_ROOMS),
+        "billar_waiting_rooms": len(billar_lobby_rooms()) if "billar_lobby_rooms" in globals() else 0,
     }
 # ============================================================
 # BILLAR 8 BALL
@@ -2201,6 +2204,9 @@ def billar_create_room(room_id, user_id, wallet, bet, name):
         "room_id": room_id,
         "bet": bet,
         "status": "WAITING",
+        "creator": name,
+        "is_public": True,
+        "password": "",
         "players": {
             user_id: {
                 "user_id": user_id,
@@ -2418,6 +2424,7 @@ async def billar_finish(
     except Exception as exc:
         print(f"ERROR actualizando sala Billar: {exc!r}")
 
+    await billar_broadcast_lobby()
     return True
 
 
@@ -2596,6 +2603,198 @@ async def billar_shot(room, user_id, angle, power):
     return True, room["message"]
 
 
+
+# ============================================================
+# LOBBY BILLAR: SALAS PUBLICAS Y PRIVADAS
+# ============================================================
+
+BILLAR_LOBBY_CONNECTIONS: List[WebSocket] = []
+
+
+def billar_lobby_rooms():
+    """Devuelve únicamente salas disponibles para entrar."""
+    available = []
+
+    for room_id, room in BILLAR_ROOMS.items():
+        if (
+            room.get("finished")
+            or room.get("status") != "WAITING"
+            or len(room.get("players", {})) >= 2
+            or not room.get("is_public", True)
+        ):
+            continue
+
+        creator_player = next(iter(room["players"].values()), {})
+        available.append({
+            "room_id": room_id,
+            "creator": room.get("creator") or creator_player.get("name", "Jugador"),
+            "bet": float(room["bet"]),
+            "is_public": True,
+            "players_count": len(room["players"]),
+            "game": "billar",
+        })
+
+    return available
+
+
+async def billar_broadcast_lobby():
+    payload = {
+        "type": "LOBBY_UPDATE",
+        "rooms": billar_lobby_rooms(),
+        "active_count": len(billar_lobby_rooms()),
+    }
+
+    for ws in list(BILLAR_LOBBY_CONNECTIONS):
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            if ws in BILLAR_LOBBY_CONNECTIONS:
+                BILLAR_LOBBY_CONNECTIONS.remove(ws)
+
+
+@app.websocket("/ws/billar-lobby")
+async def billar_lobby_endpoint(
+    websocket: WebSocket,
+    user_id: str = Query(""),
+    access_token: str = Query(""),
+):
+    await websocket.accept()
+
+    if not verify_user_token(access_token, user_id):
+        await send_error(websocket, "Tu sesión no es válida.")
+        await websocket.close()
+        return
+
+    BILLAR_LOBBY_CONNECTIONS.append(websocket)
+
+    try:
+        await websocket.send_json({
+            "type": "LOBBY_UPDATE",
+            "rooms": billar_lobby_rooms(),
+            "active_count": len(billar_lobby_rooms()),
+        })
+
+        while True:
+            data = await websocket.receive_json()
+            msg_type = str(data.get("type", "")).upper()
+
+            if msg_type == "PING":
+                await websocket.send_json({"type": "PONG"})
+                continue
+
+            if msg_type != "CREATE_ROOM":
+                continue
+
+            if str(data.get("user_id", user_id)) != str(user_id):
+                await send_error(websocket, "Usuario no autorizado.")
+                continue
+
+            if any(
+                user_id in room.get("players", {}) and not room.get("finished")
+                for room in BILLAR_ROOMS.values()
+            ):
+                await send_error(websocket, "Ya tienes una partida de billar activa.")
+                continue
+
+            wallet = str(data.get("wallet", "play")).lower()
+            if wallet not in ("play", "bonus"):
+                await send_error(websocket, "Billetera no válida.")
+                continue
+
+            try:
+                bet = round(float(data.get("bet", 0.25)), 2)
+            except (ValueError, TypeError):
+                await send_error(websocket, "La apuesta no es válida.")
+                continue
+
+            if not math.isfinite(bet) or bet < 0.25 or bet > 10000:
+                await send_error(websocket, "La apuesta mínima para Billar es $0.25.")
+                continue
+
+            creator = str(data.get("creator") or data.get("name") or "Jugador").strip()[:40]
+            is_public = bool(data.get("is_public", True))
+            password = str(data.get("password") or "").strip()
+
+            if not is_public and len(password) < 1:
+                await send_error(websocket, "Debes establecer una contraseña para la sala privada.")
+                continue
+
+            room_id = uuid.uuid4().hex[:12]
+            entry_total = round(bet * 1.05, 2)
+
+            success, message = deduct_balance(
+                user_id,
+                entry_total,
+                wallet,
+                room_id,
+                f"billar-entry:{room_id}:{user_id}",
+            )
+
+            if not success:
+                await send_error(websocket, message)
+                continue
+
+            commission_saved = billar_register_commission(
+                user_id,
+                room_id,
+                bet,
+                f"billar-commission:{room_id}:{user_id}",
+            )
+
+            room = billar_create_room(
+                room_id,
+                user_id,
+                wallet,
+                bet,
+                creator,
+            )
+            room["creator"] = creator
+            room["is_public"] = is_public
+            room["password"] = password
+            BILLAR_ROOMS[room_id] = room
+            BILLAR_LOCKS[room_id] = asyncio.Lock()
+
+            try:
+                supabase.table("billar").upsert({
+                    "room_id": room_id,
+                    "jugador1_id": user_id,
+                    "apuesta": bet,
+                    "comision_por_jugador": round(bet * 0.05, 2),
+                    "billetera_jugador1": wallet,
+                    "estado": "esperando",
+                    "estado_juego": billar_public_state(room),
+                    "entrada_jugador1_pagada": True,
+                    "transaction_key": f"billar-entry:{room_id}:{user_id}",
+                }, on_conflict="room_id").execute()
+            except Exception as exc:
+                print(f"ERROR guardando sala creada de Billar: {exc!r}")
+
+            await websocket.send_json({
+                "type": "ROOM_CREATED",
+                "room_id": room_id,
+                "bet": bet,
+                "wallet": wallet,
+                "is_public": is_public,
+                "entry_total": entry_total,
+                "commission": round(bet * 0.05, 2),
+                "commission_registered": commission_saved,
+            })
+
+            await billar_broadcast_lobby()
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        print(f"ERROR lobby Billar: {exc!r}")
+        try:
+            await send_error(websocket, "Ocurrió un error en el lobby de Billar.")
+        except Exception:
+            pass
+    finally:
+        if websocket in BILLAR_LOBBY_CONNECTIONS:
+            BILLAR_LOBBY_CONNECTIONS.remove(websocket)
+
+
 @app.websocket("/ws/billar/{room_id}")
 async def billar_endpoint(
     websocket: WebSocket,
@@ -2625,8 +2824,8 @@ async def billar_endpoint(
         await websocket.close()
         return
 
-    if not math.isfinite(bet) or bet < 0.10 or bet > 10000:
-        await send_error(websocket, "La apuesta mínima es $0.10.")
+    if not math.isfinite(bet) or bet < 0.25 or bet > 10000:
+        await send_error(websocket, "La apuesta mínima para Billar es $0.25.")
         await websocket.close()
         return
 
@@ -2645,6 +2844,13 @@ async def billar_endpoint(
                 await send_error(websocket, "La partida ya terminó.")
                 await websocket.close()
                 return
+
+            if room and not room.get("is_public", True):
+                supplied_password = str(websocket.query_params.get("password", ""))
+                if supplied_password != str(room.get("password", "")):
+                    await send_error(websocket, "Contraseña incorrecta.")
+                    await websocket.close()
+                    return
 
             if room and user_id in room["players"]:
                 player = room["players"][user_id]
@@ -2790,6 +2996,7 @@ async def billar_endpoint(
             })
 
             await billar_broadcast(room)
+            await billar_broadcast_lobby()
 
         while True:
             data = await websocket.receive_json()
@@ -2932,6 +3139,8 @@ async def billar_endpoint(
                         "abandon",
                         opponent_id,
                     )
+
+        await billar_broadcast_lobby()
 
 
 # ============================================================
