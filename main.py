@@ -1063,24 +1063,32 @@ class SnakeRoom:
         if not body:
             return
 
-        head = body[0]
+        # Cantidad de alimentos que recogió durante la partida.
+        food_eaten = max(0, int(snake.get("food_eaten", 0)))
 
-        food_eaten = max(
-            0,
-            int(snake.get("food_eaten", 0))
-        )
-
+        # Suelta exactamente la mitad, redondeando hacia abajo.
         amount_to_drop = food_eaten // 2
 
-        for _ in range(amount_to_drop):
+        if amount_to_drop <= 0:
+            return
+
+        # Distribuir la comida alrededor del cuerpo muerto.
+        for i in range(amount_to_drop):
+            body_index = min(
+                len(body) - 1,
+                int((i / max(1, amount_to_drop)) * len(body))
+            )
+
+            segment = body[body_index]
+
             angle = random.uniform(0, math.pi * 2)
-            distance = random.uniform(20, 130)
+            distance = random.uniform(15, 65)
 
             x = max(
                 25,
                 min(
                     WORLD_WIDTH - 25,
-                    head["x"] + math.cos(angle) * distance
+                    segment["x"] + math.cos(angle) * distance
                 )
             )
 
@@ -1088,7 +1096,7 @@ class SnakeRoom:
                 25,
                 min(
                     WORLD_HEIGHT - 25,
-                    head["y"] + math.sin(angle) * distance
+                    segment["y"] + math.sin(angle) * distance
                 )
             )
 
@@ -1152,13 +1160,15 @@ class SnakeRoom:
         if not snake.get("alive"):
             return
 
+        # Detener el movimiento y el boost.
         snake["alive"] = False
         snake["boosting"] = False
+        snake["ready"] = False
 
-        # Suelta el 50% de la comida recogida.
+        # Soltar la mitad de la comida recogida.
         self.drop_food(snake)
 
-        # Suelta todo el saldo restante.
+        # Soltar el 100% del saldo restante.
         self.drop_coins(snake)
 
     # ========================================================
