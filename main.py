@@ -1889,4 +1889,4 @@ async def health():
         "status": "healthy",
         "snake_rooms": len(snake_rooms),
         "xo_rooms": len(lobbies),
-    })
+    }
