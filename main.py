@@ -804,7 +804,8 @@ BOOST_COST_MICROS = 100_000
 BOOST_COIN_INTERVAL = 0.5
 
 FOOD_RADIUS = 9
-FOOD_INITIAL_COUNT = 6000
+FOOD_INITIAL_COUNT = 5000
+FOOD_GROWTH_PER_ITEM = 3
 
 # ============================================================
 # OPTIMIZACIÓN ESPACIAL DE COMIDA
@@ -1083,6 +1084,10 @@ class SnakeRoom:
             "boost_spent_micros": 0,
 
             "grow_pending": 0,
+
+# Cantidad total de comidas recogidas durante la partida.
+            "food_eaten": 0,
+
             "created_at": time.time(),
         }
 
@@ -1102,46 +1107,98 @@ class SnakeRoom:
     # MONEDAS AL MORIR
     # --------------------------------------------------------
 
-    def drop_coins(self, snake: dict):
+    def drop_food(self, snake: dict):
 
-        if not snake.get("body"):
+        body = snake.get("body", [])
+
+        if not body:
             return
 
-        head = snake["body"][0]
-        balance = int(snake.get("balance_micros", 0))
+        head = body[0]
 
-        if balance <= 0:
-            return
-
-        number_of_coins = math.ceil(
-            balance / COIN_VALUE_MICROS
+        food_eaten = max(
+            0,
+            int(snake.get("food_eaten", 0))
         )
 
-        remaining = balance
+        # Suelta el 50% de las comidas recogidas.
+        amount_to_drop = food_eaten // 2
 
-        for _ in range(number_of_coins):
-
-            if remaining <= 0:
-                break
-
-            value = min(COIN_VALUE_MICROS, remaining)
+        for _ in range(amount_to_drop):
 
             angle = random.uniform(0, math.pi * 2)
-            distance = random.uniform(15, 75)
+            distance = random.uniform(20, 130)
 
             x = max(
-                15,
+                25,
                 min(
-                    WORLD_WIDTH - 15,
+                    WORLD_WIDTH - 25,
                     head["x"] + math.cos(angle) * distance
                 )
             )
 
             y = max(
-                15,
+                25,
                 min(
-                    WORLD_HEIGHT - 15,
+                    WORLD_HEIGHT - 25,
                     head["y"] + math.sin(angle) * distance
+                )
+            )
+
+            self.foods.append({
+                "id": f"food_{uuid.uuid4().hex}",
+                "x": x,
+                "y": y,
+                "color": random.choice(FOOD_COLORS),
+                "radius": FOOD_RADIUS,
+                "growth": FOOD_GROWTH_PER_ITEM,
+            })
+
+    # --------------------------------------------------------
+    # MONEDAS QUE SUELTA LA SERPIENTE
+    # --------------------------------------------------------
+
+    def drop_coins(self, snake: dict):
+
+        balance = max(
+            0,
+            int(snake.get("balance_micros", 0))
+        )
+
+        body = snake.get("body", [])
+
+        if balance <= 0 or not body:
+            snake["balance_micros"] = 0
+            self.update_balance(snake)
+            return
+
+        tail = body[-1]
+
+        remaining = balance
+
+        while remaining > 0:
+
+            value = min(
+                COIN_VALUE_MICROS,
+                remaining
+            )
+
+            angle = random.uniform(0, math.pi * 2)
+            distance = random.uniform(20, 100)
+
+            x = max(
+                COIN_RADIUS,
+                min(
+                    WORLD_WIDTH - COIN_RADIUS,
+                    tail["x"] + math.cos(angle) * distance
+                )
+            )
+
+            y = max(
+                COIN_RADIUS,
+                min(
+                    WORLD_HEIGHT - COIN_RADIUS,
+                    tail["y"] + math.sin(angle) * distance
                 )
             )
 
@@ -1160,14 +1217,23 @@ class SnakeRoom:
 
         self.update_balance(snake)
 
+    # --------------------------------------------------------
+    # ELIMINAR SERPIENTE
+    # --------------------------------------------------------
+
     def kill_snake(self, snake: dict):
 
+        # Evita soltar comida y monedas más de una vez.
         if not snake.get("alive"):
             return
 
         snake["alive"] = False
         snake["boosting"] = False
 
+        # Primero suelta el 50% de la comida recogida.
+        self.drop_food(snake)
+
+        # Después suelta el saldo restante en monedas.
         self.drop_coins(snake)
 
     # --------------------------------------------------------
@@ -1266,10 +1332,11 @@ class SnakeRoom:
     # RECOGER COMIDA OPTIMIZADO
     # --------------------------------------------------------
 
-    def collect_food(self, snake: dict, head: dict):
+                # --------------------------------------------------------
+    # RECOGER COMIDA OPTIMIZADO
+    # --------------------------------------------------------
 
-        # En vez de recorrer las 10.000 comidas,
-        # consulta solamente los sectores cercanos a la cabeza.
+    def collect_food(self, snake: dict, head: dict):
 
         collected = list(
             self.get_food_near(
@@ -1288,10 +1355,14 @@ class SnakeRoom:
 
             self.consumed_food_ids.add(food_id)
 
-            growth = max(1, int(food.get("growth", 1)))
+            growth = FOOD_GROWTH_PER_ITEM
 
             snake["grow_pending"] += growth
             snake["score"] += growth
+
+            snake["food_eaten"] = (
+                int(snake.get("food_eaten", 0)) + 1
+            )
 
     # --------------------------------------------------------
     # COLISIONES
@@ -1792,6 +1863,9 @@ async def snake_game_endpoint(
 
                 snake["alive"] = False
                 snake["boosting"] = False
+
+                # Al abandonar, también suelta el 50% de su comida.
+                room.drop_food(snake)
 
                 entry_remaining = max(
                     0,
