@@ -16,20 +16,9 @@ app = FastAPI(title="AXIOM Game Backend")
 # SUPABASE
 # ============================================================
 
-SUPABASE_URL = os.getenv(
-    "SUPABASE_URL",
-    "https://djdzytfdztctusnuuvrm.supabase.co"
-)
+SUPABASE_URL = "https://djdzytfdztctusnuuvrm.supabase.co"
+SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqZHp5dGZkenRjdHVzbnV1dnJtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4OTUxOTE3NywiZXhwIjoyMTA1MDk1MTc3fQ.45n4zgBGqXTtqI3LJOhefxSNckxnddsKGZjoSajkihM"
 
-SUPABASE_SERVICE_ROLE_KEY = os.getenv(
-    "SUPABASE_SERVICE_ROLE_KEY",
-    ""
-)
-
-if not SUPABASE_SERVICE_ROLE_KEY:
-    raise RuntimeError(
-        "Falta configurar SUPABASE_SERVICE_ROLE_KEY en las variables de entorno."
-    )
 
 supabase: Client = create_client(
     SUPABASE_URL,
