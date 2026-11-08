@@ -2130,12 +2130,17 @@ async def billar_cancel_waiting_room(room_id: str, user_id: str):
             for p in room["players"].values()
         ]
 
-    paid, message = billar_settle(
-        room_id,
-        "cancel",
-        players,
-        None,
-    )
+    try:
+        paid, message = billar_settle(
+            room_id,
+            "cancel",
+            players,
+            None,
+        )
+    except Exception as exc:
+        print(f"ERROR liquidando cancelación Billar: {exc!r}")
+        paid = False
+        message = "No se pudo procesar la devolución."
 
     async with lock:
         if not paid:
@@ -2167,6 +2172,11 @@ async def billar_cancel_waiting_room(room_id: str, user_id: str):
         }).eq("room_id", room_id).execute()
     except Exception as exc:
         print(f"ERROR actualizando cancelación Billar: {exc!r}")
+
+    # Eliminar la sala de la lista de salas activas.
+    async with lock:
+        if BILLAR_ROOMS.get(room_id) is room:
+            BILLAR_ROOMS.pop(room_id, None)
 
     await billar_broadcast_lobby()
     return True, "Sala cancelada correctamente."
