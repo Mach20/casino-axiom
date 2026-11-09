@@ -2000,18 +2000,27 @@ async def health():
         "billar_waiting_rooms": len(billar_lobby_rooms()) if "billar_lobby_rooms" in globals() else 0,
     }
 # ============================================================
-# BILLAR 8 BALL
+# BILLAR 8 BALL — MOTOR DE JUEGO
 # ============================================================
 
 BILLAR_ROOMS: Dict[str, dict] = {}
 BILLAR_LOCKS: Dict[str, asyncio.Lock] = {}
+BILLAR_LOBBY_CONNECTIONS: List[WebSocket] = []
+
 BILLAR_WIDTH = 1200
 BILLAR_HEIGHT = 600
 BILLAR_BALL_RADIUS = 12
-BILLAR_FRICTION = 0.985
-BILLAR_STOP_SPEED = 0.12
+BILLAR_DIAMETER = BILLAR_BALL_RADIUS * 2
+
+BILLAR_FRICTION = 0.988
+BILLAR_STOP_SPEED = 0.055
+BILLAR_RESTITUTION = 0.96
 BILLAR_POCKET_RADIUS = 27
 BILLAR_TICK = 1 / 60
+BILLAR_SUBSTEPS = 3
+BILLAR_MAX_SHOT_POWER = 100
+BILLAR_MAX_SHOT_SPEED = 20.0
+BILLAR_MAX_SHOT_FRAMES = 1800
 
 BILLAR_POCKETS = [
     (0, 0),
@@ -2022,6 +2031,10 @@ BILLAR_POCKETS = [
     (BILLAR_WIDTH, BILLAR_HEIGHT),
 ]
 
+
+# ============================================================
+# CREACIÓN DE BOLAS
+# ============================================================
 
 def billar_create_balls():
     balls = [{
@@ -2035,15 +2048,19 @@ def billar_create_balls():
         "pocketed": False,
     }]
 
+    # Formación reglamentaria:
+    # 8 en el centro, una lisa y una rayada en las esquinas.
     rack = [
-        1, 9, 2, 10, 8,
-        3, 11, 4, 12, 5,
+        1,
+        9, 2,
+        10, 8, 3,
+        4, 11, 12, 5,
         13, 6, 14, 7, 15,
     ]
 
     start_x = 850.0
     start_y = BILLAR_HEIGHT / 2
-    spacing = BILLAR_BALL_RADIUS * 2 + 1
+    spacing = BILLAR_DIAMETER + 0.35
 
     index = 0
 
@@ -2054,7 +2071,7 @@ def billar_create_balls():
 
             if number == 8:
                 kind = "eight"
-            elif 1 <= number <= 7:
+            elif number <= 7:
                 kind = "solid"
             else:
                 kind = "stripe"
@@ -2063,10 +2080,8 @@ def billar_create_balls():
                 "id": number,
                 "number": number,
                 "kind": kind,
-                "x": start_x + row * spacing * 0.866,
-                "y": start_y + (
-                    column - row / 2
-                ) * spacing,
+                "x": start_x + row * spacing * math.sqrt(3) / 2,
+                "y": start_y + (column - row / 2) * spacing,
                 "vx": 0.0,
                 "vy": 0.0,
                 "pocketed": False,
@@ -2074,6 +2089,24 @@ def billar_create_balls():
 
     return balls
 
+
+def billar_cue_ball(room):
+    return next(
+        (b for b in room["balls"] if b["kind"] == "cue"),
+        None
+    )
+
+
+def billar_ball_by_number(room, number):
+    return next(
+        (b for b in room["balls"] if b["number"] == number),
+        None
+    )
+
+
+# ============================================================
+# ESTADO PÚBLICO
+# ============================================================
 
 def billar_public_state(room):
     return {
@@ -2083,6 +2116,7 @@ def billar_public_state(room):
         "bet": round(float(room.get("bet", 0)), 2),
         "entry_total": round(float(room.get("bet", 0)) * 1.05, 2),
         "status": room["status"],
+        "phase": room.get("phase", "BREAK"),
         "shot_in_progress": bool(room.get("shot_in_progress", False)),
         "players": [
             {
@@ -2100,8 +2134,8 @@ def billar_public_state(room):
                 "id": b["id"],
                 "number": b["number"],
                 "kind": b["kind"],
-                "x": round(b["x"], 2),
-                "y": round(b["y"], 2),
+                "x": round(b["x"], 3),
+                "y": round(b["y"], 3),
                 "pocketed": b["pocketed"],
             }
             for b in room["balls"]
@@ -2109,6 +2143,8 @@ def billar_public_state(room):
         "winner_id": room.get("winner_id"),
         "message": room.get("message", ""),
         "ball_in_hand": room.get("ball_in_hand", False),
+        "last_foul": room.get("last_foul"),
+        "last_pocketed": room.get("last_pocketed", []),
         "table": {
             "width": BILLAR_WIDTH,
             "height": BILLAR_HEIGHT,
@@ -2121,21 +2157,25 @@ def billar_public_state(room):
 async def billar_broadcast(room):
     message = billar_public_state(room)
 
-    for player in room["players"].values():
+    for player in list(room["players"].values()):
         ws = player.get("websocket")
 
-        if ws:
+        if ws and player.get("connected"):
             try:
                 await ws.send_json(message)
             except Exception:
                 pass
 
 
+# ============================================================
+# COMISIONES
+# ============================================================
+
 def billar_register_commission(
     user_id: str,
     room_id: str,
     bet: float,
-    transaction_key: str
+    transaction_key: str,
 ):
     bet = round(float(bet), 2)
     commission = round(bet * 0.05, 2)
@@ -2163,39 +2203,46 @@ def billar_register_commission(
         return False
 
 
+# ============================================================
+# LIQUIDACIÓN
+# ============================================================
+
 def billar_settle(
     room_id: str,
     result_type: str,
     players: list,
     winner_id: Optional[str] = None,
 ):
-    """Liquida una sala usando las RPC idempotentes existentes en Supabase.
-
-    Cada jugador pagó apuesta + 5%. El ganador recibe el pozo neto:
-    2 * apuesta - las dos comisiones (10% del valor de una apuesta).
-    En una sala cancelada antes de empezar se devuelve la entrada completa.
-    """
     room = BILLAR_ROOMS.get(room_id)
+
     if not room:
         return False, "La sala de billar no existe."
 
     bet = round(float(room["bet"]), 2)
-    payout = round((bet * 2) - (bet * 0.05 * 2), 2)
+
+    # Cada jugador pagó apuesta + 5%.
+    # El ganador recibe el pozo menos las dos comisiones.
+    payout = round((bet * 2) - (bet * 0.10), 2)
+
     try:
         if result_type == "cancelled":
             for player in players:
                 uid = str(player["user_id"])
+
                 result = rpc_json("refund_game_bet", {
                     "p_transaction_key": f"billar-entry:{room_id}:{uid}"
                 })
+
                 if not result.get("success"):
-                    return False, str(result.get("message", "No se pudo devolver la entrada."))
-                try:
-                    supabase.table("comisiones").delete().eq(
-                        "transaction_key", f"billar-commission:{room_id}:{uid}"
-                    ).execute()
-                except Exception as commission_exc:
-                    print(f"ADVERTENCIA limpiando comisión Billar: {commission_exc!r}")
+                    return False, str(
+                        result.get("message", "No se pudo devolver la entrada.")
+                    )
+
+                supabase.table("comisiones").delete().eq(
+                    "transaction_key",
+                    f"billar-commission:{room_id}:{uid}"
+                ).execute()
+
             return True, "Sala cancelada. Se devolvieron las entradas."
 
         if winner_id:
@@ -2204,187 +2251,37 @@ def billar_settle(
                 "p_user_id": winner_id,
                 "p_amount": payout,
             })
+
             if not result.get("success"):
-                return False, str(result.get("message", "No se pudo acreditar el premio."))
+                return False, str(
+                    result.get("message", "No se pudo acreditar el premio.")
+                )
+
             return True, "Premio acreditado correctamente."
 
-        # Empate: devolver la entrada completa a cada participante.
+        # Empate: devolver las entradas completas.
         for player in players:
             uid = str(player["user_id"])
+
             result = rpc_json("refund_game_bet", {
                 "p_transaction_key": f"billar-entry:{room_id}:{uid}"
             })
+
             if not result.get("success"):
-                return False, str(result.get("message", "No se pudo devolver la entrada."))
-            try:
-                supabase.table("comisiones").delete().eq(
-                    "transaction_key", f"billar-commission:{room_id}:{uid}"
-                ).execute()
-            except Exception as commission_exc:
-                print(f"ADVERTENCIA limpiando comisión Billar: {commission_exc!r}")
+                return False, str(
+                    result.get("message", "No se pudo devolver la entrada.")
+                )
+
+            supabase.table("comisiones").delete().eq(
+                "transaction_key",
+                f"billar-commission:{room_id}:{uid}"
+            ).execute()
+
         return True, "Entradas devueltas."
+
     except Exception as exc:
         print(f"ERROR liquidando Billar: {exc!r}")
         return False, "No se pudo liquidar la partida de billar."
-
-
-def billar_create_room(room_id, user_id, wallet, bet, name):
-    return {
-        "room_id": room_id,
-        "creator_id": user_id,
-        "bet": bet,
-        "status": "WAITING",
-        "creator": name,
-        "is_public": True,
-        "password": "",
-        "players": {
-            user_id: {
-                "user_id": user_id,
-                "wallet": wallet,
-                "bet": bet,
-                "name": name,
-                "websocket": None,
-                "connected": False,
-                "group": None,
-            }
-        },
-        "balls": billar_create_balls(),
-        "turn": user_id,
-        "shot_in_progress": False,
-        "ball_in_hand": False,
-        "winner_id": None,
-        "message": "Esperando al segundo jugador.",
-        "finished": False,
-        "settling": False,
-        "created_at": time.time(),
-    }
-
-
-def billar_all_stopped(room):
-    return all(
-        b["pocketed"]
-        or (
-            abs(b["vx"]) < BILLAR_STOP_SPEED
-            and abs(b["vy"]) < BILLAR_STOP_SPEED
-        )
-        for b in room["balls"]
-    )
-
-
-def billar_pocket_ball(ball):
-    ball["pocketed"] = True
-    ball["vx"] = 0.0
-    ball["vy"] = 0.0
-
-
-def billar_simulate_physics(room):
-    balls = room["balls"]
-    pocketed_this_shot = []
-
-    for ball in balls:
-        if ball["pocketed"]:
-            continue
-
-        ball["x"] += ball["vx"]
-        ball["y"] += ball["vy"]
-
-        ball["vx"] *= BILLAR_FRICTION
-        ball["vy"] *= BILLAR_FRICTION
-
-        if abs(ball["vx"]) < BILLAR_STOP_SPEED:
-            ball["vx"] = 0.0
-
-        if abs(ball["vy"]) < BILLAR_STOP_SPEED:
-            ball["vy"] = 0.0
-
-        for px, py in BILLAR_POCKETS:
-            if math.hypot(ball["x"] - px, ball["y"] - py) < BILLAR_POCKET_RADIUS:
-                billar_pocket_ball(ball)
-                pocketed_this_shot.append(ball["number"])
-                break
-
-        if ball["pocketed"]:
-            continue
-
-        radius = BILLAR_BALL_RADIUS
-
-        if ball["x"] < radius:
-            ball["x"] = radius
-            ball["vx"] = abs(ball["vx"])
-
-        elif ball["x"] > BILLAR_WIDTH - radius:
-            ball["x"] = BILLAR_WIDTH - radius
-            ball["vx"] = -abs(ball["vx"])
-
-        if ball["y"] < radius:
-            ball["y"] = radius
-            ball["vy"] = abs(ball["vy"])
-
-        elif ball["y"] > BILLAR_HEIGHT - radius:
-            ball["y"] = BILLAR_HEIGHT - radius
-            ball["vy"] = -abs(ball["vy"])
-
-    # Colisiones entre bolas.
-    for i in range(len(balls)):
-        a = balls[i]
-
-        if a["pocketed"]:
-            continue
-
-        for j in range(i + 1, len(balls)):
-            b = balls[j]
-
-            if b["pocketed"]:
-                continue
-
-            dx = b["x"] - a["x"]
-            dy = b["y"] - a["y"]
-            distance = math.hypot(dx, dy)
-            minimum = BILLAR_BALL_RADIUS * 2
-
-            if distance <= 0 or distance >= minimum:
-                continue
-
-            nx = dx / distance
-            ny = dy / distance
-
-            overlap = minimum - distance
-
-            a["x"] -= nx * overlap / 2
-            a["y"] -= ny * overlap / 2
-            b["x"] += nx * overlap / 2
-            b["y"] += ny * overlap / 2
-
-            relative_velocity = (
-                (a["vx"] - b["vx"]) * nx
-                + (a["vy"] - b["vy"]) * ny
-            )
-
-            if relative_velocity > 0:
-                impulse = relative_velocity
-
-                a["vx"] -= impulse * nx
-                a["vy"] -= impulse * ny
-                b["vx"] += impulse * nx
-                b["vy"] += impulse * ny
-
-    return pocketed_this_shot
-
-
-def billar_player_group_remaining(room, player_id):
-    player = room["players"][player_id]
-    group = player.get("group")
-
-    if group not in ("solid", "stripe"):
-        return 7
-
-    return sum(
-        1 for ball in room["balls"]
-        if (
-            not ball["pocketed"]
-            and ball["kind"] == group
-        )
-    )
 
 
 async def billar_finish(
@@ -2432,11 +2329,16 @@ async def billar_finish(
         room["settling"] = False
         room["status"] = "FINISHED"
         room["winner_id"] = winner_id
-        room["message"] = (
-            "Partida finalizada. Ganador: " + str(winner_id)
-            if winner_id
-            else "Partida finalizada."
-        )
+        room["shot_in_progress"] = False
+
+        if winner_id:
+            winner_name = room["players"].get(
+                winner_id, {}
+            ).get("name", "Jugador")
+
+            room["message"] = f"Partida finalizada. Ganador: {winner_name}."
+        else:
+            room["message"] = "Partida finalizada."
 
         await billar_broadcast(room)
 
@@ -2451,6 +2353,7 @@ async def billar_finish(
                 time.gmtime()
             ),
         }).eq("room_id", room_id).execute()
+
     except Exception as exc:
         print(f"ERROR actualizando sala Billar: {exc!r}")
 
@@ -2458,78 +2361,408 @@ async def billar_finish(
     return True
 
 
-async def billar_shot(room, user_id, angle, power):
-    if room["status"] != "PLAYING" or room["finished"]:
-        return False, "La partida no está disponible."
+# ============================================================
+# CREACIÓN DE SALAS
+# ============================================================
 
-    if room["shot_in_progress"]:
-        return False, "Las bolas todavía están en movimiento."
+def billar_create_room(
+    room_id,
+    user_id,
+    wallet,
+    bet,
+    name,
+):
+    return {
+        "room_id": room_id,
+        "creator_id": user_id,
+        "bet": bet,
+        "status": "WAITING",
+        "creator": name,
+        "is_public": True,
+        "password": "",
+        "players": {
+            user_id: {
+                "user_id": user_id,
+                "wallet": wallet,
+                "bet": bet,
+                "name": name,
+                "websocket": None,
+                "connected": False,
+                "group": None,
+            }
+        },
+        "balls": billar_create_balls(),
+        "turn": user_id,
+        "phase": "BREAK",
+        "shot_in_progress": False,
+        "ball_in_hand": False,
+        "winner_id": None,
+        "message": "Esperando al segundo jugador.",
+        "last_foul": None,
+        "last_pocketed": [],
+        "finished": False,
+        "settling": False,
+        "created_at": time.time(),
+    }
 
-    if room["turn"] != user_id:
-        return False, "No es tu turno."
 
-    if not math.isfinite(angle) or not math.isfinite(power):
-        return False, "El tiro no es válido."
+# ============================================================
+# FÍSICA
+# ============================================================
 
-    power = max(0.0, min(100.0, power))
-
-    if power < 1:
-        return False, "La fuerza del tiro es demasiado baja."
-
-    cue = next(
-        (b for b in room["balls"] if b["kind"] == "cue"),
-        None
+def billar_all_stopped(room):
+    return all(
+        b["pocketed"]
+        or (
+            abs(b["vx"]) < BILLAR_STOP_SPEED
+            and abs(b["vy"]) < BILLAR_STOP_SPEED
+        )
+        for b in room["balls"]
     )
 
-    if not cue or cue["pocketed"]:
+
+def billar_pocket_ball(ball):
+    ball["pocketed"] = True
+    ball["vx"] = 0.0
+    ball["vy"] = 0.0
+
+
+def billar_simulate_physics(room, events):
+    """
+    Un paso de física.
+    events guarda el primer contacto, bolas embocadas
+    y contactos con bandas durante el tiro.
+    """
+    balls = room["balls"]
+
+    dt = 1.0 / BILLAR_SUBSTEPS
+
+    for ball in balls:
+        if ball["pocketed"]:
+            continue
+
+        ball["x"] += ball["vx"] * dt
+        ball["y"] += ball["vy"] * dt
+
+        ball["vx"] *= BILLAR_FRICTION ** dt
+        ball["vy"] *= BILLAR_FRICTION ** dt
+
+        speed = math.hypot(ball["vx"], ball["vy"])
+
+        if speed < BILLAR_STOP_SPEED:
+            ball["vx"] = 0.0
+            ball["vy"] = 0.0
+
+        # Detección de troneras.
+        for px, py in BILLAR_POCKETS:
+            if math.hypot(
+                ball["x"] - px,
+                ball["y"] - py
+            ) < BILLAR_POCKET_RADIUS:
+                number = ball["number"]
+                billar_pocket_ball(ball)
+
+                if number not in events["pocketed"]:
+                    events["pocketed"].append(number)
+
+                break
+
+        if ball["pocketed"]:
+            continue
+
+        radius = BILLAR_BALL_RADIUS
+
+        # Bandas horizontales.
+        if ball["x"] < radius:
+            ball["x"] = radius
+            ball["vx"] = abs(ball["vx"]) * BILLAR_RESTITUTION
+            events["rail_contact"] = True
+
+        elif ball["x"] > BILLAR_WIDTH - radius:
+            ball["x"] = BILLAR_WIDTH - radius
+            ball["vx"] = -abs(ball["vx"]) * BILLAR_RESTITUTION
+            events["rail_contact"] = True
+
+        # Bandas verticales.
+        if ball["y"] < radius:
+            ball["y"] = radius
+            ball["vy"] = abs(ball["vy"]) * BILLAR_RESTITUTION
+            events["rail_contact"] = True
+
+        elif ball["y"] > BILLAR_HEIGHT - radius:
+            ball["y"] = BILLAR_HEIGHT - radius
+            ball["vy"] = -abs(ball["vy"]) * BILLAR_RESTITUTION
+            events["rail_contact"] = True
+
+    # Colisiones entre bolas.
+    for i in range(len(balls)):
+        a = balls[i]
+
+        if a["pocketed"]:
+            continue
+
+        for j in range(i + 1, len(balls)):
+            b = balls[j]
+
+            if b["pocketed"]:
+                continue
+
+            dx = b["x"] - a["x"]
+            dy = b["y"] - a["y"]
+
+            distance_squared = dx * dx + dy * dy
+            minimum = BILLAR_DIAMETER
+
+            if distance_squared >= minimum * minimum:
+                continue
+
+            distance = math.sqrt(max(distance_squared, 0.000001))
+
+            nx = dx / distance
+            ny = dy / distance
+
+            # Registrar el primer contacto real de la blanca.
+            if a["kind"] == "cue" and events["first_hit"] is None:
+                events["first_hit"] = b["number"]
+
+            elif b["kind"] == "cue" and events["first_hit"] is None:
+                events["first_hit"] = a["number"]
+
+            # Separar las bolas para evitar que se superpongan.
+            overlap = minimum - distance
+
+            a["x"] -= nx * overlap * 0.5
+            a["y"] -= ny * overlap * 0.5
+            b["x"] += nx * overlap * 0.5
+            b["y"] += ny * overlap * 0.5
+
+            relative_velocity = (
+                (a["vx"] - b["vx"]) * nx
+                + (a["vy"] - b["vy"]) * ny
+            )
+
+            if relative_velocity <= 0:
+                continue
+
+            impulse = (
+                relative_velocity
+                * (1 + BILLAR_RESTITUTION)
+                / 2
+            )
+
+            a["vx"] -= impulse * nx
+            a["vy"] -= impulse * ny
+
+            b["vx"] += impulse * nx
+            b["vy"] += impulse * ny
+
+
+def billar_player_group_remaining(room, player_id):
+    player = room["players"].get(player_id)
+
+    if not player:
+        return 0
+
+    group = player.get("group")
+
+    if group not in ("solid", "stripe"):
+        return 7
+
+    return sum(
+        1 for ball in room["balls"]
+        if (
+            not ball["pocketed"]
+            and ball["kind"] == group
+        )
+    )
+
+
+def billar_is_legal_first_hit(room, player_id, first_hit):
+    if first_hit is None:
+        return False
+
+    target = billar_ball_by_number(room, first_hit)
+
+    if not target or target["pocketed"]:
+        return False
+
+    if target["kind"] == "eight":
+        return billar_player_group_remaining(room, player_id) == 0
+
+    player = room["players"][player_id]
+    group = player.get("group")
+
+    if group is None:
+        return True
+
+    return target["kind"] == group
+
+
+def billar_own_ball_pocketed(room, player_id, pocketed):
+    player = room["players"][player_id]
+    group = player.get("group")
+
+    if group not in ("solid", "stripe"):
+        return False
+
+    for number in pocketed:
+        ball = billar_ball_by_number(room, number)
+
+        if ball and ball["kind"] == group:
+            return True
+
+    return False
+
+
+def billar_respot_eight(room):
+    ball = billar_ball_by_number(room, 8)
+
+    if not ball:
+        return
+
+    ball["pocketed"] = False
+    ball["vx"] = 0.0
+    ball["vy"] = 0.0
+
+    # Punto de reposición cercano al centro de la mesa.
+    candidates = [
+        (BILLAR_WIDTH * 0.72, BILLAR_HEIGHT / 2),
+        (BILLAR_WIDTH * 0.70, BILLAR_HEIGHT / 2 - 25),
+        (BILLAR_WIDTH * 0.70, BILLAR_HEIGHT / 2 + 25),
+        (BILLAR_WIDTH * 0.68, BILLAR_HEIGHT / 2),
+    ]
+
+    for x, y in candidates:
+        occupied = any(
+            other["number"] != 8
+            and not other["pocketed"]
+            and math.hypot(
+                other["x"] - x,
+                other["y"] - y
+            ) < BILLAR_DIAMETER + 2
+            for other in room["balls"]
+        )
+
+        if not occupied:
+            ball["x"] = x
+            ball["y"] = y
+            return
+
+    ball["x"] = BILLAR_WIDTH * 0.72
+    ball["y"] = BILLAR_HEIGHT / 2
+
+
+def billar_place_cue(room, x, y):
+    cue = billar_cue_ball(room)
+
+    if not cue:
         return False, "No se encontró la bola blanca."
 
-    shooter_id = user_id
-    opponent_id = next(
-        uid for uid in room["players"]
-        if uid != shooter_id
-    )
+    radius = BILLAR_BALL_RADIUS
 
-    room["shot_in_progress"] = True
-    room["ball_in_hand"] = False
+    if (
+        x < radius
+        or x > BILLAR_WIDTH - radius
+        or y < radius
+        or y > BILLAR_HEIGHT - radius
+    ):
+        return False, "La posición está fuera de la mesa."
 
     for ball in room["balls"]:
-        ball["vx"] = 0.0
-        ball["vy"] = 0.0
+        if ball["kind"] == "cue" or ball["pocketed"]:
+            continue
 
-    speed = power * 0.20
-    cue["vx"] = math.cos(angle) * speed
-    cue["vy"] = math.sin(angle) * speed
+        if math.hypot(
+            ball["x"] - x,
+            ball["y"] - y
+        ) < BILLAR_DIAMETER + 1:
+            return False, "No puedes colocar la blanca encima de otra bola."
 
-    first_collision = None
-    shot_pockets = []
-    scratch = False
+    cue["x"] = x
+    cue["y"] = y
+    cue["vx"] = 0.0
+    cue["vy"] = 0.0
+    cue["pocketed"] = False
 
-    for frame in range(900):
-        newly_pocketed = billar_simulate_physics(room)
+    return True, "Bola blanca colocada."
 
-        for number in newly_pocketed:
-            shot_pockets.append(number)
 
-        if cue["pocketed"]:
-            scratch = True
+# ============================================================
+# REGLAS 8 BALL Y EJECUCIÓN DEL TIRO
+# ============================================================
 
-        # Detectar la primera bola golpeada.
-        if first_collision is None:
-            for ball in room["balls"]:
-                if ball["kind"] == "cue" or ball["pocketed"]:
-                    continue
+async def billar_shot(room, user_id, angle, power):
+    lock = BILLAR_LOCKS[room["room_id"]]
 
-                distance = math.hypot(
-                    cue["x"] - ball["x"],
-                    cue["y"] - ball["y"]
-                )
+    async with lock:
+        if room["status"] != "PLAYING" or room["finished"]:
+            return False, "La partida no está disponible."
 
-                if distance <= BILLAR_BALL_RADIUS * 2 + 1:
-                    first_collision = ball["number"]
-                    break
+        if room["shot_in_progress"]:
+            return False, "Las bolas todavía están en movimiento."
 
-        if frame % 4 == 0:
+        if room["turn"] != user_id:
+            return False, "No es tu turno."
+
+        if room.get("ball_in_hand"):
+            return False, "Primero debes colocar la bola blanca."
+
+        try:
+            angle = float(angle)
+            power = float(power)
+        except (ValueError, TypeError):
+            return False, "El tiro no es válido."
+
+        if not math.isfinite(angle) or not math.isfinite(power):
+            return False, "El tiro no es válido."
+
+        power = max(1.0, min(BILLAR_MAX_SHOT_POWER, power))
+
+        cue = billar_cue_ball(room)
+
+        if not cue or cue["pocketed"]:
+            return False, "No se encontró la bola blanca."
+
+        shooter_id = user_id
+        opponent_id = next(
+            uid for uid in room["players"]
+            if uid != shooter_id
+        )
+
+        # Guardar el estado antes del tiro para aplicar las reglas.
+        phase_before = room.get("phase", "BREAK")
+        group_before = room["players"][shooter_id].get("group")
+        remaining_before = billar_player_group_remaining(
+            room,
+            shooter_id
+        )
+
+        room["shot_in_progress"] = True
+        room["ball_in_hand"] = False
+        room["last_foul"] = None
+        room["last_pocketed"] = []
+
+        for ball in room["balls"]:
+            ball["vx"] = 0.0
+            ball["vy"] = 0.0
+
+        speed = (power / 100) * BILLAR_MAX_SHOT_SPEED
+
+        cue["vx"] = math.cos(angle) * speed
+        cue["vy"] = math.sin(angle) * speed
+
+    events = {
+        "first_hit": None,
+        "pocketed": [],
+        "rail_contact": False,
+    }
+
+    # Simulación autoritativa del servidor.
+    for frame in range(BILLAR_MAX_SHOT_FRAMES):
+        for _ in range(BILLAR_SUBSTEPS):
+            billar_simulate_physics(room, events)
+
+        if frame % 5 == 0:
             await billar_broadcast(room)
 
         if billar_all_stopped(room):
@@ -2537,7 +2770,70 @@ async def billar_shot(room, user_id, angle, power):
 
         await asyncio.sleep(BILLAR_TICK)
 
-    # Reponer bola blanca si cayó en un agujero.
+    # La blanca pudo caer en una tronera.
+    scratch = cue["pocketed"]
+
+    # Comprobar si la blanca tocó primero una bola permitida.
+    legal_first_hit = billar_is_legal_first_hit(
+        room,
+        shooter_id,
+        events["first_hit"]
+    )
+
+    pocketed = list(events["pocketed"])
+    eight_pocketed = 8 in pocketed
+
+    object_pocketed = any(number != 0 for number in pocketed)
+
+    # Después del contacto debe entrar una bola o tocarse una banda.
+    rail_or_pocket_after_contact = (
+        events["rail_contact"] or object_pocketed
+    )
+
+    foul_reason = None
+
+    if scratch:
+        foul_reason = "Falta: la bola blanca cayó en una tronera."
+
+    elif events["first_hit"] is None:
+        foul_reason = "Falta: no golpeaste ninguna bola."
+
+    elif not legal_first_hit:
+        foul_reason = "Falta: golpeaste primero una bola que no correspondía."
+
+    elif not rail_or_pocket_after_contact:
+        foul_reason = "Falta: ninguna bola llegó a una banda ni cayó en una tronera."
+
+    # La bola 8 en el tiro de apertura se repone.
+    if phase_before == "BREAK" and eight_pocketed:
+        billar_respot_eight(room)
+        pocketed = [n for n in pocketed if n != 8]
+        eight_pocketed = False
+
+    # Resolver la bola 8 antes de cambiar los grupos.
+    if eight_pocketed:
+        if (
+            scratch
+            or foul_reason
+            or remaining_before > 0
+        ):
+            await billar_finish(
+                room["room_id"],
+                "loss_eight_ball",
+                opponent_id,
+            )
+
+            return True, "La bola 8 fue embocada ilegalmente. Gana el rival."
+
+        await billar_finish(
+            room["room_id"],
+            "win",
+            shooter_id,
+        )
+
+        return True, "¡Ganaste! Embocaste legalmente la bola 8."
+
+    # Bola blanca: reponer para bola en mano.
     if scratch:
         cue["pocketed"] = False
         cue["x"] = 300.0
@@ -2548,76 +2844,69 @@ async def billar_shot(room, user_id, angle, power):
     shooter = room["players"][shooter_id]
     opponent = room["players"][opponent_id]
 
-    # Asignar grupos al primer jugador que mete una bola válida.
+    # La apertura no asigna grupos automáticamente.
+    # Se asignan cuando un jugador emboca legalmente una bola
+    # de un grupo en una mesa abierta.
     if (
-        shooter["group"] is None
-        and not scratch
-        and first_collision is not None
+        phase_before != "BREAK"
+        and group_before is None
+        and not foul_reason
     ):
-        first_ball = next(
-            (
-                b for b in room["balls"]
-                if b["number"] == first_collision
-            ),
-            None
-        )
+        valid_pocketed = [
+            number for number in pocketed
+            if number not in (0, 8)
+        ]
 
-        if first_ball and first_ball["kind"] in ("solid", "stripe"):
-            shooter["group"] = first_ball["kind"]
-            opponent["group"] = (
-                "stripe" if first_ball["kind"] == "solid"
-                else "solid"
+        if valid_pocketed:
+            first_pocketed_ball = billar_ball_by_number(
+                room,
+                valid_pocketed[0]
             )
 
-    eight_pocketed = 8 in shot_pockets
+            if first_pocketed_ball:
+                assigned_group = first_pocketed_ball["kind"]
 
-    # Meter la bola 8 antes de limpiar el grupo propio es derrota.
-    if eight_pocketed:
-        remaining = billar_player_group_remaining(
-            room,
-            shooter_id
-        )
+                if assigned_group in ("solid", "stripe"):
+                    shooter["group"] = assigned_group
+                    opponent["group"] = (
+                        "stripe"
+                        if assigned_group == "solid"
+                        else "solid"
+                    )
 
-        if remaining > 0 or scratch:
-            await billar_finish(
-                room["room_id"],
-                "loss_eight_ball",
-                opponent_id
-            )
-            return True, "La bola 8 fue metida ilegalmente."
+    # La mesa deja de estar en apertura después del primer tiro.
+    if phase_before == "BREAK":
+        room["phase"] = "OPEN"
 
-        await billar_finish(
-            room["room_id"],
-            "win",
-            shooter_id
-        )
-        return True, "¡Ganaste la partida!"
+    room["last_pocketed"] = pocketed
 
-    # Faltas: meter blanca o no golpear ninguna bola.
-    foul = scratch or first_collision is None
-
-    if foul:
+    if foul_reason:
         room["turn"] = opponent_id
         room["ball_in_hand"] = True
+        room["last_foul"] = foul_reason
         room["message"] = (
-            "Falta. El rival tiene bola en mano."
+            foul_reason + " El rival tiene bola en mano."
         )
-    else:
-        own_group = shooter.get("group")
 
-        own_ball_pocketed = any(
-            (
-                number != 8
-                and next(
-                    (
-                        b["kind"] for b in room["balls"]
-                        if b["number"] == number
-                    ),
-                    None
-                ) == own_group
+    else:
+        own_ball_pocketed = billar_own_ball_pocketed(
+            room,
+            shooter_id,
+            pocketed,
+        )
+
+        # En mesa abierta, conservar turno si metió una bola
+        # sólida o rayada legalmente.
+        if shooter.get("group") is None:
+            own_ball_pocketed = any(
+                (
+                    (ball := billar_ball_by_number(room, number))
+                    is not None
+                    and ball["kind"] in ("solid", "stripe")
+                )
+                for number in pocketed
+                if number not in (0, 8)
             )
-            for number in shot_pockets
-        ) if own_group else bool(shot_pockets)
 
         if own_ball_pocketed:
             room["turn"] = shooter_id
@@ -2633,16 +2922,11 @@ async def billar_shot(room, user_id, angle, power):
     return True, room["message"]
 
 
-
 # ============================================================
-# LOBBY BILLAR: SALAS PUBLICAS Y PRIVADAS
+# LOBBY BILLAR
 # ============================================================
-
-BILLAR_LOBBY_CONNECTIONS: List[WebSocket] = []
-
 
 def billar_lobby_rooms():
-    """Devuelve únicamente salas disponibles para entrar."""
     available = []
 
     for room_id, room in BILLAR_ROOMS.items():
@@ -2654,10 +2938,17 @@ def billar_lobby_rooms():
         ):
             continue
 
-        creator_player = next(iter(room["players"].values()), {})
+        creator_player = next(
+            iter(room["players"].values()),
+            {}
+        )
+
         available.append({
             "room_id": room_id,
-            "creator": room.get("creator") or creator_player.get("name", "Jugador"),
+            "creator": room.get(
+                "creator",
+                creator_player.get("name", "Jugador")
+            ),
             "bet": float(room["bet"]),
             "is_public": True,
             "players_count": len(room["players"]),
@@ -2668,10 +2959,12 @@ def billar_lobby_rooms():
 
 
 async def billar_broadcast_lobby():
+    rooms = billar_lobby_rooms()
+
     payload = {
         "type": "LOBBY_UPDATE",
-        "rooms": billar_lobby_rooms(),
-        "active_count": len(billar_lobby_rooms()),
+        "rooms": rooms,
+        "active_count": len(rooms),
     }
 
     for ws in list(BILLAR_LOBBY_CONNECTIONS):
@@ -2720,13 +3013,18 @@ async def billar_lobby_endpoint(
                 continue
 
             if any(
-                user_id in room.get("players", {}) and not room.get("finished")
+                user_id in room.get("players", {})
+                and not room.get("finished")
                 for room in BILLAR_ROOMS.values()
             ):
-                await send_error(websocket, "Ya tienes una partida de billar activa.")
+                await send_error(
+                    websocket,
+                    "Ya tienes una partida de billar activa."
+                )
                 continue
 
             wallet = str(data.get("wallet", "play")).lower()
+
             if wallet not in ("play", "bonus"):
                 await send_error(websocket, "Billetera no válida.")
                 continue
@@ -2738,12 +3036,25 @@ async def billar_lobby_endpoint(
                 continue
 
             if not math.isfinite(bet) or bet < 0.25 or bet > 10000:
-                await send_error(websocket, "La apuesta mínima para Billar es $0.25.")
+                await send_error(
+                    websocket,
+                    "La apuesta mínima para Billar es $0.25."
+                )
                 continue
 
-            creator = str(data.get("creator") or data.get("name") or "Jugador").strip()[:40]
+            creator = str(
+                data.get("creator") or data.get("name") or "Jugador"
+            ).strip()[:40]
+
             is_public = bool(data.get("is_public", True))
-            password = ""
+            password = str(data.get("password") or "").strip()
+
+            if not is_public and not password:
+                await send_error(
+                    websocket,
+                    "Debes establecer una contraseña para la sala privada."
+                )
+                continue
 
             room_id = uuid.uuid4().hex[:12]
             entry_total = round(bet * 1.05, 2)
@@ -2774,9 +3085,11 @@ async def billar_lobby_endpoint(
                 bet,
                 creator,
             )
+
             room["creator"] = creator
             room["is_public"] = is_public
-            room["password"] = ""
+            room["password"] = password
+
             BILLAR_ROOMS[room_id] = room
             BILLAR_LOCKS[room_id] = asyncio.Lock()
 
@@ -2792,8 +3105,9 @@ async def billar_lobby_endpoint(
                     "entrada_jugador1_pagada": True,
                     "transaction_key": f"billar-entry:{room_id}:{user_id}",
                 }, on_conflict="room_id").execute()
+
             except Exception as exc:
-                print(f"ERROR guardando sala creada de Billar: {exc!r}")
+                print(f"ERROR guardando sala Billar: {exc!r}")
 
             await websocket.send_json({
                 "type": "ROOM_CREATED",
@@ -2810,40 +3124,80 @@ async def billar_lobby_endpoint(
 
     except WebSocketDisconnect:
         pass
+
     except Exception as exc:
         print(f"ERROR lobby Billar: {exc!r}")
+
         try:
-            await send_error(websocket, "Ocurrió un error en el lobby de Billar.")
+            await send_error(
+                websocket,
+                "Ocurrió un error en el lobby de Billar."
+            )
         except Exception:
             pass
+
     finally:
         if websocket in BILLAR_LOBBY_CONNECTIONS:
             BILLAR_LOBBY_CONNECTIONS.remove(websocket)
 
 
-async def billar_delayed_disconnect(room_id: str, user_id: str, old_websocket):
-    """Da margen a una recarga/reconexión antes de declarar abandono."""
+# ============================================================
+# DESCONEXIÓN Y ABANDONO
+# ============================================================
+
+async def billar_delayed_disconnect(
+    room_id: str,
+    user_id: str,
+    old_websocket,
+):
     await asyncio.sleep(25)
+
     room = BILLAR_ROOMS.get(room_id)
+
     if not room or room.get("finished") or room.get("settling"):
         return
+
     player = room.get("players", {}).get(user_id)
-    if not player or player.get("connected") or player.get("websocket") is not None:
+
+    if (
+        not player
+        or player.get("connected")
+        or player.get("websocket") is not None
+    ):
         return
-    if room.get("status") == "PLAYING" and len(room.get("players", {})) == 2:
-        winner_id = next((uid for uid in room["players"] if uid != user_id), None)
+
+    if (
+        room.get("status") == "PLAYING"
+        and len(room.get("players", {})) == 2
+    ):
+        winner_id = next(
+            (uid for uid in room["players"] if uid != user_id),
+            None
+        )
+
         if winner_id:
-            for attempt in range(3):
-                if await billar_finish(room_id, "disconnect", winner_id):
-                    break
-                await asyncio.sleep(5)
-    elif room.get("status") == "WAITING" and user_id == room.get("creator_id"):
-        for attempt in range(3):
-            if await billar_finish(room_id, "cancelled", None):
-                break
-            await asyncio.sleep(5)
+            await billar_finish(
+                room_id,
+                "disconnect",
+                winner_id,
+            )
+
+    elif (
+        room.get("status") == "WAITING"
+        and user_id == room.get("creator_id")
+    ):
+        await billar_finish(
+            room_id,
+            "cancelled",
+            None,
+        )
+
     await billar_broadcast_lobby()
 
+
+# ============================================================
+# WEBSOCKET DE PARTIDA
+# ============================================================
 
 @app.websocket("/ws/billar/{room_id}")
 async def billar_endpoint(
@@ -2854,6 +3208,7 @@ async def billar_endpoint(
     bet: float = Query(0.25),
     wallet: str = Query("play"),
     name: str = Query("Jugador"),
+    password: str = Query(""),
 ):
     await websocket.accept()
 
@@ -2875,17 +3230,22 @@ async def billar_endpoint(
         return
 
     if not math.isfinite(bet) or bet < 0.25 or bet > 10000:
-        await send_error(websocket, "La apuesta mínima para Billar es $0.25.")
+        await send_error(
+            websocket,
+            "La apuesta mínima para Billar es $0.25."
+        )
         await websocket.close()
         return
 
     room_id = str(room_id or "").strip().lower()
+
     if not room_id or len(room_id) > 100:
         await send_error(websocket, "Sala no válida.")
         await websocket.close()
         return
 
     lock = BILLAR_LOCKS.setdefault(room_id, asyncio.Lock())
+
     explicit_exit = False
     explicit_action = "LEAVE"
 
@@ -2894,7 +3254,10 @@ async def billar_endpoint(
             room = BILLAR_ROOMS.get(room_id)
 
             if not room:
-                await send_error(websocket, "La sala no existe o ya fue cerrada.")
+                await send_error(
+                    websocket,
+                    "La sala no existe o ya fue cerrada."
+                )
                 await websocket.close()
                 return
 
@@ -2903,8 +3266,15 @@ async def billar_endpoint(
                 await websocket.close()
                 return
 
-            # La apuesta siempre es la que fijó el creador. El valor enviado
-            # por el navegador del invitado no se compara ni puede cambiarla.
+            if (
+                room.get("password")
+                and str(room["password"]) != str(password)
+            ):
+                await send_error(websocket, "Contraseña incorrecta.")
+                await websocket.close()
+                return
+
+            # La apuesta del invitado siempre es la del creador.
             bet = round(float(room["bet"]), 2)
 
             if user_id in room["players"]:
@@ -2938,7 +3308,6 @@ async def billar_endpoint(
                     await websocket.close()
                     return
 
-                # Cada jugador paga la apuesta fijada por el creador + comisión del 5%.
                 entry_total = round(bet * 1.05, 2)
 
                 success, message = deduct_balance(
@@ -2950,9 +3319,6 @@ async def billar_endpoint(
                 )
 
                 if not success:
-                    if not room["players"]:
-                        BILLAR_ROOMS.pop(room_id, None)
-
                     await send_error(websocket, message)
                     await websocket.close()
                     return
@@ -2966,20 +3332,19 @@ async def billar_endpoint(
 
                 if not commission_saved:
                     print(
-                        "ADVERTENCIA: se cobró la entrada, "
-                        "pero falta registrar la comisión."
+                        "ADVERTENCIA: la entrada fue cobrada, "
+                        "pero no se registró la comisión."
                     )
 
-                if user_id not in room["players"]:
-                    room["players"][user_id] = {
-                        "user_id": user_id,
-                        "wallet": wallet,
-                        "bet": bet,
-                        "name": str(name)[:40],
-                        "websocket": websocket,
-                        "connected": True,
-                        "group": None,
-                    }
+                room["players"][user_id] = {
+                    "user_id": user_id,
+                    "wallet": wallet,
+                    "bet": bet,
+                    "name": str(name or "Jugador")[:40],
+                    "websocket": websocket,
+                    "connected": True,
+                    "group": None,
+                }
 
                 if len(room["players"]) == 2:
                     room["status"] = "PLAYING"
@@ -2997,29 +3362,9 @@ async def billar_endpoint(
                                 time.gmtime()
                             ),
                         }).eq("room_id", room_id).execute()
+
                     except Exception as exc:
                         print(f"ERROR actualizando Billar: {exc!r}")
-
-                else:
-                    # Guardar sala nueva en Supabase.
-                    try:
-                        supabase.table("billar").upsert({
-                            "room_id": room_id,
-                            "jugador1_id": user_id,
-                            "apuesta": bet,
-                            "comision_por_jugador": round(
-                                bet * 0.05, 2
-                            ),
-                            "billetera_jugador1": wallet,
-                            "estado": "esperando",
-                            "estado_juego": billar_public_state(room),
-                            "entrada_jugador1_pagada": True,
-                            "transaction_key": (
-                                f"billar-entry:{room_id}:{user_id}"
-                            ),
-                        }, on_conflict="room_id").execute()
-                    except Exception as exc:
-                        print(f"ERROR guardando sala Billar: {exc!r}")
 
             await websocket.send_json({
                 "type": "BILLAR_INIT",
@@ -3070,73 +3415,71 @@ async def billar_endpoint(
             elif msg_type == "PLACE_CUE":
                 room = BILLAR_ROOMS.get(room_id)
 
-                if not room or room["turn"] != user_id:
-                    await send_error(
-                        websocket,
-                        "No puedes colocar la bola blanca."
+                if not room:
+                    await send_error(websocket, "La sala no existe.")
+                    continue
+
+                async with lock:
+                    if (
+                        room["turn"] != user_id
+                        or not room.get("ball_in_hand")
+                        or room.get("shot_in_progress")
+                    ):
+                        await send_error(
+                            websocket,
+                            "No puedes colocar la bola blanca ahora."
+                        )
+                        continue
+
+                    try:
+                        x = float(data.get("x", 300))
+                        y = float(data.get("y", BILLAR_HEIGHT / 2))
+                    except (ValueError, TypeError):
+                        await send_error(
+                            websocket,
+                            "La posición de la blanca no es válida."
+                        )
+                        continue
+
+                    if not math.isfinite(x) or not math.isfinite(y):
+                        continue
+
+                    placed, message = billar_place_cue(
+                        room,
+                        x,
+                        y,
                     )
-                    continue
 
-                if not room.get("ball_in_hand"):
-                    await send_error(
-                        websocket,
-                        "No tienes bola en mano."
-                    )
-                    continue
+                    if not placed:
+                        await send_error(websocket, message)
+                        continue
 
-                try:
-                    x = float(data.get("x", 300))
-                    y = float(data.get("y", BILLAR_HEIGHT / 2))
-                except (ValueError, TypeError):
-                    continue
-
-                x = max(
-                    BILLAR_BALL_RADIUS,
-                    min(BILLAR_WIDTH / 2 - 20, x)
-                )
-                y = max(
-                    BILLAR_BALL_RADIUS,
-                    min(BILLAR_HEIGHT - BILLAR_BALL_RADIUS, y)
-                )
-
-                cue = next(
-                    b for b in room["balls"]
-                    if b["kind"] == "cue"
-                )
-
-                occupied = any(
-                    not b["pocketed"]
-                    and b["kind"] != "cue"
-                    and math.hypot(
-                        b["x"] - x,
-                        b["y"] - y
-                    ) < BILLAR_BALL_RADIUS * 2
-                    for b in room["balls"]
-                )
-
-                if occupied:
-                    await send_error(
-                        websocket,
-                        "No puedes colocar la bola encima de otra."
-                    )
-                    continue
-
-                cue["x"] = x
-                cue["y"] = y
-                cue["pocketed"] = False
-                cue["vx"] = 0.0
-                cue["vy"] = 0.0
-
-                room["ball_in_hand"] = False
-                room["message"] = "Bola blanca colocada."
+                    room["ball_in_hand"] = False
+                    room["message"] = message
 
                 await billar_broadcast(room)
 
             elif msg_type == "CLOSE_ROOM":
                 current_room = BILLAR_ROOMS.get(room_id)
-                if not current_room or str(current_room.get("creator_id")) != str(user_id):
-                    await send_error(websocket, "Solo el creador puede cerrar esta sala.")
+
+                if (
+                    not current_room
+                    or str(current_room.get("creator_id"))
+                    != str(user_id)
+                ):
+                    await send_error(
+                        websocket,
+                        "Solo el creador puede cerrar esta sala."
+                    )
                     continue
+
+                if current_room.get("status") != "WAITING":
+                    await send_error(
+                        websocket,
+                        "La sala ya comenzó. Para salir debes abandonar la partida."
+                    )
+                    continue
+
                 explicit_exit = True
                 explicit_action = "CLOSE_ROOM"
                 break
@@ -3165,42 +3508,56 @@ async def billar_endpoint(
 
         if room:
             player = room["players"].get(user_id)
-            is_current_socket = bool(player and player.get("websocket") is websocket)
+
+            is_current_socket = bool(
+                player
+                and player.get("websocket") is websocket
+            )
 
             if is_current_socket:
                 if explicit_exit and not room.get("finished"):
-                    other_ids = [uid for uid in room["players"] if uid != user_id]
-                    if room.get("status") == "PLAYING" and len(other_ids) == 1:
-                        # Primero se anuncia y liquida el ganador mientras ambos sockets siguen disponibles.
-                        settled = await billar_finish(room_id, "host_closed" if explicit_action == "CLOSE_ROOM" else "abandon", other_ids[0])
-                        if not settled and not room.get("finished"):
-                            asyncio.create_task(billar_delayed_disconnect(room_id, user_id, websocket))
+                    other_ids = [
+                        uid for uid in room["players"]
+                        if uid != user_id
+                    ]
+
+                    if (
+                        room.get("status") == "PLAYING"
+                        and len(other_ids) == 1
+                    ):
+                        await billar_finish(
+                            room_id,
+                            "abandon",
+                            other_ids[0],
+                        )
+
                     elif room.get("status") == "WAITING":
-                        # Si aún no había rival, cancelar y devolver al creador su entrada.
-                        settled = await billar_finish(room_id, "cancelled", None)
-                        if settled and explicit_action == "CLOSE_ROOM":
-                            try:
-                                await websocket.send_json({
-                                    "type": "ROOM_CLOSED",
-                                    "room_id": room_id,
-                                    "message": "La sala fue cerrada y la entrada fue devuelta.",
-                                })
-                            except Exception:
-                                pass
-                        if not settled and not room.get("finished"):
-                            asyncio.create_task(billar_delayed_disconnect(room_id, user_id, websocket))
+                        await billar_finish(
+                            room_id,
+                            "cancelled",
+                            None,
+                        )
+
                     player["connected"] = False
                     player["websocket"] = None
+
                     try:
                         await websocket.close()
                     except Exception:
                         pass
+
                 else:
                     player["connected"] = False
                     player["websocket"] = None
+
                     if not room.get("finished"):
-                        # Un cierre de pestaña/recarga no cuenta como abandono inmediato.
-                        asyncio.create_task(billar_delayed_disconnect(room_id, user_id, websocket))
+                        asyncio.create_task(
+                            billar_delayed_disconnect(
+                                room_id,
+                                user_id,
+                                websocket,
+                            )
+                        )
 
         await billar_broadcast_lobby()
 
