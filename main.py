@@ -18,6 +18,7 @@ app = FastAPI(title="AXIOM Game Backend")
 SUPABASE_URL = "https://djdzytfdztctusnuuvrm.supabase.co"
 SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqZHp5dGZkenRjdHVzbnV1dnJtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4OTUxOTE3NywiZXhwIjoyMTA1MDk1MTc3fQ.45n4zgBGqXTtqI3LJOhefxSNckxnddsKGZjoSajkihM"
 
+
 if not SUPABASE_SERVICE_ROLE_KEY:
     raise RuntimeError("Falta configurar SUPABASE_SERVICE_ROLE_KEY en Render.")
 
@@ -152,15 +153,13 @@ def settle_snake_cashout(
             "p_refund_amount": round(float(refund), 2),
             "p_payout_amount": round(float(payout), 2),
         })
-
-        return (
-            bool(result.get("success")),
-            str(result.get("message", "No se pudo procesar el retiro."))
-        )
-
+        return result
     except Exception as exc:
         print(f"ERROR settle_snake_cashout: {exc!r}")
-        return False, "No se pudo procesar el retiro."
+        return {
+            "success": False,
+            "message": "No se pudo procesar el retiro. Inténtalo nuevamente."
+        }
 
 
 def credit_winner(user_id: str, prize: float, room_id: str):
@@ -240,7 +239,9 @@ GAME_TICK = 1 / 30
 
 COIN_RADIUS = 16
 COIN_VALUE_MICROS = 100_000
-INITIAL_BALANCE_MICROS = 1_000_000
+# La comisión del 5% se calcula únicamente en settle_snake_cashout (SQL).
+SNAKE_MINIMUM_BET = 10.00
+INITIAL_BALANCE_MICROS = 10_000_000
 
 # Un fragmento de $0.10 por cada segundo de impulso.
 BOOST_COST_MICROS = 100_000
@@ -375,7 +376,7 @@ class SnakeRoom:
             "kills": 0,
             "color": safe_color(color),
             "wallet": wallet,
-            "bet": 1.00,
+            "bet": float(bet),
 
             "balance_micros": INITIAL_BALANCE_MICROS,
             "entry_remaining_micros": INITIAL_BALANCE_MICROS,
@@ -383,7 +384,7 @@ class SnakeRoom:
 
             "earned_micros": 0,
             "earned": 0.0,
-            "balance": 1.00,
+            "balance": money_from_micros(INITIAL_BALANCE_MICROS),
 
             "alive": True,
             "ready": False,
@@ -713,7 +714,9 @@ class SnakeRoom:
                 await asyncio.sleep(GAME_TICK)
 
         except Exception as exc:
+            import traceback
             print(f"ERROR en Snake game_loop {self.room_id}: {exc!r}")
+            traceback.print_exc()
 
         finally:
             self.is_running = False
@@ -729,157 +732,152 @@ async def snake_game_endpoint(
     room_id: str,
     user_id: str = Query(""),
     access_token: str = Query(""),
-    bet: float = Query(1.00),
+    bet: float = Query(SNAKE_MINIMUM_BET),
     wallet: str = Query("play"),
     color: str = Query("#34d399")
 ):
     await websocket.accept()
+    room = None
+    registered = False
 
-    if not user_id or not access_token:
-        await websocket.send_json({
-            "type": "ERROR",
-            "message": "Debes iniciar sesión para jugar."
-        })
-        await websocket.close()
-        return
-
-    if not verify_user_token(access_token, user_id):
-        await websocket.send_json({
-            "type": "ERROR",
-            "message": "La sesión no es válida. Inicia sesión nuevamente."
-        })
-        await websocket.close()
-        return
-
-    bet = 1.00
-
-    if wallet not in ("play", "bonus"):
-        await websocket.send_json({
-            "type": "ERROR",
-            "message": "La billetera seleccionada no es válida."
-        })
-        await websocket.close()
-        return
-
-    if room_id not in snake_rooms:
-        snake_rooms[room_id] = SnakeRoom(room_id)
-
-    room = snake_rooms[room_id]
-
-    if user_id in room.connections:
-        await websocket.send_json({
-            "type": "ERROR",
-            "message": "Ya tienes una conexión activa en esta sala."
-        })
-        await websocket.close()
-        return
-
-    transaction_key = f"snake-entry:{room_id}:{user_id}:{uuid.uuid4().hex}"
-
-    success, message = deduct_balance(
-        user_id,
-        bet,
-        wallet,
-        room_id,
-        transaction_key
-    )
-
-    if not success:
-        await websocket.send_json({
-            "type": "ERROR",
-            "message": message
-        })
-        await websocket.close()
-        return
-
-    async with room.lock:
-        room.connections[user_id] = websocket
-        room.add_snake(user_id, bet, wallet, color)
+    async def reject(message: str, code: int = 1008):
+        try:
+            await websocket.send_json({"type": "ERROR", "message": message})
+        except Exception:
+            pass
+        try:
+            await websocket.close(code=code)
+        except Exception:
+            pass
 
     try:
+        if not user_id or not access_token:
+            await reject("Debes iniciar sesión para jugar.")
+            return
+
+        if wallet not in ("play", "bonus"):
+            await reject("La billetera seleccionada no es válida.")
+            return
+
+        # Snake tiene una apuesta mínima de $10. No se acepta un importe inferior.
+        try:
+            bet = float(bet)
+        except (TypeError, ValueError):
+            await reject("La apuesta no es válida.")
+            return
+
+        if not math.isfinite(bet) or bet < SNAKE_MINIMUM_BET:
+            await reject("La apuesta mínima para Snake es de $10.00.")
+            return
+
+        if bet != SNAKE_MINIMUM_BET:
+            # La entrada de Snake queda fijada en $10 por esta versión.
+            await reject("La apuesta de entrada a Snake es de $10.00.")
+            return
+
+        if not await asyncio.to_thread(verify_user_token, access_token, user_id):
+            await reject("La sesión no es válida. Inicia sesión nuevamente.")
+            return
+
+        if not room_id or len(room_id) > 64:
+            await reject("La sala indicada no es válida.")
+            return
+
+        room = snake_rooms.get(room_id)
+        if room is None:
+            room = SnakeRoom(room_id)
+            snake_rooms[room_id] = room
+
+        # Serializar validación, débito y registro para impedir dobles entradas
+        # del mismo usuario en una misma sala por conexiones simultáneas.
+        async with room.lock:
+            if user_id in room.connections:
+                await reject("Ya tienes una conexión activa en esta sala.")
+                return
+            if len(room.connections) >= 30:
+                await reject("Esta sala está llena. Intenta entrar a otra sala.", 1013)
+                return
+
+            transaction_key = f"snake-entry:{room_id}:{user_id}:{uuid.uuid4().hex}"
+            success, message = await asyncio.to_thread(
+                deduct_balance,
+                user_id,
+                SNAKE_MINIMUM_BET,
+                wallet,
+                room_id,
+                transaction_key
+            )
+            if not success:
+                await reject(message)
+                return
+
+            room.connections[user_id] = websocket
+            room.add_snake(user_id, SNAKE_MINIMUM_BET, wallet, color)
+            registered = True
+
         await websocket.send_json(room.public_state())
-    except Exception as exc:
-        print(f"ERROR enviando estado inicial Snake: {exc!r}")
 
-    if not room.is_running:
-        asyncio.create_task(room.game_loop())
+        if not room.is_running:
+            asyncio.create_task(room.game_loop())
 
-    try:
         while True:
             data = await websocket.receive_json()
+            if not isinstance(data, dict):
+                continue
             msg_type = data.get("type")
 
-            if msg_type == "READY":
+            # Heartbeat de aplicación: el frontend envía PING periódicamente.
+            if msg_type == "PING":
+                await websocket.send_json({"type": "PONG"})
+
+            elif msg_type == "READY":
                 async with room.lock:
                     snake = room.snakes.get(user_id)
-
                     if snake and snake["alive"]:
                         snake["ready"] = True
-
                 await room.broadcast()
 
             elif msg_type == "STEER":
                 try:
                     angle = float(data.get("angle", 0))
-
                     if not math.isfinite(angle):
                         continue
-
                     async with room.lock:
                         snake = room.snakes.get(user_id)
-
                         if snake and snake["alive"] and snake["ready"]:
                             snake["angle"] = angle
-
                 except (ValueError, TypeError):
                     pass
 
             elif msg_type == "BOOST_START":
                 async with room.lock:
                     snake = room.snakes.get(user_id)
-
                     if (
-                        snake
-                        and snake["alive"]
-                        and snake["ready"]
+                        snake and snake["alive"] and snake["ready"]
                         and snake["balance_micros"] >= BOOST_COST_MICROS
                     ):
                         if not snake.get("boosting"):
                             snake["boosting"] = True
-                            snake["next_boost_coin_at"] = (
-                                time.monotonic() + BOOST_COIN_INTERVAL
-                            )
-
+                            snake["next_boost_coin_at"] = time.monotonic() + BOOST_COIN_INTERVAL
                 await room.broadcast()
 
             elif msg_type == "BOOST_STOP":
                 async with room.lock:
                     snake = room.snakes.get(user_id)
-
                     if snake:
                         snake["boosting"] = False
-
                 await room.broadcast()
 
             elif msg_type == "CASH_OUT":
                 cashout_data = None
-
                 async with room.lock:
                     snake = room.snakes.get(user_id)
-
                     if (
-                        snake
-                        and snake["alive"]
-                        and snake["ready"]
+                        snake and snake["alive"] and snake["ready"]
                         and not snake.get("cashed_out", False)
                     ):
                         snake["boosting"] = False
-
-                        balance_micros = max(
-                            0,
-                            int(snake.get("balance_micros", 0))
-                        )
-
+                        balance_micros = max(0, int(snake.get("balance_micros", 0)))
                         kills = int(snake.get("kills", 0))
                         wallet_used = snake["wallet"]
 
@@ -892,22 +890,13 @@ async def snake_game_endpoint(
                         else:
                             refund_micros = 0
 
-                        payout_micros = max(
-                            0,
-                            balance_micros - refund_micros
-                        )
-
+                        payout_micros = max(0, balance_micros - refund_micros)
                         refund = money_from_micros(refund_micros)
                         payout = money_from_micros(payout_micros)
-
-                        transaction_key = (
-                            f"snake-cashout:{room_id}:{user_id}:"
-                            f"{snake['session_id']}"
-                        )
+                        transaction_key = f"snake-cashout:{room_id}:{user_id}:{snake['session_id']}"
 
                         snake["alive"] = False
                         snake["cashed_out"] = True
-
                         cashout_data = {
                             "refund": refund,
                             "payout": payout,
@@ -916,56 +905,63 @@ async def snake_game_endpoint(
                         }
 
                 if cashout_data is not None:
-                    paid, payment_message = settle_snake_cashout(
-                        user_id=user_id,
-                        room_id=room_id,
-                        wallet=cashout_data["wallet"],
-                        refund=cashout_data["refund"],
-                        payout=cashout_data["payout"],
-                        transaction_key=cashout_data["transaction_key"]
+                    result = await asyncio.to_thread(
+                        settle_snake_cashout,
+                        user_id,
+                        room_id,
+                        cashout_data["wallet"],
+                        cashout_data["refund"],
+                        cashout_data["payout"],
+                        cashout_data["transaction_key"]
                     )
 
-                    if paid:
+                    if result.get("success"):
                         await websocket.send_json({
                             "type": "CASHOUT_SUCCESS",
-                            "payout": cashout_data["payout"],
-                            "refund": cashout_data["refund"],
+                            "payout": float(result.get("payout", 0)),
+                            "refund": float(result.get("refund", 0)),
+                            "commission": float(result.get("commission", 0)),
+                            "gross_total": float(result.get("gross_total", 0)),
                             "wallet": cashout_data["wallet"],
-                            "message": "Retiro realizado correctamente."
+                            "message": "Retiro realizado correctamente. Comisión del 5% aplicada."
                         })
                     else:
                         async with room.lock:
                             snake = room.snakes.get(user_id)
-
                             if snake:
                                 snake["alive"] = True
                                 snake["cashed_out"] = False
-
                         await websocket.send_json({
                             "type": "ERROR",
-                            "message": payment_message
+                            "message": str(result.get("message", "No se pudo procesar el retiro."))
                         })
-
                     await room.broadcast()
 
     except WebSocketDisconnect:
         pass
-
     except Exception as exc:
+        # Loguear traceback completo permite localizar la causa real del cierre 1006 en Render.
+        import traceback
         print(f"ERROR WebSocket Snake {room_id}: {exc!r}")
-
+        traceback.print_exc()
+        try:
+            await websocket.send_json({
+                "type": "ERROR",
+                "message": "Ocurrió un error interno en Snake. Revisa los registros del servidor."
+            })
+            await websocket.close(code=1011)
+        except Exception:
+            pass
     finally:
-        async with room.lock:
-            if room.connections.get(user_id) is websocket:
-                room.connections.pop(user_id, None)
+        if room is not None and registered:
+            async with room.lock:
+                if room.connections.get(user_id) is websocket:
+                    room.connections.pop(user_id, None)
+                snake = room.snakes.get(user_id)
+                if snake and snake.get("alive"):
+                    room.kill_snake(snake)
+                if not room.connections:
+                    room.is_running = False
+                    if snake_rooms.get(room_id) is room:
+                        snake_rooms.pop(room_id, None)
 
-            snake = room.snakes.get(user_id)
-
-            if snake and snake.get("alive"):
-                room.kill_snake(snake)
-
-            if not room.connections:
-                room.is_running = False
-
-                if snake_rooms.get(room_id) is room:
-                    snake_rooms.pop(room_id, None)
