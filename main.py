@@ -577,8 +577,8 @@ async def game_endpoint(
 # CONFIGURACIÓN SNAKE
 # ============================================================
 
-WORLD_WIDTH = 1000
-WORLD_HEIGHT = 1000
+WORLD_WIDTH = 10000
+WORLD_HEIGHT = 10000
 
 SNAKE_SPEED = 7.5
 SNAKE_BOOST_SPEED = 12.0
