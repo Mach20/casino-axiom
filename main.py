@@ -16,8 +16,7 @@ app = FastAPI(title="AXIOM Game Backend")
 # ============================================================
 
 SUPABASE_URL = "https://djdzytfdztctusnuuvrm.supabase.co"
-SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqZHp5dGZkenRjdHVzbnV1dnJtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4OTUxOTE3NywiZXhwIjoyMTA1MDk1MTc3fQ.45n4zgBGqXTtqI3LJOhefxSNckxnddsKGZjoSajkihM"
-
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
 
 if not SUPABASE_SERVICE_ROLE_KEY:
     raise RuntimeError("Falta configurar SUPABASE_SERVICE_ROLE_KEY en Render.")
@@ -365,7 +364,7 @@ class SnakeRoom:
             random.uniform(-math.pi, math.pi)
         )
 
-    def add_snake(self, user_id: str, bet: float, wallet: str, color: str):
+    def add_snake(self, user_id: str, bet: float, wallet: str, color: str, pattern: str = "solid", eyes: str = "classic", accessory: str = "none"):
         x, y, angle = self.create_spawn()
 
         self.snakes[user_id] = {
@@ -375,6 +374,9 @@ class SnakeRoom:
             "score": 0,
             "kills": 0,
             "color": safe_color(color),
+            "pattern": pattern if pattern in ("solid", "stripes", "spots", "neon") else "solid",
+            "eyes": eyes if eyes in ("classic", "laser", "sleepy") else "classic",
+            "accessory": accessory if accessory in ("none", "crown", "bandana", "halo") else "none",
             "wallet": wallet,
             "bet": float(bet),
 
@@ -662,6 +664,9 @@ class SnakeRoom:
                 "score": snake["score"],
                 "kills": snake["kills"],
                 "color": snake["color"],
+                "pattern": snake.get("pattern", "solid"),
+                "eyes": snake.get("eyes", "classic"),
+                "accessory": snake.get("accessory", "none"),
                 "wallet": snake["wallet"],
                 "bet": snake["bet"],
                 "balance": snake["balance"],
@@ -734,7 +739,10 @@ async def snake_game_endpoint(
     access_token: str = Query(""),
     bet: float = Query(SNAKE_MINIMUM_BET),
     wallet: str = Query("play"),
-    color: str = Query("#34d399")
+    color: str = Query("#34d399"),
+    pattern: str = Query("solid"),
+    eyes: str = Query("classic"),
+    accessory: str = Query("none")
 ):
     await websocket.accept()
     room = None
@@ -812,7 +820,7 @@ async def snake_game_endpoint(
                 return
 
             room.connections[user_id] = websocket
-            room.add_snake(user_id, SNAKE_MINIMUM_BET, wallet, color)
+            room.add_snake(user_id, SNAKE_MINIMUM_BET, wallet, color, pattern, eyes, accessory)
             registered = True
 
         await websocket.send_json(room.public_state())
