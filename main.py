@@ -17,10 +17,11 @@ app = FastAPI(title="AXIOM Game Backend")
 # ============================================================
 
 SUPABASE_URL = "https://djdzytfdztctusnuuvrm.supabase.co"
+
 SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqZHp5dGZkenRjdHVzbnV1dnJtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4OTUxOTE3NywiZXhwIjoyMTA1MDk1MTc3fQ.45n4zgBGqXTtqI3LJOhefxSNckxnddsKGZjoSajkihM"
 
 if not SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SERVICE_ROLE_KEY == "PEGA_AQUI_TU_NUEVA_SERVICE_ROLE_KEY":
-    raise RuntimeError("Falta configurar la nueva SUPABASE_SERVICE_ROLE_KEY.")
+    raise RuntimeError("Falta configurar la SUPABASE_SERVICE_ROLE_KEY.")
 
 supabase: Client = create_client(
     SUPABASE_URL,
@@ -273,8 +274,6 @@ async def lobby_endpoint(
         await websocket.close()
         return
 
-    # Compatibilidad con el frontend actual:
-    # el lobby utiliza user_id y no envía access_token.
     manager.active_connections.setdefault("lobby", []).append(websocket)
     await manager.broadcast_lobby()
 
@@ -568,32 +567,31 @@ async def game_endpoint(
                         room["finished"] = True
                         room["status"] = "FINISHED"
 
+                        winner_id = None
+
+                        if result != "DRAW":
+                            winner_id = next(
+                                uid for uid, candidate in room["players"].items()
+                                if candidate.get("symbol") == result
+                            )
+
                         for p in room["players"].values():
                             await xo_send(p, {
                                 "type": "GAME_FINISHED",
                                 "result": "draw" if result == "DRAW" else "win",
-                                "winner_id": None if result == "DRAW" else next(
-                                    uid for uid, candidate in room["players"].items()
-                                    if candidate.get("symbol") == result
-                                ),
+                                "winner_id": winner_id,
                                 "abandoner_id": None,
                             })
 
                 await manager.broadcast_lobby()
                 continue
 
+            # El cierre voluntario se procesa en finally.
+            # Si la partida ya comenzó, el rival gana por abandono.
             if msg_type == "CLOSE_ROOM":
                 if not player.get("is_host"):
                     await send_error(websocket, "Solo el creador puede cerrar la sala.")
                     continue
-
-                async with lock:
-                    room["finished"] = True
-                    room["status"] = "FINISHED"
-
-                    for uid, p in list(room["players"].items()):
-                        if uid != str(user_id):
-                            await xo_send(p, {"type": "ROOM_CLOSED_BY_HOST"})
 
                 break
 
@@ -610,26 +608,76 @@ async def game_endpoint(
     finally:
         if room is not None and lock is not None:
             remove_room = False
+            lobby_changed = False
 
             async with lock:
                 current = room.get("players", {}).get(str(user_id))
 
+                # Evita que una conexión vieja desconecte una conexión nueva.
                 if current is player and current.get("websocket") is websocket:
                     current["connected"] = False
                     current["websocket"] = None
 
-                    if current.get("is_host"):
-                        if not room.get("finished"):
-                            room["finished"] = True
-                            room["status"] = "FINISHED"
-
-                            for uid, other in list(room["players"].items()):
-                                if uid != str(user_id):
-                                    await xo_send(other, {"type": "ROOM_CLOSED_BY_HOST"})
-
+                    # Si la partida ya terminó normalmente, no se declara
+                    # otro ganador por la desconexión posterior.
+                    if room.get("finished"):
                         remove_room = True
 
-                    elif not room.get("finished"):
+                    # PARTIDA EN CURSO:
+                    # el jugador que permanece conectado gana por abandono.
+                    elif room.get("status") == "PLAYING":
+                        winner_id = None
+                        winner_player = None
+
+                        for uid, other in room["players"].items():
+                            if uid != str(user_id):
+                                winner_id = uid
+                                winner_player = other
+                                break
+
+                        room["finished"] = True
+                        room["status"] = "FINISHED"
+
+                        if winner_player is not None:
+                            await xo_send(winner_player, {
+                                "type": "GAME_FINISHED",
+                                "result": "win",
+                                "winner_id": winner_id,
+                                "abandoner_id": str(user_id),
+                                "reason": "abandonment",
+                            })
+
+                        # También se intenta informar al jugador que abandona.
+                        await xo_send(current, {
+                            "type": "GAME_FINISHED",
+                            "result": "lose",
+                            "winner_id": winner_id,
+                            "abandoner_id": str(user_id),
+                            "reason": "abandonment",
+                        })
+
+                        remove_room = True
+                        lobby_changed = True
+
+                    # SALA EN ESPERA:
+                    # si se va el creador, se elimina la sala sin ganador.
+                    elif current.get("is_host"):
+                        room["finished"] = True
+                        room["status"] = "FINISHED"
+
+                        for uid, other in list(room["players"].items()):
+                            if uid != str(user_id):
+                                await xo_send(other, {
+                                    "type": "ROOM_CLOSED_BY_HOST"
+                                })
+
+                        remove_room = True
+                        lobby_changed = True
+
+                    # SALA EN ESPERA:
+                    # si se va el invitado, se libera el espacio y el
+                    # creador puede seguir esperando a otro jugador.
+                    else:
                         room["players"].pop(str(user_id), None)
                         room["board"] = [None] * 9
                         room["turn"] = "X"
@@ -650,12 +698,11 @@ async def game_endpoint(
                                 "players_count": 1,
                             })
 
-                if room.get("finished"):
-                    remove_room = True
+                        lobby_changed = True
 
             if remove_room:
                 await xo_remove_room(room_id)
-            else:
+            elif lobby_changed:
                 await manager.broadcast_lobby()
 
 
@@ -1368,8 +1415,6 @@ async def snake_game_endpoint(
 
         async with room.lock:
             if len(room.connections) >= MAX_SNAKE_PLAYERS:
-                # Esta comprobación no debería fallar porque la selección
-                # y la reserva ocurren dentro del mismo bloqueo global.
                 await send_error(
                     websocket,
                     "No se pudo reservar el espacio. Intenta nuevamente."
