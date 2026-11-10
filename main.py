@@ -16,7 +16,8 @@ app = FastAPI(title="AXIOM Game Backend")
 # ============================================================
 
 SUPABASE_URL = "https://djdzytfdztctusnuuvrm.supabase.co"
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqZHp5dGZkenRjdHVzbnV1dnJtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4OTUxOTE3NywiZXhwIjoyMTA1MDk1MTc3fQ.45n4zgBGqXTtqI3LJOhefxSNckxnddsKGZjoSajkihM"
+
 
 if not SUPABASE_SERVICE_ROLE_KEY:
     raise RuntimeError("Falta configurar SUPABASE_SERVICE_ROLE_KEY en Render.")
