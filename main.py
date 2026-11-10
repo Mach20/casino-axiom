@@ -1,3 +1,4 @@
+
 import os
 import random
 import asyncio
@@ -18,9 +19,8 @@ app = FastAPI(title="AXIOM Game Backend")
 SUPABASE_URL = "https://djdzytfdztctusnuuvrm.supabase.co"
 SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqZHp5dGZkenRjdHVzbnV1dnJtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4OTUxOTE3NywiZXhwIjoyMTA1MDk1MTc3fQ.45n4zgBGqXTtqI3LJOhefxSNckxnddsKGZjoSajkihM"
 
-
-if not SUPABASE_SERVICE_ROLE_KEY:
-    raise RuntimeError("Falta configurar SUPABASE_SERVICE_ROLE_KEY en Render.")
+if not SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SERVICE_ROLE_KEY == "PEGA_AQUI_TU_NUEVA_SERVICE_ROLE_KEY":
+    raise RuntimeError("Falta configurar la nueva SUPABASE_SERVICE_ROLE_KEY.")
 
 supabase: Client = create_client(
     SUPABASE_URL,
@@ -32,44 +32,20 @@ room_locks: Dict[str, asyncio.Lock] = {}
 snake_rooms: Dict[str, dict] = {}
 
 
-class GameManager:
-    def __init__(self):
-        self.active_connections: Dict[str, List[WebSocket]] = {}
-
-    def calculate_commission(self, total_pot: float) -> float:
-        if total_pot < 0.25:
-            return 0.02
-        return round(total_pot * 0.05, 2)
-
-    async def broadcast_lobby(self):
-        room_list = [
-            {
-                "room_id": room_id,
-                "creator": room["creator"],
-                "bet": room["bet"],
-                "is_public": room["is_public"],
-                "players_count": len(room["players"]),
-            }
-            for room_id, room in lobbies.items()
-            if len(room["players"]) < 2 and not room.get("finished", False)
-        ]
-
-        for ws in list(self.active_connections.get("lobby", [])):
-            try:
-                await ws.send_json({
-                    "type": "LOBBY_UPDATE",
-                    "rooms": room_list
-                })
-            except Exception:
-                pass
-
-
-manager = GameManager()
-
-
 # ============================================================
 # FUNCIONES GENERALES
 # ============================================================
+
+async def send_error(websocket: WebSocket, message: str):
+    """Envía errores con un formato uniforme sin romper la conexión."""
+    try:
+        await websocket.send_json({
+            "type": "ERROR",
+            "message": str(message)
+        })
+    except Exception as exc:
+        print(f"ERROR enviando mensaje WebSocket: {exc!r}")
+
 
 def verify_user_token(access_token: str, expected_user_id: str) -> bool:
     if not access_token or not expected_user_id:
@@ -183,11 +159,49 @@ def credit_winner(user_id: str, prize: float, room_id: str):
 
 
 # ============================================================
+# ADMINISTRADOR DE CONEXIONES Y LOBBY
+# ============================================================
+
+class GameManager:
+    def __init__(self):
+        self.active_connections: Dict[str, List[WebSocket]] = {}
+
+    def calculate_commission(self, total_pot: float) -> float:
+        if total_pot < 0.25:
+            return 0.02
+        return round(total_pot * 0.05, 2)
+
+    async def broadcast_lobby(self):
+        room_list = [
+            {
+                "room_id": room_id,
+                "creator": room["creator"],
+                "bet": room["bet"],
+                "is_public": room["is_public"],
+                "players_count": len(room["players"]),
+            }
+            for room_id, room in list(lobbies.items())
+            if len(room["players"]) < 2 and not room.get("finished", False)
+        ]
+
+        for ws in list(self.active_connections.get("lobby", [])):
+            try:
+                await ws.send_json({
+                    "type": "LOBBY_UPDATE",
+                    "rooms": room_list
+                })
+            except Exception:
+                pass
+
+
+manager = GameManager()
+
+
+# ============================================================
 # X VS O
 # El frontend actual realiza el débito, la comisión y el premio.
 # Este backend administra únicamente salas, conexiones y movimientos.
 # ============================================================
-
 
 def xo_player(user_id: str, wallet: str, bet: float, creator: str, is_host: bool):
     return {
@@ -208,14 +222,17 @@ def xo_winner(board):
         (0, 3, 6), (1, 4, 7), (2, 5, 8),
         (0, 4, 8), (2, 4, 6),
     )
+
     for a, b, c in lines:
         if board[a] is not None and board[a] == board[b] == board[c]:
             return board[a]
+
     return "DRAW" if all(cell is not None for cell in board) else None
 
 
 async def xo_send(player: dict, payload: dict):
     ws = player.get("websocket")
+
     if ws is not None:
         try:
             await ws.send_json(payload)
@@ -239,6 +256,10 @@ async def health():
     return {"status": "healthy"}
 
 
+# ============================================================
+# WEBSOCKET LOBBY X VS O
+# ============================================================
+
 @app.websocket("/ws/lobby")
 async def lobby_endpoint(
     websocket: WebSocket,
@@ -246,28 +267,32 @@ async def lobby_endpoint(
     access_token: str = Query(""),
 ):
     await websocket.accept()
+
     if not user_id:
         await send_error(websocket, "No se recibió el usuario.")
         await websocket.close()
         return
 
-    # Compatibilidad con el page.tsx actual: el lobby envía user_id,
-    # pero no access_token. No se exige token para no romper ese frontend.
+    # Compatibilidad con el frontend actual:
+    # el lobby utiliza user_id y no envía access_token.
     manager.active_connections.setdefault("lobby", []).append(websocket)
     await manager.broadcast_lobby()
 
     try:
         while True:
             data = await websocket.receive_json()
+
             if not isinstance(data, dict) or data.get("type") != "CREATE_ROOM":
                 continue
 
             creator_id = str(data.get("user_id") or "")
+
             if creator_id != str(user_id):
                 await send_error(websocket, "Usuario no autorizado.")
                 continue
 
             wallet = str(data.get("wallet", "play")).lower()
+
             if wallet not in ("play", "bonus"):
                 await send_error(websocket, "Billetera no válida.")
                 continue
@@ -287,22 +312,26 @@ async def lobby_endpoint(
                 and not room.get("finished", False)
                 for room in lobbies.values()
             )
+
             if already_active:
                 await send_error(websocket, "Ya tienes una sala activa.")
                 continue
 
             is_public = bool(data.get("is_public", True))
             password = "" if is_public else str(data.get("password") or "").strip()
+
             if not is_public and not password:
-                await send_error(websocket, "Debes establecer una contraseña para la sala privada.")
+                await send_error(
+                    websocket,
+                    "Debes establecer una contraseña para la sala privada."
+                )
                 continue
 
             room_id = uuid.uuid4().hex[:12]
             creator_name = str(data.get("creator") or "Jugador").strip()[:40] or "Jugador"
             host = xo_player(creator_id, wallet, bet, creator_name, True)
 
-            # IMPORTANTE: no se cobra aquí. El page.tsx actual ya ejecuta
-            # deduct_bet_balance antes de enviar CREATE_ROOM.
+            # El frontend ya ejecuta el débito antes de CREATE_ROOM.
             lobbies[room_id] = {
                 "room_id": room_id,
                 "creator": creator_name,
@@ -318,6 +347,7 @@ async def lobby_endpoint(
                 "settling": False,
                 "created_at": time.time(),
             }
+
             room_locks[room_id] = asyncio.Lock()
 
             await websocket.send_json({
@@ -325,17 +355,25 @@ async def lobby_endpoint(
                 "room_id": room_id,
                 "password": password,
             })
+
             await manager.broadcast_lobby()
 
     except WebSocketDisconnect:
         pass
+
     except Exception as exc:
         print(f"ERROR lobby XvO: {exc!r}")
+
     finally:
         connections = manager.active_connections.get("lobby", [])
+
         if websocket in connections:
             connections.remove(websocket)
 
+
+# ============================================================
+# WEBSOCKET PARTIDA X VS O
+# ============================================================
 
 @app.websocket("/ws/game/{room_id}")
 async def game_endpoint(
@@ -352,7 +390,9 @@ async def game_endpoint(
         await send_error(websocket, "No se recibió el usuario.")
         await websocket.close()
         return
+
     wallet = str(wallet).lower()
+
     if wallet not in ("play", "bonus"):
         await send_error(websocket, "Billetera no válida.")
         await websocket.close()
@@ -360,44 +400,61 @@ async def game_endpoint(
 
     room = lobbies.get(room_id)
     lock = room_locks.get(room_id)
+
     if room is None or lock is None:
         await send_error(websocket, "La sala no existe o ya fue cerrada.")
         await websocket.close()
         return
 
     player = None
+
     try:
         async with lock:
             if room.get("finished"):
                 await send_error(websocket, "La partida ya terminó.")
                 await websocket.close()
                 return
-            if not room.get("is_public", True) and str(room.get("password", "")) != str(password):
+
+            if (
+                not room.get("is_public", True)
+                and str(room.get("password", "")) != str(password)
+            ):
                 await send_error(websocket, "Contraseña incorrecta.")
                 await websocket.close()
                 return
 
             player = room["players"].get(str(user_id))
+
             if player is None:
                 if len(room["players"]) >= 2:
                     await send_error(websocket, "La sala está llena.")
                     await websocket.close()
                     return
+
                 if str(user_id) == str(room["creator_id"]):
                     await send_error(websocket, "No puedes entrar dos veces a tu propia sala.")
                     await websocket.close()
                     return
+
                 if any(
-                    str(user_id) in other.get("players", {}) and not other.get("finished", False)
-                    for rid, other in lobbies.items() if rid != room_id
+                    str(user_id) in other.get("players", {})
+                    and not other.get("finished", False)
+                    for rid, other in lobbies.items()
+                    if rid != room_id
                 ):
                     await send_error(websocket, "Ya tienes otra partida activa.")
                     await websocket.close()
                     return
 
-                # El frontend ya descontó la apuesta al unirse. El servidor
-                # usa la apuesta fijada por el creador y no vuelve a cobrar.
-                player = xo_player(str(user_id), wallet, float(room["bet"]), "Jugador", False)
+                # El frontend ya descontó la apuesta al unirse.
+                player = xo_player(
+                    str(user_id),
+                    wallet,
+                    float(room["bet"]),
+                    "Jugador",
+                    False
+                )
+
                 room["players"][str(user_id)] = player
 
             if player.get("connected"):
@@ -411,11 +468,20 @@ async def game_endpoint(
 
             if len(room["players"]) == 2:
                 host = room["players"].get(str(room["creator_id"]))
-                guest = next((p for uid, p in room["players"].items() if uid != str(room["creator_id"])), None)
+
+                guest = next(
+                    (
+                        p for uid, p in room["players"].items()
+                        if uid != str(room["creator_id"])
+                    ),
+                    None
+                )
+
                 if host is None or guest is None:
                     await send_error(websocket, "No se pudieron identificar los jugadores.")
                     await websocket.close()
                     return
+
                 host["symbol"] = "X"
                 guest["symbol"] = "O"
                 room["status"] = "PLAYING"
@@ -444,8 +510,10 @@ async def game_endpoint(
 
         while True:
             data = await websocket.receive_json()
+
             if not isinstance(data, dict):
                 continue
+
             msg_type = str(data.get("type", "")).upper()
 
             if msg_type == "PING":
@@ -456,27 +524,34 @@ async def game_endpoint(
                 async with lock:
                     if room.get("finished") or room.get("status") != "PLAYING":
                         continue
+
                     if room["players"].get(str(user_id)) is not player:
                         await send_error(websocket, "Jugador no válido.")
                         continue
+
                     if data.get("symbol") not in (None, player.get("symbol")):
                         await send_error(websocket, "Ficha no válida.")
                         continue
+
                     if room["turn"] != player.get("symbol"):
                         await send_error(websocket, "No es tu turno.")
                         continue
+
                     try:
                         index = int(data.get("index", -1))
                     except (TypeError, ValueError):
                         continue
+
                     if index < 0 or index > 8 or room["board"][index] is not None:
                         await send_error(websocket, "Movimiento no válido.")
                         continue
 
                     symbol = player["symbol"]
                     room["board"][index] = symbol
+
                     result = xo_winner(room["board"])
                     room["turn"] = "O" if symbol == "X" else "X"
+
                     move_payload = {
                         "type": "MOVE_MADE",
                         "board": list(room["board"]),
@@ -485,12 +560,14 @@ async def game_endpoint(
                         "symbol": symbol,
                         "index": index,
                     }
+
                     for p in room["players"].values():
                         await xo_send(p, move_payload)
 
                     if result is not None:
                         room["finished"] = True
                         room["status"] = "FINISHED"
+
                         for p in room["players"].values():
                             await xo_send(p, {
                                 "type": "GAME_FINISHED",
@@ -509,12 +586,15 @@ async def game_endpoint(
                 if not player.get("is_host"):
                     await send_error(websocket, "Solo el creador puede cerrar la sala.")
                     continue
+
                 async with lock:
                     room["finished"] = True
                     room["status"] = "FINISHED"
+
                     for uid, p in list(room["players"].items()):
                         if uid != str(user_id):
                             await xo_send(p, {"type": "ROOM_CLOSED_BY_HOST"})
+
                 break
 
             if msg_type in ("LEAVE", "ABANDON"):
@@ -522,33 +602,41 @@ async def game_endpoint(
 
     except WebSocketDisconnect:
         pass
+
     except Exception as exc:
         print(f"ERROR WebSocket XvO {room_id}: {exc!r}")
         await send_error(websocket, "Ocurrió un error en la partida.")
+
     finally:
         if room is not None and lock is not None:
             remove_room = False
+
             async with lock:
                 current = room.get("players", {}).get(str(user_id))
+
                 if current is player and current.get("websocket") is websocket:
                     current["connected"] = False
                     current["websocket"] = None
+
                     if current.get("is_host"):
                         if not room.get("finished"):
                             room["finished"] = True
                             room["status"] = "FINISHED"
+
                             for uid, other in list(room["players"].items()):
                                 if uid != str(user_id):
                                     await xo_send(other, {"type": "ROOM_CLOSED_BY_HOST"})
+
                         remove_room = True
+
                     elif not room.get("finished"):
-                        # Si el invitado se desconecta, liberar su plaza y
-                        # devolver la sala a espera; no se toca el dinero.
                         room["players"].pop(str(user_id), None)
                         room["board"] = [None] * 9
                         room["turn"] = "X"
                         room["status"] = "WAITING"
+
                         host = room["players"].get(str(room["creator_id"]))
+
                         if host:
                             await xo_send(host, {
                                 "type": "INIT",
@@ -561,8 +649,10 @@ async def game_endpoint(
                                 "bet": room["bet"],
                                 "players_count": 1,
                             })
+
                 if room.get("finished"):
                     remove_room = True
+
             if remove_room:
                 await xo_remove_room(room_id)
             else:
@@ -570,11 +660,7 @@ async def game_endpoint(
 
 
 # ============================================================
-# SNAKE: CONFIGURACIÓN (MAPA REDUCIDO A 800x800)
-# ============================================================
-
-# ============================================================
-# CONFIGURACIÓN SNAKE
+# SNAKE: CONFIGURACIÓN
 # ============================================================
 
 WORLD_WIDTH = 5000
@@ -645,11 +731,11 @@ def safe_color(color: str) -> str:
 
 
 # ============================================================
-# CONTROL GLOBAL DE SALAS
+# CONTROL GLOBAL DE SALAS SNAKE
 # ============================================================
 
-# Se utiliza para que dos conexiones simultáneas no ocupen
-# incorrectamente el último espacio disponible de una sala.
+# La selección de sala y la reserva del espacio se realizan
+# dentro de este mismo bloqueo para evitar carreras de conexiones.
 snake_rooms_lock = asyncio.Lock()
 
 
@@ -666,54 +752,50 @@ def get_snake_bet_category(bet: float):
     return None
 
 
-async def get_available_snake_room(category: str):
+def get_available_snake_room_locked(category: str):
     """
-    Busca primero una sala de la misma apuesta con espacio.
-    Si todas están llenas, crea una sala nueva.
+    IMPORTANTE: esta función debe llamarse teniendo adquirido
+    snake_rooms_lock. Así no se selecciona simultáneamente
+    el mismo último espacio de una sala.
     """
 
-    async with snake_rooms_lock:
+    available_rooms = []
 
-        available_rooms = []
+    for room_id, room in snake_rooms.items():
+        if not room_id.startswith(category + "_"):
+            continue
 
-        for room_id, room in snake_rooms.items():
+        if room.bet_micros != SNAKE_BETS[category]:
+            continue
 
-            if not room_id.startswith(category + "_"):
-                continue
+        if len(room.connections) < MAX_SNAKE_PLAYERS:
+            available_rooms.append(room)
 
-            if room.bet_micros != SNAKE_BETS[category]:
-                continue
-
-            if len(room.connections) < MAX_SNAKE_PLAYERS:
-                available_rooms.append(room)
-
-        # Reutiliza primero la sala con más jugadores.
-        # Así se llenan las salas antes de crear otras.
-        if available_rooms:
-            available_rooms.sort(
-                key=lambda room: len(room.connections),
-                reverse=True
-            )
-
-            return available_rooms[0]
-
-        # No hay espacio: crear una sala nueva.
-        number = 1
-
-        while f"{category}_{number}" in snake_rooms:
-            number += 1
-
-        new_room_id = f"{category}_{number}"
-
-        room = SnakeRoom(new_room_id)
-        snake_rooms[new_room_id] = room
-
-        print(
-            f"NUEVA SALA SNAKE: {new_room_id} "
-            f"APUESTA: ${room.bet:.2f}"
+    # Primero llena las salas que ya tienen más jugadores.
+    if available_rooms:
+        available_rooms.sort(
+            key=lambda room: len(room.connections),
+            reverse=True
         )
+        return available_rooms[0]
 
-        return room
+    # Si todas están llenas, crea una nueva sala.
+    number = 1
+
+    while f"{category}_{number}" in snake_rooms:
+        number += 1
+
+    new_room_id = f"{category}_{number}"
+
+    room = SnakeRoom(new_room_id)
+    snake_rooms[new_room_id] = room
+
+    print(
+        f"NUEVA SALA SNAKE: {new_room_id} "
+        f"APUESTA: ${room.bet:.2f}"
+    )
+
+    return room
 
 
 # ============================================================
@@ -723,7 +805,6 @@ async def get_available_snake_room(category: str):
 class SnakeRoom:
 
     def __init__(self, room_id: str):
-
         self.room_id = room_id
 
         category = room_id.rsplit("_", 1)[0]
@@ -746,9 +827,7 @@ class SnakeRoom:
         self.spawn_food(FOOD_INITIAL_COUNT)
 
     def spawn_food(self, amount: int = 1):
-
         for _ in range(amount):
-
             self.foods.append({
                 "id": f"food_{uuid.uuid4().hex}",
                 "x": random.uniform(30, WORLD_WIDTH - 30),
@@ -759,7 +838,6 @@ class SnakeRoom:
             })
 
     def create_spawn(self):
-
         positions = [
             (150, 150, 0),
             (850, 850, math.pi),
@@ -791,7 +869,6 @@ class SnakeRoom:
             return random.choice(available)
 
         for _ in range(50):
-
             x = random.uniform(100, WORLD_WIDTH - 100)
             y = random.uniform(100, WORLD_HEIGHT - 100)
 
@@ -814,14 +891,12 @@ class SnakeRoom:
         wallet: str,
         color: str
     ):
-
         x, y, angle = self.create_spawn()
 
         bet_micros = self.bet_micros
         bet_amount = money_from_micros(bet_micros)
 
         self.snakes[user_id] = {
-
             "session_id": uuid.uuid4().hex,
 
             "body": create_snake_body(x, y, angle),
@@ -858,7 +933,6 @@ class SnakeRoom:
         }
 
     def update_balance(self, snake: dict):
-
         balance = max(
             0,
             int(snake.get("balance_micros", 0))
@@ -876,15 +950,11 @@ class SnakeRoom:
         snake["earned"] = money_from_micros(earned)
 
     def drop_coins(self, snake: dict):
-
         if not snake.get("body"):
             return
 
         head = snake["body"][0]
-
-        balance = int(
-            snake.get("balance_micros", 0)
-        )
+        balance = int(snake.get("balance_micros", 0))
 
         if balance <= 0:
             return
@@ -896,7 +966,6 @@ class SnakeRoom:
         remaining = balance
 
         for _ in range(number_of_coins):
-
             if remaining <= 0:
                 break
 
@@ -940,7 +1009,6 @@ class SnakeRoom:
         self.update_balance(snake)
 
     def kill_snake(self, snake: dict):
-
         if not snake.get("alive"):
             return
 
@@ -950,10 +1018,7 @@ class SnakeRoom:
         self.drop_coins(snake)
 
     def drop_boost_coin(self, snake: dict) -> bool:
-
-        balance = int(
-            snake.get("balance_micros", 0)
-        )
+        balance = int(snake.get("balance_micros", 0))
 
         if balance < BOOST_COST_MICROS:
             snake["boosting"] = False
@@ -966,7 +1031,6 @@ class SnakeRoom:
             return False
 
         snake["balance_micros"] -= BOOST_COST_MICROS
-
         snake["boost_spent_micros"] += BOOST_COST_MICROS
 
         entry_remaining = int(
@@ -981,7 +1045,6 @@ class SnakeRoom:
         self.update_balance(snake)
 
         tail = body[-1]
-
         angle = snake.get("angle", 0) + math.pi
         distance = random.uniform(15, 30)
 
@@ -1012,11 +1075,9 @@ class SnakeRoom:
         return True
 
     def collect_coins(self, snake: dict, head: dict):
-
         collected = []
 
         for coin in list(self.coins):
-
             distance = math.hypot(
                 head["x"] - coin["x"],
                 head["y"] - coin["y"]
@@ -1026,7 +1087,6 @@ class SnakeRoom:
                 collected.append(coin)
 
         for coin in collected:
-
             if coin not in self.coins:
                 continue
 
@@ -1037,18 +1097,15 @@ class SnakeRoom:
             snake["balance_micros"] += value
             snake["collected_micros"] += value
 
-            # Recoger monedas no hace crecer la serpiente.
-            # El crecimiento se obtiene únicamente con comida.
+            # Las monedas aumentan el saldo, no el tamaño.
             snake["score"] += 1
 
         self.update_balance(snake)
 
     def collect_food(self, snake: dict, head: dict):
-
         collected = []
 
         for food in list(self.foods):
-
             distance = math.hypot(
                 head["x"] - food["x"],
                 head["y"] - food["y"]
@@ -1058,7 +1115,6 @@ class SnakeRoom:
                 collected.append(food)
 
         for food in collected:
-
             if food not in self.foods:
                 continue
 
@@ -1073,7 +1129,6 @@ class SnakeRoom:
             snake["score"] += growth
 
     def check_collision(self, user_id: str, new_head: dict):
-
         if (
             new_head["x"] < 8
             or new_head["x"] > WORLD_WIDTH - 8
@@ -1083,7 +1138,6 @@ class SnakeRoom:
             return "wall"
 
         for other_uid, other_snake in self.snakes.items():
-
             if other_uid == user_id:
                 continue
 
@@ -1091,7 +1145,6 @@ class SnakeRoom:
                 continue
 
             for segment in other_snake.get("body", []):
-
                 if math.hypot(
                     new_head["x"] - segment["x"],
                     new_head["y"] - segment["y"]
@@ -1101,7 +1154,6 @@ class SnakeRoom:
         return None
 
     def update_snake(self, user_id: str):
-
         snake = self.snakes[user_id]
 
         if not snake.get("alive") or not snake.get("ready"):
@@ -1114,11 +1166,8 @@ class SnakeRoom:
         now = time.monotonic()
 
         if snake.get("boosting"):
-
             if now >= snake.get("next_boost_coin_at", 0):
-
                 if self.drop_boost_coin(snake):
-
                     snake["next_boost_coin_at"] = (
                         now + BOOST_COIN_INTERVAL
                     )
@@ -1137,21 +1186,14 @@ class SnakeRoom:
             "y": head["y"] + math.sin(angle) * speed,
         }
 
-        collision = self.check_collision(
-            user_id,
-            new_head
-        )
+        collision = self.check_collision(user_id, new_head)
 
         if collision:
-
             if collision != "wall":
-
                 killer = self.snakes.get(collision)
 
                 if killer and killer.get("alive"):
-                    killer["kills"] = (
-                        int(killer.get("kills", 0)) + 1
-                    )
+                    killer["kills"] = int(killer.get("kills", 0)) + 1
 
             self.kill_snake(snake)
             return
@@ -1167,11 +1209,9 @@ class SnakeRoom:
             snake["body"].pop()
 
     def public_state(self):
-
         public_snakes = {}
 
         for uid, snake in self.snakes.items():
-
             public_snakes[uid] = {
                 "body": snake["body"],
                 "angle": snake["angle"],
@@ -1205,46 +1245,35 @@ class SnakeRoom:
         }
 
     async def broadcast(self):
-
         message = self.public_state()
 
         for uid, ws in list(self.connections.items()):
-
             try:
                 await ws.send_json(message)
             except Exception:
                 pass
 
     async def game_loop(self):
-
         if self.is_running:
             return
 
         self.is_running = True
 
         try:
-
             while self.is_running and self.connections:
-
                 async with self.lock:
-
                     for uid in list(self.snakes.keys()):
                         self.update_snake(uid)
 
-                    missing_food = (
-                        FOOD_INITIAL_COUNT - len(self.foods)
-                    )
+                    missing_food = FOOD_INITIAL_COUNT - len(self.foods)
 
                     if missing_food > 0:
-                        self.spawn_food(
-                            min(missing_food, 5)
-                        )
+                        self.spawn_food(min(missing_food, 5))
 
                 await self.broadcast()
                 await asyncio.sleep(GAME_TICK)
 
         except Exception as exc:
-
             print(
                 f"ERROR en Snake game_loop "
                 f"{self.room_id}: {exc!r}"
@@ -1268,113 +1297,94 @@ async def snake_game_endpoint(
     wallet: str = Query("play"),
     color: str = Query("#34d399")
 ):
-
     await websocket.accept()
 
     if not user_id or not access_token:
-
-        await websocket.send_json({
-            "type": "ERROR",
-            "message": "Debes iniciar sesión para jugar."
-        })
-
+        await send_error(websocket, "Debes iniciar sesión para jugar.")
         await websocket.close()
         return
 
     if not verify_user_token(access_token, user_id):
-
-        await websocket.send_json({
-            "type": "ERROR",
-            "message": "La sesión no es válida. Inicia sesión nuevamente."
-        })
-
+        await send_error(
+            websocket,
+            "La sesión no es válida. Inicia sesión nuevamente."
+        )
         await websocket.close()
         return
+
+    wallet = str(wallet).lower()
 
     if wallet not in ("play", "bonus"):
-
-        await websocket.send_json({
-            "type": "ERROR",
-            "message": "La billetera seleccionada no es válida."
-        })
-
+        await send_error(websocket, "La billetera seleccionada no es válida.")
         await websocket.close()
         return
 
-    # Determinar la categoría a partir de la apuesta.
     category = get_snake_bet_category(bet)
 
     if category is None:
-
-        await websocket.send_json({
-            "type": "ERROR",
-            "message": "Apuesta no permitida. Solo puedes jugar con $0.20, $10 o $50."
-        })
-
+        await send_error(
+            websocket,
+            "Apuesta no permitida. Solo puedes jugar con $0.20, $10 o $50."
+        )
         await websocket.close()
         return
 
     bet_micros = SNAKE_BETS[category]
     bet = money_from_micros(bet_micros)
 
-    # Comprobar que el ID solicitado corresponde a la apuesta.
-    # Se acepta el identificador de categoría, no un ID de sala
-    # individual, porque el backend elige la sala automáticamente.
+    # El frontend debe enviar la categoría correspondiente.
+    # Se acepta snake_public por compatibilidad con el frontend anterior.
     if room_id not in (category, "snake_public"):
-
-        await websocket.send_json({
-            "type": "ERROR",
-            "message": "La categoría de sala no corresponde a la apuesta."
-        })
-
+        await send_error(
+            websocket,
+            "La categoría de sala no corresponde a la apuesta."
+        )
         await websocket.close()
         return
 
-    # Buscar sala disponible o crear otra.
-    room = await get_available_snake_room(category)
+    room = None
+    reserved = False
 
-    # Evitar que el mismo usuario entre en dos salas a la vez.
+    # ========================================================
+    # ASIGNACIÓN Y RESERVA ATÓMICA
+    # No se libera el bloqueo entre seleccionar sala y reservar.
+    # ========================================================
+
     async with snake_rooms_lock:
-
         already_playing = any(
             user_id in existing_room.connections
             for existing_room in snake_rooms.values()
         )
 
         if already_playing:
-
-            await websocket.send_json({
-                "type": "ERROR",
-                "message": "Ya tienes una conexión activa en Snake."
-            })
-
+            await send_error(
+                websocket,
+                "Ya tienes una conexión activa en Snake."
+            )
             await websocket.close()
             return
 
-        # Verificación definitiva de capacidad.
+        room = get_available_snake_room_locked(category)
+
         async with room.lock:
-
             if len(room.connections) >= MAX_SNAKE_PLAYERS:
-
-                await websocket.send_json({
-                    "type": "ERROR",
-                    "message": "La sala acaba de llenarse. Intenta entrar nuevamente."
-                })
-
+                # Esta comprobación no debería fallar porque la selección
+                # y la reserva ocurren dentro del mismo bloqueo global.
+                await send_error(
+                    websocket,
+                    "No se pudo reservar el espacio. Intenta nuevamente."
+                )
                 await websocket.close()
                 return
 
             if user_id in room.connections:
-
-                await websocket.send_json({
-                    "type": "ERROR",
-                    "message": "Ya tienes una conexión activa en esta sala."
-                })
-
+                await send_error(
+                    websocket,
+                    "Ya tienes una conexión activa en esta sala."
+                )
                 await websocket.close()
                 return
 
-            # Descontar exactamente la apuesta de esta categoría.
             transaction_key = (
                 f"snake-entry:{room.room_id}:{user_id}:"
                 f"{uuid.uuid4().hex}"
@@ -1389,12 +1399,7 @@ async def snake_game_endpoint(
             )
 
             if not success:
-
-                await websocket.send_json({
-                    "type": "ERROR",
-                    "message": message
-                })
-
+                await send_error(websocket, message)
                 await websocket.close()
                 return
 
@@ -1407,38 +1412,38 @@ async def snake_game_endpoint(
                 color
             )
 
-    try:
+            reserved = True
 
-        await websocket.send_json(
-            room.public_state()
-        )
+    if not reserved or room is None:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+        return
+
+    try:
+        await websocket.send_json(room.public_state())
 
     except Exception as exc:
-
-        print(
-            f"ERROR enviando estado inicial Snake: {exc!r}"
-        )
+        print(f"ERROR enviando estado inicial Snake: {exc!r}")
 
     if not room.is_running:
         asyncio.create_task(room.game_loop())
 
     try:
-
         while True:
-
             data = await websocket.receive_json()
-            msg_type = data.get("type")
+
+            if not isinstance(data, dict):
+                continue
+
+            msg_type = str(data.get("type", "")).upper()
 
             if msg_type == "PING":
-
-                await websocket.send_json({
-                    "type": "PONG"
-                })
+                await websocket.send_json({"type": "PONG"})
 
             elif msg_type == "READY":
-
                 async with room.lock:
-
                     snake = room.snakes.get(user_id)
 
                     if snake and snake["alive"]:
@@ -1447,16 +1452,13 @@ async def snake_game_endpoint(
                 await room.broadcast()
 
             elif msg_type == "STEER":
-
                 try:
-
                     angle = float(data.get("angle", 0))
 
                     if not math.isfinite(angle):
                         continue
 
                     async with room.lock:
-
                         snake = room.snakes.get(user_id)
 
                         if (
@@ -1470,9 +1472,7 @@ async def snake_game_endpoint(
                     pass
 
             elif msg_type == "BOOST_START":
-
                 async with room.lock:
-
                     snake = room.snakes.get(user_id)
 
                     if (
@@ -1481,11 +1481,8 @@ async def snake_game_endpoint(
                         and snake["ready"]
                         and snake["balance_micros"] >= BOOST_COST_MICROS
                     ):
-
                         if not snake.get("boosting"):
-
                             snake["boosting"] = True
-
                             snake["next_boost_coin_at"] = (
                                 time.monotonic() + BOOST_COIN_INTERVAL
                             )
@@ -1493,9 +1490,7 @@ async def snake_game_endpoint(
                 await room.broadcast()
 
             elif msg_type == "BOOST_STOP":
-
                 async with room.lock:
-
                     snake = room.snakes.get(user_id)
 
                     if snake:
@@ -1504,11 +1499,9 @@ async def snake_game_endpoint(
                 await room.broadcast()
 
             elif msg_type == "CASH_OUT":
-
                 cashout_data = None
 
                 async with room.lock:
-
                     snake = room.snakes.get(user_id)
 
                     if (
@@ -1517,7 +1510,6 @@ async def snake_game_endpoint(
                         and snake["ready"]
                         and not snake.get("cashed_out", False)
                     ):
-
                         snake["boosting"] = False
 
                         balance_micros = max(
@@ -1525,30 +1517,15 @@ async def snake_game_endpoint(
                             int(snake.get("balance_micros", 0))
                         )
 
-                        kills = int(
-                            snake.get("kills", 0)
-                        )
-
+                        kills = int(snake.get("kills", 0))
                         wallet_used = snake["wallet"]
 
                         if kills == 0:
-
                             refund_micros = min(
-                                int(
-                                    snake.get(
-                                        "entry_remaining_micros",
-                                        0
-                                    )
-                                ),
+                                int(snake.get("entry_remaining_micros", 0)),
                                 balance_micros,
-                                int(
-                                    snake.get(
-                                        "bet_micros",
-                                        0
-                                    )
-                                )
+                                int(snake.get("bet_micros", 0))
                             )
-
                         else:
                             refund_micros = 0
 
@@ -1557,13 +1534,8 @@ async def snake_game_endpoint(
                             balance_micros - refund_micros
                         )
 
-                        refund = money_from_micros(
-                            refund_micros
-                        )
-
-                        payout = money_from_micros(
-                            payout_micros
-                        )
+                        refund = money_from_micros(refund_micros)
+                        payout = money_from_micros(payout_micros)
 
                         transaction_key = (
                             f"snake-cashout:{room.room_id}:{user_id}:"
@@ -1581,7 +1553,6 @@ async def snake_game_endpoint(
                         }
 
                 if cashout_data is not None:
-
                     paid, payment_message = settle_snake_cashout(
                         user_id=user_id,
                         room_id=room.room_id,
@@ -1592,7 +1563,6 @@ async def snake_game_endpoint(
                     )
 
                     if paid:
-
                         await websocket.send_json({
                             "type": "CASHOUT_SUCCESS",
                             "payout": cashout_data["payout"],
@@ -1602,19 +1572,14 @@ async def snake_game_endpoint(
                         })
 
                     else:
-
                         async with room.lock:
-
                             snake = room.snakes.get(user_id)
 
                             if snake:
                                 snake["alive"] = True
                                 snake["cashed_out"] = False
 
-                        await websocket.send_json({
-                            "type": "ERROR",
-                            "message": payment_message
-                        })
+                        await send_error(websocket, payment_message)
 
                     await room.broadcast()
 
@@ -1622,15 +1587,10 @@ async def snake_game_endpoint(
         pass
 
     except Exception as exc:
-
-        print(
-            f"ERROR WebSocket Snake {room.room_id}: {exc!r}"
-        )
+        print(f"ERROR WebSocket Snake {room.room_id}: {exc!r}")
 
     finally:
-
         async with room.lock:
-
             if room.connections.get(user_id) is websocket:
                 room.connections.pop(user_id, None)
 
@@ -1639,10 +1599,8 @@ async def snake_game_endpoint(
             if snake and snake.get("alive"):
                 room.kill_snake(snake)
 
-            # La sala permanece registrada para poder reutilizarla.
-            # Cuando queda vacía, se prepara para nuevos jugadores.
+            # La sala queda disponible para nuevos jugadores.
             if not room.connections:
-
                 room.is_running = False
 
                 room.snakes.clear()
@@ -1651,6 +1609,4 @@ async def snake_game_endpoint(
 
                 room.spawn_food(FOOD_INITIAL_COUNT)
 
-                print(
-                    f"SALA SNAKE DISPONIBLE: {room.room_id}"
-                )
+                print(f"SALA SNAKE DISPONIBLE: {room.room_id}")
