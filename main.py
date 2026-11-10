@@ -573,8 +573,8 @@ async def game_endpoint(
 # SNAKE: CONFIGURACIÓN (MAPA REDUCIDO A 800x800)
 # ============================================================
 
-WORLD_WIDTH = 800
-WORLD_HEIGHT = 800
+WORLD_WIDTH = 1000
+WORLD_HEIGHT = 1000
 
 SNAKE_SPEED = 7.5
 SNAKE_BOOST_SPEED = 12.0
