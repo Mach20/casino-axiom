@@ -764,8 +764,9 @@ async def game_endpoint(
 # ============================================================
 
 
-WORLD_WIDTH = 5000
-WORLD_HEIGHT = 5000
+
+WORLD_WIDTH = 4000
+WORLD_HEIGHT = 4000
 
 SNAKE_SPEED = 7.5
 SNAKE_BOOST_SPEED = 12.0
@@ -786,13 +787,13 @@ SNAKE_BETS = {
 
 # VALOR DE LAS MONEDAS SEGÚN LA SALA
 SNAKE_COIN_VALUES = {
-    "snake_020": 10_000,       # $0.01
-    "snake_1000": 500_000,     # $0.50
-    "snake_5000": 2_500_000,   # $2.50
+    "snake_020": 10_000,
+    "snake_1000": 500_000,
+    "snake_5000": 2_500_000,
 }
 
-# Una moneda por segundo mientras se mantiene el impulso.
-BOOST_COIN_INTERVAL = 1.0
+# Una moneda cada cuarto de segundo mientras se mantiene el impulso.
+BOOST_COIN_INTERVAL = 0.25
 
 # Tiempo de supervivencia para completar el retiro.
 CASHOUT_COUNTDOWN_SECONDS = 20
@@ -800,6 +801,11 @@ CASHOUT_COUNTDOWN_SECONDS = 20
 FOOD_RADIUS = 9
 FOOD_INITIAL_COUNT = 250
 MAX_SNAKE_PLAYERS = 30
+
+# CRECIMIENTO AL COMER
+FOOD_GROWTH = 5
+FOOD_RADIUS_GROWTH = 0.50
+SNAKE_MAX_RADIUS = 24.0
 
 FOOD_COLORS = [
     "#ff3b30",
@@ -954,7 +960,9 @@ class SnakeRoom:
                 "y": random.uniform(30, WORLD_HEIGHT - 30),
                 "color": random.choice(FOOD_COLORS),
                 "radius": FOOD_RADIUS,
-                "growth": 1,
+
+                # Cada comida agrega 5 segmentos.
+                "growth": FOOD_GROWTH,
             })
 
     # ========================================================
@@ -1036,7 +1044,7 @@ class SnakeRoom:
 
             # Grosor inicial y máximo.
             "radius": 7.0,
-            "max_radius": 15.0,
+            "max_radius": SNAKE_MAX_RADIUS,
 
             "score": 0,
             "kills": 0,
@@ -1269,18 +1277,18 @@ class SnakeRoom:
             # Aumentar puntuación.
             snake["score"] += 1
 
-            # CRECER UNA UNIDAD POR CADA MONEDA.
+            # Una unidad de largo por cada moneda.
             snake["grow_pending"] = (
                 snake.get("grow_pending", 0) + 1
             )
 
-            # Aumentar gradualmente el grosor.
+            # Aumentar ligeramente el grosor.
             current_radius = float(
                 snake.get("radius", 7.0)
             )
 
             max_radius = float(
-                snake.get("max_radius", 15.0)
+                snake.get("max_radius", SNAKE_MAX_RADIUS)
             )
 
             snake["radius"] = min(
@@ -1314,25 +1322,25 @@ class SnakeRoom:
 
             growth = max(
                 1,
-                int(food.get("growth", 1))
+                int(food.get("growth", FOOD_GROWTH))
             )
 
-            # Crecimiento de longitud.
+            # CRECIMIENTO DE LARGO.
             snake["grow_pending"] += growth
             snake["score"] += growth
 
-            # Crecimiento gradual de grosor.
+            # CRECIMIENTO DE ANCHO Y ALTO.
             current_radius = float(
                 snake.get("radius", 7.0)
             )
 
             max_radius = float(
-                snake.get("max_radius", 15.0)
+                snake.get("max_radius", SNAKE_MAX_RADIUS)
             )
 
             snake["radius"] = min(
                 max_radius,
-                current_radius + (0.15 * growth)
+                current_radius + (FOOD_RADIUS_GROWTH * growth)
             )
 
     # ========================================================
@@ -1396,7 +1404,7 @@ class SnakeRoom:
 
         now = time.monotonic()
 
-        # Mientras impulsa, suelta monedas.
+        # Mientras impulsa, suelta monedas cada 0.25 segundos.
         if snake.get("boosting"):
             if now >= snake.get("next_boost_coin_at", 0):
                 if self.drop_boost_coin(snake):
@@ -2060,4 +2068,5 @@ async def snake_game_endpoint(
                 print(
                     f"SALA SNAKE DISPONIBLE: {room.room_id}"
                 )
+
 
