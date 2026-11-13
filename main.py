@@ -18,7 +18,7 @@ app = FastAPI(title="AXIOM Game Backend")
 
 SUPABASE_URL = "https://djdzytfdztctusnuuvrm.supabase.co"
 
-SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqZHp5dGZkenRjdHVzbnV1dnJtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4OTUxOTE3NywiZXhwIjoyMTA1MDk1MTc3fQ.45n4zgBGqXTtqI3LJOhefxSNckxnddsKGZjoSajkihM"
+SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhbGciOiJIUzI1NiIsInJlZiI6ImRqZHp5dGZkenRjdHVzbnV1dnJtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4OTUxOTE3NywiZXhwIjoyMTA1MDk1MTc3fQ.45n4zgBGqXTtqI3LJOhefxSNckxnddsKGZjoSajkihM"
 
 if not SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SERVICE_ROLE_KEY == "PEGA_AQUI_TU_NUEVA_SERVICE_ROLE_KEY":
     raise RuntimeError("Falta configurar la SUPABASE_SERVICE_ROLE_KEY.")
@@ -111,6 +111,61 @@ def deduct_balance(
     except Exception as exc:
         print(f"ERROR debit_game_balance: {exc!r}")
         return False, "No se pudo descontar la apuesta."
+
+
+# ============================================================
+# INGRESO SNAKE CON COMISIÓN DEL 6%
+# ============================================================
+
+def enter_snake_game(
+    user_id: str,
+    bet: float,
+    wallet: str,
+    room_id: str,
+    transaction_key: str
+):
+    if not user_id:
+        return False, "No se recibió el ID del usuario.", 0
+
+    if wallet not in ("play", "bonus"):
+        return False, "Tipo de saldo no válido.", 0
+
+    try:
+        result = rpc_json("enter_snake_game", {
+            "p_transaction_key": transaction_key,
+            "p_room_id": room_id,
+            "p_user_id": user_id,
+            "p_wallet": wallet,
+            "p_amount": round(float(bet), 2),
+        })
+
+        if not result.get("success"):
+            return (
+                False,
+                str(result.get("message", "No se pudo procesar la entrada.")),
+                0
+            )
+
+        playable_amount = float(result.get("playable_amount", 0))
+
+        if not math.isfinite(playable_amount) or playable_amount <= 0:
+            return (
+                False,
+                "El saldo inicial de Snake no es válido.",
+                0
+            )
+
+        playable_micros = round(playable_amount * 1_000_000)
+
+        return (
+            True,
+            str(result.get("message", "Entrada procesada correctamente.")),
+            playable_micros
+        )
+
+    except Exception as exc:
+        print(f"ERROR enter_snake_game: {exc!r}")
+        return False, "No se pudo procesar la entrada a Snake.", 0
 
 
 def settle_snake_cashout(
@@ -931,20 +986,29 @@ class SnakeRoom:
             random.uniform(-math.pi, math.pi)
         )
 
+    # ========================================================
+    # CREAR SERPIENTE CON SALDO NETO
+    # ========================================================
+
     def add_snake(
         self,
         user_id: str,
         bet: float,
         wallet: str,
-        color: str
+        color: str,
+        session_id: str,
+        playable_micros: int
     ):
         x, y, angle = self.create_spawn()
 
         bet_micros = self.bet_micros
         bet_amount = money_from_micros(bet_micros)
 
+        playable_micros = max(0, int(playable_micros))
+        playable_amount = money_from_micros(playable_micros)
+
         self.snakes[user_id] = {
-            "session_id": uuid.uuid4().hex,
+            "session_id": session_id,
 
             "body": create_snake_body(x, y, angle),
             "angle": angle,
@@ -958,13 +1022,14 @@ class SnakeRoom:
             "bet": bet_amount,
             "bet_micros": bet_micros,
 
-            "balance_micros": bet_micros,
-            "entry_remaining_micros": bet_micros,
+            # La serpiente comienza con el 94% de la apuesta.
+            "balance_micros": playable_micros,
+            "entry_remaining_micros": playable_micros,
             "collected_micros": 0,
 
             "earned_micros": 0,
             "earned": 0.0,
-            "balance": bet_amount,
+            "balance": playable_amount,
 
             "alive": True,
             "ready": False,
@@ -1430,12 +1495,15 @@ async def snake_game_endpoint(
                 await websocket.close()
                 return
 
+            # Una sesión nueva tiene una clave de transacción propia.
+            session_id = uuid.uuid4().hex
+
             transaction_key = (
-                f"snake-entry:{room.room_id}:{user_id}:"
-                f"{uuid.uuid4().hex}"
+                f"snake-entry:{room.room_id}:{user_id}:{session_id}"
             )
 
-            success, message = deduct_balance(
+            # Descuenta la apuesta completa y registra la comisión del 6%.
+            success, message, playable_micros = enter_snake_game(
                 user_id,
                 bet,
                 wallet,
@@ -1448,14 +1516,17 @@ async def snake_game_endpoint(
                 await websocket.close()
                 return
 
-            room.connections[user_id] = websocket
-
+            # Crea la serpiente con el saldo neto del 94%.
             room.add_snake(
                 user_id,
                 bet,
                 wallet,
-                color
+                color,
+                session_id,
+                playable_micros
             )
+
+            room.connections[user_id] = websocket
 
             reserved = True
 
