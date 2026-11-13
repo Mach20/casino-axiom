@@ -1899,7 +1899,7 @@ async def snake_game_endpoint(
                     # PROCESAR RETIRO DESPUÉS DE 20 SEGUNDOS
                     # ========================================
 
-                    async def finish_cashout(
+                                        async def finish_cashout(
                         target_user_id: str,
                         target_task_id: str
                     ):
@@ -1908,6 +1908,8 @@ async def snake_game_endpoint(
                         )
 
                         cashout_data = None
+                        no_balance = False
+                        cashout_cancelled = False
 
                         async with room.lock:
                             current_snake = room.snakes.get(
@@ -1931,50 +1933,89 @@ async def snake_game_endpoint(
                                     )
                                 )
 
-                                gross_amount = money_from_micros(
-                                    balance_micros
-                                )
+                                # COMPROBAR SI EXISTE SALDO PARA RETIRAR.
+                                if balance_micros <= 0:
 
-                                transaction_key = (
-                                    f"snake-cashout:{room.room_id}:"
-                                    f"{target_user_id}:"
-                                    f"{current_snake['session_id']}"
-                                )
+                                    # No se mata la serpiente.
+                                    # El jugador puede continuar jugando.
+                                    current_snake["cashout_pending"] = False
+                                    current_snake["cashout_pending_until"] = 0
+                                    current_snake["cashout_task_id"] = None
+                                    current_snake["boosting"] = False
 
-                                # La serpiente termina su partida.
-                                current_snake["alive"] = False
-                                current_snake["boosting"] = False
-                                current_snake["cashed_out"] = True
+                                    no_balance = True
 
-                                current_snake["cashout_pending"] = False
-                                current_snake["cashout_pending_until"] = 0
-
-                                cashout_data = {
-                                    "gross": gross_amount,
-                                    "wallet": current_snake["wallet"],
-                                    "transaction_key": transaction_key,
-                                }
-
-                        # Si murió antes de completar los 20 segundos,
-                        # no se ejecuta ninguna liquidación.
-                        if cashout_data is None:
-                            try:
-                                await websocket.send_json({
-                                    "type": "CASHOUT_CANCELLED",
-                                    "message": (
-                                        "El retiro fue cancelado porque "
-                                        "la serpiente murió antes de "
-                                        "terminar la cuenta regresiva."
+                                else:
+                                    gross_amount = money_from_micros(
+                                        balance_micros
                                     )
-                                })
+
+                                    transaction_key = (
+                                        f"snake-cashout:{room.room_id}:"
+                                        f"{target_user_id}:"
+                                        f"{current_snake['session_id']}"
+                                    )
+
+                                    # La serpiente termina su partida.
+                                    current_snake["alive"] = False
+                                    current_snake["boosting"] = False
+                                    current_snake["cashed_out"] = True
+
+                                    current_snake["cashout_pending"] = False
+                                    current_snake["cashout_pending_until"] = 0
+
+                                    cashout_data = {
+                                        "gross": gross_amount,
+                                        "wallet": current_snake["wallet"],
+                                        "transaction_key": transaction_key,
+                                    }
+
+                            else:
+                                cashout_cancelled = True
+
+                        # ====================================================
+                        # SI NO TIENE SALDO, NO SE PROCESA NINGÚN RETIRO.
+                        # ====================================================
+
+                        if no_balance:
+                            try:
+                                await send_error(
+                                    websocket,
+                                    "No tienes saldo disponible para retirar. Recoge monedas para acumular saldo."
+                                )
                             except Exception:
                                 pass
 
                             await room.broadcast()
                             return
 
-                        # La función SQL calcula la comisión del 6%
-                        # y acredita el 94% neto a withdraw_balance.
+                        # ====================================================
+                        # SI MURIÓ O SE CANCELÓ ANTES DE TERMINAR LOS 20 SEG.
+                        # ====================================================
+
+                        if cashout_data is None:
+                            if cashout_cancelled:
+                                try:
+                                    await websocket.send_json({
+                                        "type": "CASHOUT_CANCELLED",
+                                        "message": (
+                                            "El retiro fue cancelado porque "
+                                            "la serpiente murió antes de "
+                                            "terminar la cuenta regresiva."
+                                        )
+                                    })
+                                except Exception:
+                                    pass
+
+                            await room.broadcast()
+                            return
+
+                        # ====================================================
+                        # PROCESAR LIQUIDACIÓN EN SUPABASE.
+                        # LA FUNCIÓN SQL CALCULA EL 6% DE COMISIÓN.
+                        # EL JUGADOR RECIBE EL 94% NETO.
+                        # ====================================================
+
                         paid, payment_message = settle_snake_cashout(
                             user_id=target_user_id,
                             room_id=room.room_id,
@@ -1994,17 +2035,25 @@ async def snake_game_endpoint(
                                     current_snake["balance_micros"] = 0
                                     current_snake["entry_remaining_micros"] = 0
 
+                                    current_snake["cashout_pending"] = False
+                                    current_snake["cashout_pending_until"] = 0
+                                    current_snake["cashout_task_id"] = None
+
                                     room.update_balance(current_snake)
 
                                 else:
-                                    # Si la liquidación falla,
-                                    # se permite continuar jugando.
+                                    # Si falla la liquidación,
+                                    # el jugador puede continuar jugando.
                                     current_snake["alive"] = True
                                     current_snake["cashed_out"] = False
 
                                     current_snake["cashout_pending"] = False
                                     current_snake["cashout_pending_until"] = 0
                                     current_snake["cashout_task_id"] = None
+
+                        # ====================================================
+                        # NOTIFICAR RESULTADO DEL RETIRO.
+                        # ====================================================
 
                         try:
                             if paid:
