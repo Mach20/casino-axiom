@@ -765,8 +765,9 @@ async def game_endpoint(
 
 
 
-WORLD_WIDTH = 4000
-WORLD_HEIGHT = 4000
+
+WORLD_WIDTH = 4300
+WORLD_HEIGHT = 4300
 
 SNAKE_SPEED = 7.5
 SNAKE_BOOST_SPEED = 12.0
@@ -799,13 +800,16 @@ BOOST_COIN_INTERVAL = 0.25
 CASHOUT_COUNTDOWN_SECONDS = 20
 
 FOOD_RADIUS = 9
-FOOD_INITIAL_COUNT = 250
+FOOD_INITIAL_COUNT = 200
 MAX_SNAKE_PLAYERS = 30
 
 # CRECIMIENTO AL COMER
-FOOD_GROWTH = 5
-FOOD_RADIUS_GROWTH = 0.50
-SNAKE_MAX_RADIUS = 24.0
+FOOD_GROWTH = 4
+FOOD_RADIUS_GROWTH = 0.40
+SNAKE_MAX_RADIUS = 21.0
+
+# REDUCCIÓN DE TAMAÑO AL IMPULSARSE
+BOOST_RADIUS_MULTIPLIER = 0.80
 
 FOOD_COLORS = [
     "#ff3b30",
@@ -949,6 +953,19 @@ class SnakeRoom:
         )
 
     # ========================================================
+    # TAMAÑO ACTUAL DE LA SERPIENTE
+    # ========================================================
+
+    def get_snake_radius(self, snake: dict) -> float:
+        radius = float(snake.get("radius", 7.0))
+
+        # Al impulsarse reduce temporalmente su grosor un 20%.
+        if snake.get("boosting"):
+            radius *= BOOST_RADIUS_MULTIPLIER
+
+        return radius
+
+    # ========================================================
     # COMIDA
     # ========================================================
 
@@ -961,7 +978,7 @@ class SnakeRoom:
                 "color": random.choice(FOOD_COLORS),
                 "radius": FOOD_RADIUS,
 
-                # Cada comida agrega 5 segmentos.
+                # Cada comida agrega 4 segmentos.
                 "growth": FOOD_GROWTH,
             })
 
@@ -1362,9 +1379,10 @@ class SnakeRoom:
 
         current_snake = self.snakes.get(user_id)
 
-        current_radius = float(
-            current_snake.get("radius", 7.0)
-        ) if current_snake else 7.0
+        current_radius = (
+            self.get_snake_radius(current_snake)
+            if current_snake else 7.0
+        )
 
         for other_uid, other_snake in self.snakes.items():
             if other_uid == user_id:
@@ -1373,9 +1391,7 @@ class SnakeRoom:
             if not other_snake.get("alive"):
                 continue
 
-            other_radius = float(
-                other_snake.get("radius", 7.0)
-            )
+            other_radius = self.get_snake_radius(other_snake)
 
             collision_distance = current_radius + other_radius
 
@@ -1477,7 +1493,8 @@ class SnakeRoom:
                 "body": snake["body"],
                 "angle": snake["angle"],
 
-                "radius": snake.get("radius", 7.0),
+                # Envía el tamaño real, reducido durante el impulso.
+                "radius": self.get_snake_radius(snake),
 
                 "score": snake["score"],
                 "kills": snake["kills"],
@@ -2068,5 +2085,6 @@ async def snake_game_endpoint(
                 print(
                     f"SALA SNAKE DISPONIBLE: {room.room_id}"
                 )
+
 
 
