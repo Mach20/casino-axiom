@@ -763,6 +763,7 @@ async def game_endpoint(
 # SNAKE: CONFIGURACIÓN
 # ============================================================
 
+
 WORLD_WIDTH = 5000
 WORLD_HEIGHT = 5000
 
@@ -797,7 +798,7 @@ BOOST_COIN_INTERVAL = 1.0
 CASHOUT_COUNTDOWN_SECONDS = 20
 
 FOOD_RADIUS = 9
-FOOD_INITIAL_COUNT = 200
+FOOD_INITIAL_COUNT = 250
 MAX_SNAKE_PLAYERS = 30
 
 FOOD_COLORS = [
@@ -1238,7 +1239,7 @@ class SnakeRoom:
         return True
 
     # ========================================================
-    # RECOGER MONEDAS
+    # RECOGER MONEDAS Y CRECER
     # ========================================================
 
     def collect_coins(self, snake: dict, head: dict):
@@ -1261,10 +1262,31 @@ class SnakeRoom:
 
             value = int(coin["value_micros"])
 
+            # Aumentar el saldo.
             snake["balance_micros"] += value
             snake["collected_micros"] += value
 
+            # Aumentar puntuación.
             snake["score"] += 1
+
+            # CRECER UNA UNIDAD POR CADA MONEDA.
+            snake["grow_pending"] = (
+                snake.get("grow_pending", 0) + 1
+            )
+
+            # Aumentar gradualmente el grosor.
+            current_radius = float(
+                snake.get("radius", 7.0)
+            )
+
+            max_radius = float(
+                snake.get("max_radius", 15.0)
+            )
+
+            snake["radius"] = min(
+                max_radius,
+                current_radius + 0.15
+            )
 
         self.update_balance(snake)
 
@@ -2038,3 +2060,4 @@ async def snake_game_endpoint(
                 print(
                     f"SALA SNAKE DISPONIBLE: {room.room_id}"
                 )
+
