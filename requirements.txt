@@ -3,3 +3,4 @@ uvicorn
 websockets
 supabase
 python-multipart
+httpx
