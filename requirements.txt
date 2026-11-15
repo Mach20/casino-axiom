@@ -2,3 +2,4 @@ fastapi
 uvicorn
 websockets
 supabase
+python-multipart
