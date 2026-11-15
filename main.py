@@ -1,4 +1,3 @@
-
 import os
 import random
 import asyncio
@@ -18,8 +17,6 @@ from fastapi import (
     File,
 )
 from pydantic import BaseModel
-
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from supabase import create_client, Client
 
 app = FastAPI(title="AXIOM Game Backend")
@@ -320,6 +317,244 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
+
+# ============================================================
+# DEPÓSITOS POR TRANSFERENCIA BANCARIA
+# ============================================================
+
+DEPOSIT_BUCKET = "deposit-receipts"
+DEPOSIT_MIN_AMOUNT = Decimal("10.00")
+DEPOSIT_MAX_AMOUNT = Decimal("10000.00")
+DEPOSIT_MAX_FILE_SIZE = 5 * 1024 * 1024
+
+DEPOSIT_ALLOWED_TYPES = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "application/pdf": "pdf",
+}
+
+
+class DepositRequestBody(BaseModel):
+    amount: float
+
+
+def get_authenticated_user_id(authorization: str | None) -> str:
+    if not authorization:
+        raise HTTPException(
+            status_code=401,
+            detail="Debes iniciar sesión."
+        )
+
+    parts = authorization.split(" ", 1)
+
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(
+            status_code=401,
+            detail="Token de autenticación no válido."
+        )
+
+    access_token = parts[1].strip()
+
+    try:
+        response = supabase.auth.get_user(access_token)
+        authenticated_user = getattr(response, "user", None)
+
+        if not authenticated_user:
+            raise HTTPException(
+                status_code=401,
+                detail="La sesión no es válida."
+            )
+
+        return str(authenticated_user.id)
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        print(f"ERROR autenticando depósito: {exc!r}")
+        raise HTTPException(
+            status_code=401,
+            detail="No se pudo verificar tu sesión."
+        )
+
+
+@app.post("/deposits/request")
+async def create_deposit_request(
+    body: DepositRequestBody,
+    authorization: str | None = Header(default=None),
+):
+    user_id = get_authenticated_user_id(authorization)
+
+    try:
+        amount = Decimal(str(body.amount))
+
+        if not amount.is_finite():
+            raise ValueError("Monto no finito.")
+
+        amount = amount.quantize(Decimal("0.01"))
+
+    except (InvalidOperation, ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail="El monto del depósito no es válido."
+        )
+
+    if amount < DEPOSIT_MIN_AMOUNT or amount > DEPOSIT_MAX_AMOUNT:
+        raise HTTPException(
+            status_code=400,
+            detail="El depósito debe ser mínimo de $10 y máximo de $10.000."
+        )
+
+    reference = f"AXIOM-{uuid.uuid4().hex[:12].upper()}"
+
+    try:
+        response = (
+            supabase.table("deposit_requests")
+            .insert({
+                "user_id": user_id,
+                "amount": float(amount),
+                "method": "transferencia_bancaria",
+                "status": "pendiente",
+                "provider_reference": reference,
+            })
+            .execute()
+        )
+
+        rows = response.data or []
+
+        if not rows:
+            raise RuntimeError(
+                "Supabase no devolvió la solicitud creada."
+            )
+
+        deposit = rows[0]
+
+        return {
+            "success": True,
+            "message": "Solicitud de depósito creada correctamente.",
+            "deposit_id": deposit["id"],
+            "amount": float(amount),
+            "reference": reference,
+            "status": "pendiente",
+        }
+
+    except Exception as exc:
+        print(f"ERROR creando solicitud de depósito: {exc!r}")
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo crear la solicitud de depósito."
+        )
+
+
+@app.post("/deposits/{deposit_id}/receipt")
+async def upload_deposit_receipt(
+    deposit_id: int,
+    file: UploadFile = File(...),
+    authorization: str | None = Header(default=None),
+):
+    user_id = get_authenticated_user_id(authorization)
+
+    content_type = (file.content_type or "").lower()
+
+    if content_type not in DEPOSIT_ALLOWED_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail="Formato no permitido. Sube JPG, PNG, WEBP o PDF."
+        )
+
+    content = await file.read(DEPOSIT_MAX_FILE_SIZE + 1)
+
+    if not content:
+        raise HTTPException(
+            status_code=400,
+            detail="El comprobante está vacío."
+        )
+
+    if len(content) > DEPOSIT_MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail="El comprobante no puede superar los 5 MB."
+        )
+
+    try:
+        response = (
+            supabase.table("deposit_requests")
+            .select("id,user_id,status,receipt_path")
+            .eq("id", deposit_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+
+        rows = response.data or []
+
+        if not rows:
+            raise HTTPException(
+                status_code=404,
+                detail="No se encontró tu solicitud de depósito."
+            )
+
+        deposit = rows[0]
+
+        if deposit.get("status") != "pendiente":
+            raise HTTPException(
+                status_code=400,
+                detail="Esta solicitud ya no está pendiente."
+            )
+
+        if deposit.get("receipt_path"):
+            raise HTTPException(
+                status_code=409,
+                detail="Esta solicitud ya tiene un comprobante."
+            )
+
+        extension = DEPOSIT_ALLOWED_TYPES[content_type]
+
+        file_name = (
+            f"{user_id}/{deposit_id}/"
+            f"{uuid.uuid4().hex}.{extension}"
+        )
+
+        supabase.storage.from_(DEPOSIT_BUCKET).upload(
+            file_name,
+            content,
+            file_options={
+                "content-type": content_type,
+                "upsert": "false",
+            },
+        )
+
+        (
+            supabase.table("deposit_requests")
+            .update({
+                "receipt_path": file_name,
+            })
+            .eq("id", deposit_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+
+        return {
+            "success": True,
+            "message": "Comprobante subido correctamente.",
+            "deposit_id": deposit_id,
+            "status": "pendiente",
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        print(f"ERROR subiendo comprobante: {exc!r}")
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo guardar el comprobante."
+        )
+
+    finally:
+        await file.close()
 
 
 # ============================================================
@@ -774,9 +1009,6 @@ async def game_endpoint(
 # ============================================================
 # SNAKE: CONFIGURACIÓN
 # ============================================================
-
-
-
 
 WORLD_WIDTH = 4300
 WORLD_HEIGHT = 4300
@@ -1911,7 +2143,7 @@ async def snake_game_endpoint(
                     # PROCESAR RETIRO DESPUÉS DE 20 SEGUNDOS
                     # ========================================
 
-                                        async def finish_cashout(
+                    async def finish_cashout(
                         target_user_id: str,
                         target_task_id: str
                     ):
@@ -2146,6 +2378,3 @@ async def snake_game_endpoint(
                 print(
                     f"SALA SNAKE DISPONIBLE: {room.room_id}"
                 )
-
-
-
