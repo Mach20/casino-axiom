@@ -1,9 +1,11 @@
+
 import os
 import random
 import asyncio
 import math
 import time
 import uuid
+import httpx
 from typing import Dict, List
 from decimal import Decimal, InvalidOperation
 from fastapi import (
@@ -39,8 +41,9 @@ app.add_middleware(
 # ============================================================
 
 SUPABASE_URL = "https://djdzytfdztctusnuuvrm.supabase.co"
-SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJIUzI1NiIsInJlZiI6ImRqZHp5dGZkenRjdHVzbnV1dnJtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4OTUxOTE3NywiZXhwIjoyMTA1MDk1MTc3fQ.45n4zgBGqXTtqI3LJOhefxSNckxnddsKGZjoSajkihM"
-if not SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SERVICE_ROLE_KEY == "PEGA_AQUI_TU_NUEVA_SERVICE_ROLE_KEY":
+SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqZHp5dGZkenRjdHVzbnV1dnJtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4OTUxOTE3NywiZXhwIjoyMTA1MDk1MTc3fQ.45n4zgBGqXTtqI3LJOhefxSNckxnddsKGZjoSajkihM"
+
+if not SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SERVICE_ROLE_KEY == "PEGA_AQUI_TU_CLAVE_ACTUAL":
     raise RuntimeError("Falta configurar la SUPABASE_SERVICE_ROLE_KEY.")
 
 supabase: Client = create_client(
@@ -353,6 +356,11 @@ class DepositRequestBody(BaseModel):
     amount: float
 
 
+# ============================================================
+# AUTENTICACIÓN DE DEPÓSITOS
+# Corrección: validar el token directamente contra Supabase Auth.
+# ============================================================
+
 def get_authenticated_user_id(authorization: str | None) -> str:
     if not authorization:
         raise HTTPException(
@@ -360,7 +368,7 @@ def get_authenticated_user_id(authorization: str | None) -> str:
             detail="Debes iniciar sesión."
         )
 
-    parts = authorization.split(" ", 1)
+    parts = authorization.strip().split(None, 1)
 
     if len(parts) != 2 or parts[0].lower() != "bearer":
         raise HTTPException(
@@ -370,26 +378,66 @@ def get_authenticated_user_id(authorization: str | None) -> str:
 
     access_token = parts[1].strip()
 
-    try:
-        response = supabase.auth.get_user(access_token)
-        authenticated_user = getattr(response, "user", None)
+    if not access_token:
+        raise HTTPException(
+            status_code=401,
+            detail="No se recibió el token de sesión."
+        )
 
-        if not authenticated_user:
+    try:
+        response = httpx.get(
+            f"{SUPABASE_URL}/auth/v1/user",
+            headers={
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/json",
+            },
+            timeout=15.0,
+        )
+
+        if response.status_code == 401:
             raise HTTPException(
                 status_code=401,
-                detail="La sesión no es válida."
+                detail="Tu sesión expiró o no es válida. Inicia sesión nuevamente."
             )
 
-        return str(authenticated_user.id)
+        if response.status_code != 200:
+            print(
+                "ERROR verificando sesión de depósito:",
+                response.status_code,
+                response.text
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="No se pudo comprobar tu sesión con Supabase."
+            )
+
+        user_data = response.json()
+        authenticated_user_id = user_data.get("id")
+
+        if not authenticated_user_id:
+            raise HTTPException(
+                status_code=401,
+                detail="Supabase no devolvió un usuario válido."
+            )
+
+        return str(authenticated_user_id)
 
     except HTTPException:
         raise
 
+    except httpx.RequestError as exc:
+        print(f"ERROR de conexión verificando depósito: {exc!r}")
+        raise HTTPException(
+            status_code=503,
+            detail="No se pudo conectar con Supabase para verificar tu sesión."
+        )
+
     except Exception as exc:
         print(f"ERROR autenticando depósito: {exc!r}")
         raise HTTPException(
-            status_code=401,
-            detail="No se pudo verificar tu sesión."
+            status_code=500,
+            detail="Ocurrió un error al verificar tu sesión."
         )
 
 
