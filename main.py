@@ -476,7 +476,7 @@ async def create_deposit_request(
             .insert({
                 "user_id": user_id,
                 "amount": float(amount),
-                "method": "transferencia_bancaria",
+                "method": "transfer",
                 "status": "pendiente",
                 "provider_reference": reference,
             })
