@@ -16,6 +16,7 @@ from fastapi import (
     UploadFile,
     File,
 )
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from supabase import create_client, Client
 
