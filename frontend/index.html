@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AXIOM</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background-color: #000; color: #fff; font-family: system-ui, -apple-system, sans-serif; }
+    .slide { display: none; }
+    .slide.active { display: block; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between select-none">
+
+  <!-- OVERLAY MENÚ LATERAL -->
+  <div id="overlay" onclick="toggleMenu()" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-40 hidden transition-opacity"></div>
+
+  <!-- MENÚ LATERAL (SIDEBAR) -->
+  <aside id="sidebar" class="fixed top-0 left-0 h-full w-72 bg-zinc-950 border-r border-zinc-800 z-50 p-6 flex flex-col justify-between transform -translate-x-full transition-transform duration-300">
+    <div>
+      <div class="flex items-center justify-between mb-8 pb-4 border-b border-zinc-900">
+        <div class="flex items-center gap-2">
+          <span class="w-3 h-3 rounded-full bg-emerald-500 shadow-[0_0_10px_#10b981]"></span>
+          <h2 class="text-xl font-black text-emerald-400 tracking-wider uppercase">AXIOM</h2>
+        </div>
+        <button onclick="toggleMenu()" class="text-zinc-500 hover:text-white text-xl font-bold">✕</button>
+      </div>
+
+      <nav class="space-y-2">
+        <a href="#" class="flex items-center gap-3 px-4 py-3 bg-zinc-900 text-emerald-400 font-bold text-xs uppercase tracking-wider rounded-xl border border-zinc-800">
+          Juegos Online
+        </a>
+      </nav>
+    </div>
+  </aside>
+
+  <!-- HEADER -->
+  <header class="w-full bg-zinc-950/90 border-b border-zinc-900 sticky top-0 z-30 backdrop-blur-md">
+    <div class="max-w-7xl mx-auto px-4 py-3.5 flex items-center justify-between">
+      
+      <div class="flex items-center gap-4">
+        <button onclick="toggleMenu()" class="p-2.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded-xl border border-zinc-800 transition-all active:scale-95">
+          <span class="text-lg leading-none">☰</span>
+        </button>
+        <h1 class="text-xl font-black text-emerald-400 tracking-widest uppercase">
+          AXIOM
+        </h1>
+      </div>
+
+      <!-- ÁREA DE USUARIO Y SALDOS -->
+      <div class="flex items-center gap-3" id="auth-container">
+        
+        <!-- ESTADO 1: NO REGISTRADO (Visible por defecto) -->
+        <div id="user-guest" class="flex items-center gap-2">
+          <button onclick="simulateLogin()" class="px-3.5 py-2 text-xs font-bold text-zinc-300 hover:text-white uppercase transition-all">
+            Iniciar Sesión
+          </button>
+          <button onclick="simulateLogin()" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg active:scale-95">
+            Registrarse
+          </button>
+        </div>
+
+        <!-- ESTADO 2: REGISTRADO / LOGUEADO (Oculto hasta iniciar sesión) -->
+        <div id="user-logged-in" class="flex items-center gap-3 hidden">
+          <span id="user-email" class="text-xs text-zinc-400 hidden sm:inline font-medium">usuario@axiom.ec</span>
+          
+          <div class="relative">
+            <!-- Botón del saldo principal para jugar -->
+            <button onclick="toggleBalanceMenu()" class="flex items-center gap-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 px-3.5 py-2 rounded-xl transition-all">
+              <span class="text-[10px] text-zinc-400 font-bold uppercase">Jugar:</span>
+              <span class="text-xs font-black text-emerald-400">$<span id="play-balance">10.00</span></span>
+              <span class="text-[10px] text-zinc-500">▼</span>
+            </button>
+
+            <!-- Menú desplegable con los 3 saldos -->
+            <div id="balance-dropdown" class="absolute right-0 mt-2 w-56 bg-zinc-900 border border-zinc-800 rounded-2xl p-4 shadow-2xl hidden z-50 text-xs space-y-3">
+              <div class="flex justify-between items-center border-b border-zinc-800/80 pb-2">
+                <span class="text-zinc-400 font-medium">Saldo para Jugar:</span>
+                <span class="font-black text-emerald-400">$10.00</span>
+              </div>
+              <div class="flex justify-between items-center border-b border-zinc-800/80 pb-2">
+                <span class="text-zinc-400 font-medium">Saldo para Retirar:</span>
+                <span class="font-black text-white">$25.00</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-zinc-400 font-medium">Saldo Bono:</span>
+                <span class="font-black text-yellow-400">$5.00</span>
+              </div>
+            </div>
+          </div>
+
+          <button onclick="simulateLogout()" class="text-xs text-zinc-500 hover:text-red-400 uppercase font-bold ml-1">Salir</button>
+        </div>
+
+      </div>
+
+    </div>
+  </header>
+
+  <!-- CONTENIDO PRINCIPAL -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 py-6 space-y-8">
+
+    <!-- CARRUSEL GRANDE PARA TUS ANUNCIOS -->
+    <section class="relative overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-950 min-h-[320px] sm:min-h-[420px]">
+      
+      <!-- Slide 1 (Cambia el src por tu imagen de anuncio) -->
+      <div class="slide active absolute inset-0 w-full h-full">
+        <img src="https://images.unsplash.com/photo-1511512578047-dfb367046420?auto=format&fit=crop&w=1600&q=80" alt="Anuncio 1" class="w-full h-full object-cover">
+      </div>
+
+      <!-- Slide 2 (Cambia el src por tu imagen de anuncio) -->
+      <div class="slide absolute inset-0 w-full h-full">
+        <img src="https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1600&q=80" alt="Anuncio 2" class="w-full h-full object-cover">
+      </div>
+
+      <!-- Puntos del carrusel -->
+      <div class="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex gap-2 z-20">
+        <button onclick="setSlide(0)" class="w-3 h-3 rounded-full bg-emerald-500"></button>
+        <button onclick="setSlide(1)" class="w-3 h-3 rounded-full bg-zinc-700"></button>
+      </div>
+    </section>
+
+    <!-- CATÁLOGO DE JUEGOS -->
+    <section>
+      <h3 class="text-sm font-black text-zinc-300 uppercase tracking-wider mb-4 flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+        Juegos Online
+      </h3>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        
+        <div class="bg-zinc-950 border border-zinc-800/80 rounded-2xl p-5 hover:border-emerald-500/50 transition-all flex flex-col justify-between">
+          <div>
+            <div class="flex justify-between items-start mb-3">
+              <span class="text-[10px] bg-emerald-950 text-emerald-400 font-bold px-2.5 py-1 rounded-lg border border-emerald-800/60 uppercase">
+                P2P En Vivo
+              </span>
+              <span class="text-xs text-zinc-500 font-mono">Min: $0.10</span>
+            </div>
+            
+            <h4 class="text-2xl font-black text-white uppercase tracking-wider mb-2">
+              X vs O
+            </h4>
+            <p class="text-xs text-zinc-400 leading-relaxed mb-6">
+              Partidas 3 en raya multijugador P2P en tiempo real con apuestas y salas privadas.
+            </p>
+          </div>
+
+          <!-- Botón que redirige al puerto del juego manteniendo la IP de red automáticamente -->
+          <button onclick="launchGame()" class="w-full py-3 bg-zinc-900 hover:bg-emerald-500 hover:text-black text-zinc-300 font-black text-xs uppercase tracking-wider rounded-xl transition-all text-center border border-zinc-800 block cursor-pointer">
+            Jugar Ahora
+          </button>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="w-full border-t border-zinc-900 bg-zinc-950 py-6 text-center text-xs text-zinc-600">
+    <p class="font-bold text-zinc-500 uppercase tracking-widest text-[10px]">AXIOM</p>
+  </footer>
+
+  <!-- SCRIPTS DE CONTROL -->
+  <script>
+    // Redirige al juego tomando automáticamente la IP actual de tu red local en el puerto 3000
+    function launchGame() {
+      const host = window.location.hostname || "localhost";
+      window.location.href = `http://${host}:3000`;
+    }
+
+    function toggleMenu() {
+      document.getElementById('sidebar').classList.toggle('-translate-x-full');
+      document.getElementById('overlay').classList.toggle('hidden');
+    }
+
+    function toggleBalanceMenu() {
+      document.getElementById('balance-dropdown').classList.toggle('hidden');
+    }
+
+    window.addEventListener('click', function(e) {
+      const dropdown = document.getElementById('balance-dropdown');
+      const button = dropdown.previousElementSibling;
+      if (!dropdown.contains(e.target) && !button.contains(e.target)) {
+        dropdown.classList.add('hidden');
+      }
+    });
+
+    // Control del Carrusel
+    let currentSlide = 0;
+    const slides = document.querySelectorAll('.slide');
+
+    function setSlide(index) {
+      slides[currentSlide].classList.remove('active');
+      currentSlide = index;
+      slides[currentSlide].classList.add('active');
+    }
+
+    setInterval(() => {
+      setSlide((currentSlide + 1) % slides.length);
+    }, 5000);
+
+    // Funciones de simulación de estado de sesión (Listo para reemplazar con Supabase)
+    function simulateLogin() {
+      document.getElementById('user-guest').classList.add('hidden');
+      document.getElementById('user-logged-in').classList.remove('hidden');
+    }
+
+    function simulateLogout() {
+      document.getElementById('user-logged-in').classList.add('hidden');
+      document.getElementById('user-guest').classList.remove('hidden');
+    }
+  </script>
+</body>
+</html>
