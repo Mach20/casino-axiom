@@ -1,4 +1,3 @@
-
 import os
 import random
 import asyncio
@@ -2828,3 +2827,96 @@ async def admin_audit(
             "logs": [],
             "warning": "La tabla admin_audit_logs todavía no está disponible."
         }
+
+# ==========================================
+# AXIOM - OPERACIONES ADMINISTRATIVAS
+# ==========================================
+
+@app.post("/admin/deposits/{deposit_id}/approve")
+async def admin_approve_deposit(
+    deposit_id: int,
+    payload: dict,
+    authorization: str | None = Header(default=None)
+):
+    admin_id = require_admin(authorization)
+
+    return rpc_json(
+        "admin_confirm_deposit",
+        {
+            "p_admin_user_id": admin_id,
+            "p_deposit_id": deposit_id,
+            "p_admin_note": payload.get("admin_note")
+        }
+    )
+
+
+@app.post("/admin/deposits/{deposit_id}/reject")
+async def admin_reject_deposit(
+    deposit_id: int,
+    payload: dict,
+    authorization: str | None = Header(default=None)
+):
+    admin_id = require_admin(authorization)
+
+    return rpc_json(
+        "admin_reject_deposit",
+        {
+            "p_admin_user_id": admin_id,
+            "p_deposit_id": deposit_id,
+            "p_admin_note": payload.get("admin_note")
+        }
+    )
+
+
+@app.post("/admin/withdrawals/{withdrawal_id}/approve")
+async def admin_approve_withdrawal(
+    withdrawal_id: str,
+    payload: dict,
+    authorization: str | None = Header(default=None)
+):
+    admin_id = require_admin(authorization)
+
+    return rpc_json(
+        "admin_approve_withdrawal",
+        {
+            "p_admin_user_id": admin_id,
+            "p_withdrawal_id": withdrawal_id,
+            "p_admin_note": payload.get("admin_note")
+        }
+    )
+
+
+@app.post("/admin/withdrawals/{withdrawal_id}/reject")
+async def admin_reject_withdrawal(
+    withdrawal_id: str,
+    payload: dict,
+    authorization: str | None = Header(default=None)
+):
+    admin_id = require_admin(authorization)
+
+    return rpc_json(
+        "admin_reject_withdrawal",
+        {
+            "p_admin_user_id": admin_id,
+            "p_withdrawal_id": withdrawal_id,
+            "p_admin_note": payload.get("admin_note")
+        }
+    )
+
+
+@app.post("/admin/withdrawals/{withdrawal_id}/complete")
+async def admin_complete_withdrawal(
+    withdrawal_id: str,
+    payload: dict,
+    authorization: str | None = Header(default=None)
+):
+    admin_id = require_admin(authorization)
+
+    return rpc_json(
+        "admin_complete_withdrawal",
+        {
+            "p_admin_user_id": admin_id,
+            "p_withdrawal_id": withdrawal_id,
+            "p_admin_note": payload.get("admin_note")
+        }
+    )
