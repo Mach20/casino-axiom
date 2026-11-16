@@ -2439,3 +2439,392 @@ async def snake_game_endpoint(
                 print(
                     f"SALA SNAKE DISPONIBLE: {room.room_id}"
                 )
+
+# ============================================================
+# PANEL ADMINISTRATIVO AXIOM - AUTENTICACIÓN Y CONSULTAS
+# ============================================================
+
+def require_admin(authorization: str | None) -> str:
+    """
+    Verifica la sesión de Supabase y comprueba que el usuario
+    esté habilitado en public.admin_users.
+    """
+
+    user_id = get_authenticated_user_id(authorization)
+
+    try:
+        response = (
+            supabase.table("admin_users")
+            .select("user_id,enabled")
+            .eq("user_id", user_id)
+            .eq("enabled", True)
+            .limit(1)
+            .execute()
+        )
+
+        if not response.data:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permisos de administrador."
+            )
+
+        return user_id
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        print(f"ERROR verificando administrador: {exc!r}")
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudieron verificar los permisos."
+        )
+
+
+def admin_table_data(table_name: str, columns: str, limit: int = 200):
+    try:
+        response = (
+            supabase.table(table_name)
+            .select(columns)
+            .limit(limit)
+            .execute()
+        )
+
+        return response.data or []
+
+    except Exception as exc:
+        print(f"ERROR consultando {table_name}: {exc!r}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudieron consultar los datos de {table_name}."
+        )
+
+
+# ============================================================
+# RESUMEN GENERAL
+# ============================================================
+
+@app.get("/admin/dashboard")
+async def admin_dashboard(
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+
+    try:
+        response = (
+            supabase.table("profiles")
+            .select(
+                "id,balance,withdraw_balance,bonus_balance",
+                count="exact"
+            )
+            .limit(10000)
+            .execute()
+        )
+
+        profiles = response.data or []
+
+        total_play = sum(
+            float(p.get("balance") or 0)
+            for p in profiles
+        )
+
+        total_withdraw = sum(
+            float(p.get("withdraw_balance") or 0)
+            for p in profiles
+        )
+
+        total_bonus = sum(
+            float(p.get("bonus_balance") or 0)
+            for p in profiles
+        )
+
+        deposits = admin_table_data(
+            "deposit_requests",
+            "id,amount,status",
+            10000
+        )
+
+        withdrawals = admin_table_data(
+            "withdrawal_requests",
+            "id,amount,status",
+            10000
+        )
+
+        return {
+            "success": True,
+            "total_clients": response.count or len(profiles),
+            "total_play_balance": round(total_play, 2),
+            "total_withdraw_balance": round(total_withdraw, 2),
+            "total_bonus_balance": round(total_bonus, 2),
+            "total_deposits": len(deposits),
+            "pending_deposits": sum(
+                1 for d in deposits
+                if str(d.get("status", "")).lower() == "pendiente"
+            ),
+            "total_withdrawals": len(withdrawals),
+            "pending_withdrawals": sum(
+                1 for w in withdrawals
+                if str(w.get("status", "")).lower() == "pendiente"
+            ),
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        print(f"ERROR dashboard administrativo: {exc!r}")
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo cargar el resumen administrativo."
+        )
+
+
+# ============================================================
+# CLIENTES
+# ============================================================
+
+@app.get("/admin/clients")
+async def admin_clients(
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+
+    return {
+        "success": True,
+        "clients": admin_table_data(
+            "profiles",
+            """
+            id,first_name,middle_name,last_name,second_last_name,
+            doc_type,doc_number,phone,birth_date,created_at,
+            balance,withdraw_balance,bonus_balance,
+            referral_code,referred_by
+            """,
+            500
+        )
+    }
+
+
+# ============================================================
+# DEPÓSITOS
+# ============================================================
+
+@app.get("/admin/deposits")
+async def admin_deposits(
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+
+    return {
+        "success": True,
+        "deposits": admin_table_data(
+            "deposit_requests",
+            """
+            id,user_id,amount,method,status,provider_reference,
+            payment_url,receipt_path,admin_note,created_at,
+            updated_at,reviewed_at
+            """,
+            500
+        )
+    }
+
+
+# ============================================================
+# RETIROS
+# ============================================================
+
+@app.get("/admin/withdrawals")
+async def admin_withdrawals(
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+
+    return {
+        "success": True,
+        "withdrawals": admin_table_data(
+            "withdrawal_requests",
+            """
+            id,user_id,bank_account_id,amount,bank_fee,net_amount,
+            bank_name,account_type,account_number,account_holder,
+            document_number,status,admin_note,created_at,
+            updated_at,completed_at,request_key
+            """,
+            500
+        )
+    }
+
+
+# ============================================================
+# COMISIONES
+# ============================================================
+
+@app.get("/admin/commissions")
+async def admin_commissions(
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+
+    return {
+        "success": True,
+        "commissions": admin_table_data(
+            "comisiones",
+            """
+            id,user_id,room_id,game,monto_retiro,porcentaje,
+            comision,monto_jugador,transaction_key,created_at,
+            referente_id,comision_referente,comision_axiom
+            """,
+            500
+        )
+    }
+
+
+# ============================================================
+# MOVIMIENTOS DE JUEGOS
+# ============================================================
+
+@app.get("/admin/wallet-transactions")
+async def admin_wallet_transactions(
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+
+    return {
+        "success": True,
+        "transactions": admin_table_data(
+            "game_transactions",
+            """
+            id,transaction_key,user_id,room_id,amount,
+            wallet,type,created_at
+            """,
+            500
+        ),
+        "conversions": admin_table_data(
+            "wallet_conversions",
+            "id,user_id,transaction_key,amount,created_at",
+            500
+        )
+    }
+
+
+# ============================================================
+# BONOS Y REDENCIONES
+# ============================================================
+
+@app.get("/admin/bonuses")
+async def admin_bonuses(
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+
+    return {
+        "success": True,
+        "codes": admin_table_data(
+            "bonus_codes",
+            """
+            id,code,amount,is_active,starts_at,expires_at,
+            max_uses,uses_count,created_at
+            """,
+            500
+        ),
+        "redemptions": admin_table_data(
+            "bonus_redemptions",
+            "id,user_id,bonus_code_id,code,amount,redeemed_at",
+            500
+        )
+    }
+
+
+# ============================================================
+# REFERIDOS
+# ============================================================
+
+@app.get("/admin/referrals")
+async def admin_referrals(
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+
+    return {
+        "success": True,
+        "referrals": admin_table_data(
+            "profiles",
+            "id,first_name,last_name,referral_code,referred_by,created_at",
+            500
+        ),
+        "commissions": admin_table_data(
+            "comisiones",
+            """
+            id,user_id,referente_id,game,room_id,
+            comision_referente,comision_axiom,created_at
+            """,
+            500
+        )
+    }
+
+
+# ============================================================
+# PARTIDAS Y LIQUIDACIONES
+# ============================================================
+
+@app.get("/admin/games")
+async def admin_games(
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+
+    return {
+        "success": True,
+        "billar": admin_table_data(
+            "billar",
+            """
+            id,room_id,jugador1_id,jugador2_id,apuesta,
+            comision_por_jugador,billetera_jugador1,
+            billetera_jugador2,estado,turno,ganador_id,
+            resultado,comision_total,liquidacion_realizada,
+            transaction_key,creada_en,iniciada_en,finalizada_en
+            """,
+            500
+        ),
+        "settlements": admin_table_data(
+            "game_settlements",
+            "id,room_id,game,transaction_key,result,created_at",
+            500
+        ),
+        "bet_debits": admin_table_data(
+            "game_bet_debits",
+            "transaction_key,room_id,user_id,wallet,amount,created_at",
+            500
+        ),
+        "payouts": admin_table_data(
+            "game_payouts",
+            "room_id,winner_user_id,amount,created_at",
+            500
+        )
+    }
+
+
+# ============================================================
+# AUDITORÍA ADMINISTRATIVA
+# ============================================================
+
+@app.get("/admin/audit")
+async def admin_audit(
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+
+    try:
+        return {
+            "success": True,
+            "logs": admin_table_data(
+                "admin_audit_logs",
+                "id,admin_user_id,action,target_user_id,details,created_at",
+                500
+            )
+        }
+
+    except HTTPException:
+        return {
+            "success": True,
+            "logs": [],
+            "warning": "La tabla admin_audit_logs todavía no está disponible."
+        }
