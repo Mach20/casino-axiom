@@ -2440,397 +2440,618 @@ async def snake_game_endpoint(
                 )
 
 # ============================================================
-# PANEL ADMINISTRATIVO AXIOM - AUTENTICACIÓN Y CONSULTAS
+# AXIOM - OPERACIONES ADMINISTRATIVAS COMPLETAS
 # ============================================================
 
-def require_admin(authorization: str | None) -> str:
-    """
-    Verifica la sesión de Supabase y comprueba que el usuario
-    esté habilitado en public.admin_users.
-    """
+def admin_audit(admin_id, action, target_user_id=None, details=None):
+    try:
+        supabase.table("admin_audit_logs").insert({
+            "admin_user_id": admin_id,
+            "action": action,
+            "target_user_id": target_user_id,
+            "details": details or {}
+        }).execute()
+    except Exception as exc:
+        print(f"ERROR auditoría administrativa: {exc!r}")
 
-    user_id = get_authenticated_user_id(authorization)
+
+def admin_update_row(table, filters, values):
+    query = supabase.table(table).update(values)
+    for field, value in filters.items():
+        query = query.eq(field, value)
+    return query.execute()
+
+
+# ============================================================
+# CLIENTES: CREAR
+# ============================================================
+
+@app.post("/admin/clients")
+async def admin_create_client(
+    payload: dict,
+    authorization: str | None = Header(default=None)
+):
+    admin_id = require_admin(authorization)
+
+    email = str(payload.get("email") or "").strip().lower()
+    password = str(payload.get("password") or "")
+
+    if not email or not password:
+        raise HTTPException(400, "Correo y contraseña son obligatorios.")
+
+    if len(password) < 8:
+        raise HTTPException(400, "La contraseña debe tener al menos 8 caracteres.")
 
     try:
-        response = (
-            supabase.table("admin_users")
-            .select("user_id,enabled")
-            .eq("user_id", user_id)
-            .eq("enabled", True)
-            .limit(1)
-            .execute()
+        created = supabase.auth.admin.create_user({
+            "email": email,
+            "password": password,
+            "email_confirm": True
+        })
+
+        auth_user = getattr(created, "user", None)
+        if auth_user is None and isinstance(created, dict):
+            auth_user = created.get("user")
+
+        user_id = getattr(auth_user, "id", None)
+        if not user_id and isinstance(auth_user, dict):
+            user_id = auth_user.get("id")
+
+        if not user_id:
+            raise Exception("Supabase no devolvió el ID del usuario creado.")
+
+        profile = {
+            "id": user_id,
+            "first_name": payload.get("first_name"),
+            "middle_name": payload.get("middle_name"),
+            "last_name": payload.get("last_name"),
+            "second_last_name": payload.get("second_last_name"),
+            "doc_type": payload.get("doc_type"),
+            "doc_number": payload.get("doc_number"),
+            "phone": payload.get("phone"),
+            "birth_date": payload.get("birth_date"),
+            "balance": 0,
+            "withdraw_balance": 0,
+            "bonus_balance": 0
+        }
+
+        profile = {k: v for k, v in profile.items() if v is not None}
+
+        supabase.table("profiles").insert(profile).execute()
+
+        admin_audit(
+            admin_id,
+            "client_created",
+            user_id,
+            {"email": email}
         )
 
-        if not response.data:
-            raise HTTPException(
-                status_code=403,
-                detail="No tienes permisos de administrador."
-            )
-
-        return user_id
+        return {"success": True, "user_id": user_id}
 
     except HTTPException:
         raise
-
     except Exception as exc:
-        print(f"ERROR verificando administrador: {exc!r}")
-        raise HTTPException(
-            status_code=500,
-            detail="No se pudieron verificar los permisos."
-        )
-
-
-def admin_table_data(table_name: str, columns: str, limit: int = 200):
-    try:
-        response = (
-            supabase.table(table_name)
-            .select(columns)
-            .limit(limit)
-            .execute()
-        )
-
-        return response.data or []
-
-    except Exception as exc:
-        print(f"ERROR consultando {table_name}: {exc!r}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"No se pudieron consultar los datos de {table_name}."
-        )
+        print(f"ERROR creando cliente: {exc!r}")
+        raise HTTPException(500, "No se pudo crear el cliente.")
 
 
 # ============================================================
-# RESUMEN GENERAL
+# CLIENTES: EDITAR DATOS
 # ============================================================
 
-@app.get("/admin/dashboard")
-async def admin_dashboard(
-    authorization: str | None = Header(default=None),
+@app.put("/admin/clients/{user_id}")
+async def admin_edit_client(
+    user_id: str,
+    payload: dict,
+    authorization: str | None = Header(default=None)
 ):
-    require_admin(authorization)
+    admin_id = require_admin(authorization)
+
+    allowed = {
+        "first_name",
+        "middle_name",
+        "last_name",
+        "second_last_name",
+        "doc_type",
+        "doc_number",
+        "phone",
+        "birth_date"
+    }
+
+    changes = {
+        key: value
+        for key, value in payload.items()
+        if key in allowed
+    }
+
+    if not changes:
+        raise HTTPException(400, "No hay campos válidos para actualizar.")
 
     try:
         response = (
             supabase.table("profiles")
-            .select(
-                "id,balance,withdraw_balance,bonus_balance",
-                count="exact"
-            )
-            .limit(10000)
+            .update(changes)
+            .eq("id", user_id)
             .execute()
         )
 
-        profiles = response.data or []
+        if not response.data:
+            raise HTTPException(404, "Cliente no encontrado.")
 
-        total_play = sum(
-            float(p.get("balance") or 0)
-            for p in profiles
-        )
+        admin_audit(admin_id, "client_updated", user_id, changes)
 
-        total_withdraw = sum(
-            float(p.get("withdraw_balance") or 0)
-            for p in profiles
-        )
-
-        total_bonus = sum(
-            float(p.get("bonus_balance") or 0)
-            for p in profiles
-        )
-
-        deposits = admin_table_data(
-            "deposit_requests",
-            "id,amount,status",
-            10000
-        )
-
-        withdrawals = admin_table_data(
-            "withdrawal_requests",
-            "id,amount,status",
-            10000
-        )
-
-        return {
-            "success": True,
-            "total_clients": response.count or len(profiles),
-            "total_play_balance": round(total_play, 2),
-            "total_withdraw_balance": round(total_withdraw, 2),
-            "total_bonus_balance": round(total_bonus, 2),
-            "total_deposits": len(deposits),
-            "pending_deposits": sum(
-                1 for d in deposits
-                if str(d.get("status", "")).lower() == "pendiente"
-            ),
-            "total_withdrawals": len(withdrawals),
-            "pending_withdrawals": sum(
-                1 for w in withdrawals
-                if str(w.get("status", "")).lower() == "pendiente"
-            ),
-        }
+        return {"success": True, "client": response.data[0]}
 
     except HTTPException:
         raise
-
     except Exception as exc:
-        print(f"ERROR dashboard administrativo: {exc!r}")
-        raise HTTPException(
-            status_code=500,
-            detail="No se pudo cargar el resumen administrativo."
-        )
+        print(f"ERROR editando cliente: {exc!r}")
+        raise HTTPException(500, "No se pudo actualizar el cliente.")
 
 
 # ============================================================
-# CLIENTES
+# CLIENTES: ELIMINAR
 # ============================================================
 
-@app.get("/admin/clients")
-async def admin_clients(
-    authorization: str | None = Header(default=None),
+@app.delete("/admin/clients/{user_id}")
+async def admin_delete_client(
+    user_id: str,
+    authorization: str | None = Header(default=None)
 ):
-    require_admin(authorization)
+    admin_id = require_admin(authorization)
 
-    return {
-        "success": True,
-        "clients": admin_table_data(
-            "profiles",
-            """
-            id,first_name,middle_name,last_name,second_last_name,
-            doc_type,doc_number,phone,birth_date,created_at,
-            balance,withdraw_balance,bonus_balance,
-            referral_code,referred_by
-            """,
-            500
-        )
-    }
-
-
-# ============================================================
-# DEPÓSITOS
-# ============================================================
-
-@app.get("/admin/deposits")
-async def admin_deposits(
-    authorization: str | None = Header(default=None),
-):
-    require_admin(authorization)
-
-    return {
-        "success": True,
-        "deposits": admin_table_data(
-            "deposit_requests",
-            """
-            id,user_id,amount,method,status,provider_reference,
-            payment_url,receipt_path,admin_note,created_at,
-            updated_at,reviewed_at
-            """,
-            500
-        )
-    }
-
-
-# ============================================================
-# RETIROS
-# ============================================================
-
-@app.get("/admin/withdrawals")
-async def admin_withdrawals(
-    authorization: str | None = Header(default=None),
-):
-    require_admin(authorization)
-
-    return {
-        "success": True,
-        "withdrawals": admin_table_data(
-            "withdrawal_requests",
-            """
-            id,user_id,bank_account_id,amount,bank_fee,net_amount,
-            bank_name,account_type,account_number,account_holder,
-            document_number,status,admin_note,created_at,
-            updated_at,completed_at,request_key
-            """,
-            500
-        )
-    }
-
-
-# ============================================================
-# COMISIONES
-# ============================================================
-
-@app.get("/admin/commissions")
-async def admin_commissions(
-    authorization: str | None = Header(default=None),
-):
-    require_admin(authorization)
-
-    return {
-        "success": True,
-        "commissions": admin_table_data(
-            "comisiones",
-            """
-            id,user_id,room_id,game,monto_retiro,porcentaje,
-            comision,monto_jugador,transaction_key,created_at,
-            referente_id,comision_referente,comision_axiom
-            """,
-            500
-        )
-    }
-
-
-# ============================================================
-# MOVIMIENTOS DE JUEGOS
-# ============================================================
-
-@app.get("/admin/wallet-transactions")
-async def admin_wallet_transactions(
-    authorization: str | None = Header(default=None),
-):
-    require_admin(authorization)
-
-    return {
-        "success": True,
-        "transactions": admin_table_data(
-            "game_transactions",
-            """
-            id,transaction_key,user_id,room_id,amount,
-            wallet,type,created_at
-            """,
-            500
-        ),
-        "conversions": admin_table_data(
-            "wallet_conversions",
-            "id,user_id,transaction_key,amount,created_at",
-            500
-        )
-    }
-
-
-# ============================================================
-# BONOS Y REDENCIONES
-# ============================================================
-
-@app.get("/admin/bonuses")
-async def admin_bonuses(
-    authorization: str | None = Header(default=None),
-):
-    require_admin(authorization)
-
-    return {
-        "success": True,
-        "codes": admin_table_data(
-            "bonus_codes",
-            """
-            id,code,amount,is_active,starts_at,expires_at,
-            max_uses,uses_count,created_at
-            """,
-            500
-        ),
-        "redemptions": admin_table_data(
-            "bonus_redemptions",
-            "id,user_id,bonus_code_id,code,amount,redeemed_at",
-            500
-        )
-    }
-
-
-# ============================================================
-# REFERIDOS
-# ============================================================
-
-@app.get("/admin/referrals")
-async def admin_referrals(
-    authorization: str | None = Header(default=None),
-):
-    require_admin(authorization)
-
-    return {
-        "success": True,
-        "referrals": admin_table_data(
-            "profiles",
-            "id,first_name,last_name,referral_code,referred_by,created_at",
-            500
-        ),
-        "commissions": admin_table_data(
-            "comisiones",
-            """
-            id,user_id,referente_id,game,room_id,
-            comision_referente,comision_axiom,created_at
-            """,
-            500
-        )
-    }
-
-
-# ============================================================
-# PARTIDAS Y LIQUIDACIONES
-# ============================================================
-
-@app.get("/admin/games")
-async def admin_games(
-    authorization: str | None = Header(default=None),
-):
-    require_admin(authorization)
-
-    return {
-        "success": True,
-        "billar": admin_table_data(
-            "billar",
-            """
-            id,room_id,jugador1_id,jugador2_id,apuesta,
-            comision_por_jugador,billetera_jugador1,
-            billetera_jugador2,estado,turno,ganador_id,
-            resultado,comision_total,liquidacion_realizada,
-            transaction_key,creada_en,iniciada_en,finalizada_en
-            """,
-            500
-        ),
-        "settlements": admin_table_data(
-            "game_settlements",
-            "id,room_id,game,transaction_key,result,created_at",
-            500
-        ),
-        "bet_debits": admin_table_data(
-            "game_bet_debits",
-            "transaction_key,room_id,user_id,wallet,amount,created_at",
-            500
-        ),
-        "payouts": admin_table_data(
-            "game_payouts",
-            "room_id,winner_user_id,amount,created_at",
-            500
-        )
-    }
-
-
-# ============================================================
-# AUDITORÍA ADMINISTRATIVA
-# ============================================================
-
-@app.get("/admin/audit")
-async def admin_audit(
-    authorization: str | None = Header(default=None),
-):
-    require_admin(authorization)
+    if user_id == admin_id:
+        raise HTTPException(400, "No puedes eliminar tu propia cuenta administrativa.")
 
     try:
-        return {
-            "success": True,
-            "logs": admin_table_data(
-                "admin_audit_logs",
-                "id,admin_user_id,action,target_user_id,details,created_at",
-                500
-            )
-        }
+        existing = (
+            supabase.table("profiles")
+            .select("id")
+            .eq("id", user_id)
+            .limit(1)
+            .execute()
+        )
+
+        if not existing.data:
+            raise HTTPException(404, "Cliente no encontrado.")
+
+        admin_audit(admin_id, "client_deleted", user_id, {})
+
+        supabase.auth.admin.delete_user(user_id)
+
+        return {"success": True}
 
     except HTTPException:
-        return {
-            "success": True,
-            "logs": [],
-            "warning": "La tabla admin_audit_logs todavía no está disponible."
-        }
+        raise
+    except Exception as exc:
+        print(f"ERROR eliminando cliente: {exc!r}")
+        raise HTTPException(
+            500,
+            "No se pudo eliminar el usuario. Comprueba si existen registros relacionados que impidan su eliminación."
+        )
 
-# ==========================================
-# AXIOM - OPERACIONES ADMINISTRATIVAS
-# ==========================================
+
+# ============================================================
+# CLIENTES: MODIFICAR SALDOS
+# ============================================================
+
+@app.post("/admin/clients/{user_id}/wallet")
+async def admin_adjust_client_wallet(
+    user_id: str,
+    payload: dict,
+    authorization: str | None = Header(default=None)
+):
+    admin_id = require_admin(authorization)
+
+    wallet = payload.get("wallet")
+    mode = payload.get("mode")
+    amount = payload.get("amount")
+
+    if wallet not in ("balance", "withdraw_balance", "bonus_balance"):
+        raise HTTPException(400, "Billetera no válida.")
+
+    if mode not in ("add", "subtract", "set"):
+        raise HTTPException(400, "Operación no válida.")
+
+    try:
+        amount = float(amount)
+        if amount < 0:
+            raise ValueError()
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Monto no válido.")
+
+    return rpc_json(
+        "admin_adjust_wallet",
+        {
+            "p_admin_user_id": admin_id,
+            "p_user_id": user_id,
+            "p_wallet": wallet,
+            "p_mode": mode,
+            "p_amount": amount,
+            "p_reason": payload.get("reason")
+        }
+    )
+
+
+# ============================================================
+# CLIENTES: VERIFICAR / DESVERIFICAR
+# ============================================================
+
+@app.post("/admin/clients/{user_id}/verification")
+async def admin_set_client_verification(
+    user_id: str,
+    payload: dict,
+    authorization: str | None = Header(default=None)
+):
+    admin_id = require_admin(authorization)
+
+    verified = payload.get("is_verified")
+    if not isinstance(verified, bool):
+        raise HTTPException(400, "is_verified debe ser verdadero o falso.")
+
+    try:
+        response = (
+            supabase.table("profiles")
+            .update({"is_verified": verified})
+            .eq("id", user_id)
+            .execute()
+        )
+
+        if not response.data:
+            raise HTTPException(404, "Cliente no encontrado.")
+
+        admin_audit(
+            admin_id,
+            "client_verification_changed",
+            user_id,
+            {"is_verified": verified}
+        )
+
+        return {"success": True, "is_verified": verified}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"ERROR verificando cliente: {exc!r}")
+        raise HTTPException(500, "No se pudo cambiar la verificación.")
+
+
+# ============================================================
+# CLIENTES: SUSPENDER / REACTIVAR
+# ============================================================
+
+@app.post("/admin/clients/{user_id}/suspension")
+async def admin_set_client_suspension(
+    user_id: str,
+    payload: dict,
+    authorization: str | None = Header(default=None)
+):
+    admin_id = require_admin(authorization)
+
+    suspended = payload.get("is_suspended")
+    if not isinstance(suspended, bool):
+        raise HTTPException(400, "is_suspended debe ser verdadero o falso.")
+
+    if user_id == admin_id and suspended:
+        raise HTTPException(400, "No puedes suspender tu propia cuenta administrativa.")
+
+    note = payload.get("admin_status_note")
+
+    try:
+        response = (
+            supabase.table("profiles")
+            .update({
+                "is_suspended": suspended,
+                "admin_status_note": note
+            })
+            .eq("id", user_id)
+            .execute()
+        )
+
+        if not response.data:
+            raise HTTPException(404, "Cliente no encontrado.")
+
+        admin_audit(
+            admin_id,
+            "client_suspension_changed",
+            user_id,
+            {
+                "is_suspended": suspended,
+                "note": note
+            }
+        )
+
+        return {"success": True, "is_suspended": suspended}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"ERROR cambiando suspensión: {exc!r}")
+        raise HTTPException(500, "No se pudo cambiar el estado del cliente.")
+
+
+# ============================================================
+# BONOS: CREAR CÓDIGO
+# ============================================================
+
+@app.post("/admin/bonuses")
+async def admin_create_bonus(
+    payload: dict,
+    authorization: str | None = Header(default=None)
+):
+    admin_id = require_admin(authorization)
+
+    code = str(payload.get("code") or "").strip().upper()
+
+    try:
+        amount = float(payload.get("amount"))
+        if amount <= 0:
+            raise ValueError()
+    except (TypeError, ValueError):
+        raise HTTPException(400, "El monto del bono debe ser mayor que cero.")
+
+    values = {
+        "code": code,
+        "amount": amount,
+        "is_active": bool(payload.get("is_active", True)),
+        "starts_at": payload.get("starts_at"),
+        "expires_at": payload.get("expires_at"),
+        "max_uses": payload.get("max_uses")
+    }
+
+    if not code:
+        raise HTTPException(400, "El código es obligatorio.")
+
+    if values["max_uses"] is not None:
+        try:
+            values["max_uses"] = int(values["max_uses"])
+            if values["max_uses"] < 1:
+                raise ValueError()
+        except (TypeError, ValueError):
+            raise HTTPException(400, "max_uses debe ser un entero positivo.")
+
+    values = {k: v for k, v in values.items() if v is not None}
+
+    try:
+        response = supabase.table("bonus_codes").insert(values).execute()
+
+        admin_audit(admin_id, "bonus_created", None, values)
+
+        return {"success": True, "bonus": response.data[0]}
+
+    except Exception as exc:
+        print(f"ERROR creando bono: {exc!r}")
+        raise HTTPException(500, "No se pudo crear el código de bono.")
+
+
+# ============================================================
+# BONOS: EDITAR
+# ============================================================
+
+@app.put("/admin/bonuses/{bonus_id}")
+async def admin_edit_bonus(
+    bonus_id: int,
+    payload: dict,
+    authorization: str | None = Header(default=None)
+):
+    admin_id = require_admin(authorization)
+
+    allowed = {
+        "code",
+        "amount",
+        "is_active",
+        "starts_at",
+        "expires_at",
+        "max_uses"
+    }
+
+    changes = {
+        key: value
+        for key, value in payload.items()
+        if key in allowed
+    }
+
+    if "code" in changes:
+        changes["code"] = str(changes["code"]).strip().upper()
+
+    if "amount" in changes:
+        try:
+            changes["amount"] = float(changes["amount"])
+            if changes["amount"] <= 0:
+                raise ValueError()
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Monto de bono no válido.")
+
+    if "max_uses" in changes and changes["max_uses"] is not None:
+        try:
+            changes["max_uses"] = int(changes["max_uses"])
+            if changes["max_uses"] < 1:
+                raise ValueError()
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Límite de usos no válido.")
+
+    if not changes:
+        raise HTTPException(400, "No hay cambios para guardar.")
+
+    try:
+        response = (
+            supabase.table("bonus_codes")
+            .update(changes)
+            .eq("id", bonus_id)
+            .execute()
+        )
+
+        if not response.data:
+            raise HTTPException(404, "Código no encontrado.")
+
+        admin_audit(admin_id, "bonus_updated", None, {
+            "bonus_id": bonus_id,
+            "changes": changes
+        })
+
+        return {"success": True, "bonus": response.data[0]}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"ERROR editando bono: {exc!r}")
+        raise HTTPException(500, "No se pudo actualizar el bono.")
+
+
+# ============================================================
+# BONOS: ACTIVAR / DESACTIVAR
+# ============================================================
+
+@app.post("/admin/bonuses/{bonus_id}/status")
+async def admin_set_bonus_status(
+    bonus_id: int,
+    payload: dict,
+    authorization: str | None = Header(default=None)
+):
+    admin_id = require_admin(authorization)
+
+    active = payload.get("is_active")
+    if not isinstance(active, bool):
+        raise HTTPException(400, "is_active debe ser verdadero o falso.")
+
+    try:
+        response = (
+            supabase.table("bonus_codes")
+            .update({"is_active": active})
+            .eq("id", bonus_id)
+            .execute()
+        )
+
+        if not response.data:
+            raise HTTPException(404, "Código no encontrado.")
+
+        admin_audit(
+            admin_id,
+            "bonus_status_changed",
+            None,
+            {"bonus_id": bonus_id, "is_active": active}
+        )
+
+        return {"success": True, "is_active": active}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"ERROR cambiando estado del bono: {exc!r}")
+        raise HTTPException(500, "No se pudo cambiar el estado del bono.")
+
+
+# ============================================================
+# BONOS: ELIMINAR
+# ============================================================
+
+@app.delete("/admin/bonuses/{bonus_id}")
+async def admin_delete_bonus(
+    bonus_id: int,
+    authorization: str | None = Header(default=None)
+):
+    admin_id = require_admin(authorization)
+
+    try:
+        used = (
+            supabase.table("bonus_redemptions")
+            .select("id")
+            .eq("bonus_code_id", bonus_id)
+            .limit(1)
+            .execute()
+        )
+
+        if used.data:
+            raise HTTPException(
+                409,
+                "Este bono ya tiene redenciones. Desactívalo en lugar de eliminarlo."
+            )
+
+        response = (
+            supabase.table("bonus_codes")
+            .delete()
+            .eq("id", bonus_id)
+            .execute()
+        )
+
+        if not response.data:
+            raise HTTPException(404, "Código no encontrado.")
+
+        admin_audit(
+            admin_id,
+            "bonus_deleted",
+            None,
+            {"bonus_id": bonus_id}
+        )
+
+        return {"success": True}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"ERROR eliminando bono: {exc!r}")
+        raise HTTPException(500, "No se pudo eliminar el bono.")
+
+
+# ============================================================
+# REFERIDOS: CAMBIAR REFERENTE DE UN CLIENTE
+# ============================================================
+
+@app.put("/admin/referrals/{user_id}")
+async def admin_change_referrer(
+    user_id: str,
+    payload: dict,
+    authorization: str | None = Header(default=None)
+):
+    admin_id = require_admin(authorization)
+
+    referrer_id = payload.get("referred_by")
+
+    if referrer_id == user_id:
+        raise HTTPException(400, "Un cliente no puede referirse a sí mismo.")
+
+    try:
+        if referrer_id:
+            referrer = (
+                supabase.table("profiles")
+                .select("id")
+                .eq("id", referrer_id)
+                .limit(1)
+                .execute()
+            )
+
+            if not referrer.data:
+                raise HTTPException(404, "El referente no existe.")
+
+        response = (
+            supabase.table("profiles")
+            .update({"referred_by": referrer_id})
+            .eq("id", user_id)
+            .execute()
+        )
+
+        if not response.data:
+            raise HTTPException(404, "Cliente no encontrado.")
+
+        admin_audit(
+            admin_id,
+            "referral_changed",
+            user_id,
+            {"referred_by": referrer_id}
+        )
+
+        return {"success": True, "referred_by": referrer_id}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"ERROR cambiando referido: {exc!r}")
+        raise HTTPException(500, "No se pudo actualizar el referente.")
+
+
+# ============================================================
+# DEPÓSITOS: APROBAR / RECHAZAR
+# ============================================================
 
 @app.post("/admin/deposits/{deposit_id}/approve")
 async def admin_approve_deposit(
@@ -2867,6 +3088,10 @@ async def admin_reject_deposit(
         }
     )
 
+
+# ============================================================
+# RETIROS: APROBAR / RECHAZAR / COMPLETAR
+# ============================================================
 
 @app.post("/admin/withdrawals/{withdrawal_id}/approve")
 async def admin_approve_withdrawal(
@@ -2920,3 +3145,204 @@ async def admin_complete_withdrawal(
             "p_admin_note": payload.get("admin_note")
         }
     )
+
+
+# ============================================================
+# FINANZAS: CONSULTAR ESTADÍSTICAS
+# ============================================================
+
+@app.get("/admin/finance")
+async def admin_finance(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    game: str | None = None,
+    referrer_id: str | None = None,
+    authorization: str | None = Header(default=None)
+):
+    require_admin(authorization)
+
+    try:
+        resets = (
+            supabase.table("admin_finance_resets")
+            .select("reset_at")
+            .order("reset_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+
+        reset_at = resets.data[0]["reset_at"] if resets.data else None
+
+        commissions = admin_table_data(
+            "comisiones",
+            """
+            id,user_id,room_id,game,monto_retiro,porcentaje,
+            comision,monto_jugador,transaction_key,created_at,
+            referente_id,comision_referente,comision_axiom
+            """,
+            10000
+        )
+
+        deposits = admin_table_data(
+            "deposit_requests",
+            "id,user_id,amount,status,created_at",
+            10000
+        )
+
+        withdrawals = admin_table_data(
+            "withdrawal_requests",
+            "id,user_id,amount,net_amount,status,created_at,completed_at",
+            10000
+        )
+
+        bets = admin_table_data(
+            "game_bet_debits",
+            "transaction_key,room_id,user_id,wallet,amount,created_at",
+            10000
+        )
+
+        payouts = admin_table_data(
+            "game_payouts",
+            "room_id,winner_user_id,amount,created_at",
+            10000
+        )
+
+        def in_period(row):
+            created = str(row.get("created_at") or "")
+            if reset_at and created < str(reset_at):
+                return False
+            if date_from and created[:10] < date_from[:10]:
+                return False
+            if date_to and created[:10] > date_to[:10]:
+                return False
+            return True
+
+        commissions = [x for x in commissions if in_period(x)]
+        deposits = [x for x in deposits if in_period(x)]
+        withdrawals = [x for x in withdrawals if in_period(x)]
+        bets = [x for x in bets if in_period(x)]
+        payouts = [x for x in payouts if in_period(x)]
+
+        if game:
+            commissions = [
+                x for x in commissions
+                if str(x.get("game") or "").lower() == game.lower()
+            ]
+
+        if referrer_id:
+            commissions = [
+                x for x in commissions
+                if str(x.get("referente_id") or "") == referrer_id
+            ]
+
+        axiom_income = sum(
+            float(x.get("comision_axiom") or 0)
+            for x in commissions
+        )
+
+        referral_commissions = sum(
+            float(x.get("comision_referente") or 0)
+            for x in commissions
+        )
+
+        total_commissions = sum(
+            float(x.get("comision") or 0)
+            for x in commissions
+        )
+
+        total_bets = sum(float(x.get("amount") or 0) for x in bets)
+        total_payouts = sum(float(x.get("amount") or 0) for x in payouts)
+
+        confirmed_deposits = sum(
+            float(x.get("amount") or 0)
+            for x in deposits
+            if str(x.get("status") or "").lower() in ("confirmado", "approved", "completed")
+        )
+
+        completed_withdrawals = sum(
+            float(x.get("net_amount") or x.get("amount") or 0)
+            for x in withdrawals
+            if str(x.get("status") or "").lower() in ("completado", "completed")
+        )
+
+        return {
+            "success": True,
+            "reset_at": reset_at,
+            "filters": {
+                "date_from": date_from,
+                "date_to": date_to,
+                "game": game,
+                "referrer_id": referrer_id
+            },
+            "income": {
+                "axiom_commissions": round(axiom_income, 2),
+                "referral_commissions": round(referral_commissions, 2),
+                "total_commissions": round(total_commissions, 2),
+                "deposits": round(confirmed_deposits, 2)
+            },
+            "outflows": {
+                "payouts": round(total_payouts, 2),
+                "completed_withdrawals": round(completed_withdrawals, 2),
+                "referral_commissions": round(referral_commissions, 2)
+            },
+            "totals": {
+                "bets": round(total_bets, 2),
+                "payouts": round(total_payouts, 2),
+                "deposits": round(confirmed_deposits, 2),
+                "withdrawals": round(completed_withdrawals, 2),
+                "axiom_income": round(axiom_income, 2),
+                "referral_commissions": round(referral_commissions, 2),
+                "net_axiom_commissions": round(axiom_income, 2)
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"ERROR estadísticas financieras: {exc!r}")
+        raise HTTPException(500, "No se pudieron calcular las estadísticas financieras.")
+
+
+# ============================================================
+# FINANZAS: REINICIAR ESTADÍSTICAS SIN BORRAR HISTORIAL
+# ============================================================
+
+@app.post("/admin/finance/reset")
+async def admin_reset_finance(
+    payload: dict,
+    authorization: str | None = Header(default=None)
+):
+    admin_id = require_admin(authorization)
+
+    confirmation = str(payload.get("confirmation") or "").strip().upper()
+    if confirmation != "REINICIAR":
+        raise HTTPException(
+            400,
+            "Escribe REINICIAR para confirmar el reinicio de estadísticas."
+        )
+
+    try:
+        response = supabase.table("admin_finance_resets").insert({
+            "admin_user_id": admin_id
+        }).execute()
+
+        reset = response.data[0]
+
+        admin_audit(
+            admin_id,
+            "finance_statistics_reset",
+            None,
+            {
+                "reset_at": reset.get("reset_at"),
+                "history_deleted": False
+            }
+        )
+
+        return {
+            "success": True,
+            "reset_at": reset.get("reset_at"),
+            "history_deleted": False
+        }
+
+    except Exception as exc:
+        print(f"ERROR reiniciando estadísticas: {exc!r}")
+        raise HTTPException(500, "No se pudieron reiniciar las estadísticas.")
