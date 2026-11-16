@@ -9,7 +9,7 @@
 
     <style>
         :root {
-            color-scheme: dark;
+            color-scheme:dark;
             --bg:#090b0a;
             --panel:#111613;
             --line:#26332b;
@@ -17,6 +17,7 @@
             --text:#eef5ef;
             --green:#34d399;
             --red:#fb7185;
+            --yellow:#e8c66a;
         }
 
         * { box-sizing:border-box; }
@@ -28,8 +29,9 @@
             font:14px Inter,system-ui,Arial,sans-serif;
         }
 
-        button,input { font:inherit; }
+        button,input,select,textarea { font:inherit; }
         button { cursor:pointer; }
+        button:disabled { opacity:.5;cursor:wait; }
         .hidden { display:none!important; }
 
         .login-wrap {
@@ -55,7 +57,7 @@
             color:var(--green);
         }
 
-        .sub { color:var(--muted); margin:8px 0 26px; }
+        .sub { color:var(--muted);margin:8px 0 26px; }
 
         label {
             display:block;
@@ -63,7 +65,7 @@
             margin:15px 0 7px;
         }
 
-        input {
+        input,select,textarea {
             width:100%;
             padding:12px 13px;
             border-radius:9px;
@@ -73,7 +75,9 @@
             outline:none;
         }
 
-        input:focus { border-color:var(--green); }
+        input:focus,select:focus,textarea:focus { border-color:var(--green); }
+
+        textarea { min-height:90px;resize:vertical; }
 
         .btn {
             border:0;
@@ -84,8 +88,7 @@
             font-weight:800;
         }
 
-        .btn:disabled { opacity:.5; cursor:wait; }
-        .login .btn { width:100%; margin-top:20px; }
+        .login .btn { width:100%;margin-top:20px; }
 
         .error {
             color:var(--red);
@@ -108,9 +111,9 @@
             gap:22px;
         }
 
-        .side .brand { font-size:22px; padding:0 10px; }
+        .side .brand { font-size:22px;padding:0 10px; }
 
-        .nav { display:grid; gap:5px; }
+        .nav { display:grid;gap:5px; }
 
         .nav button {
             border:0;
@@ -121,8 +124,7 @@
             color:#aab8ae;
         }
 
-        .nav button.active,
-        .nav button:hover {
+        .nav button.active,.nav button:hover {
             background:#17251c;
             color:var(--green);
         }
@@ -135,7 +137,7 @@
             overflow-wrap:anywhere;
         }
 
-        main { padding:28px; min-width:0; }
+        main { padding:28px;min-width:0; }
 
         .top {
             display:flex;
@@ -145,10 +147,10 @@
             margin-bottom:25px;
         }
 
-        h1 { font-size:25px; margin:0 0 6px; }
+        h1 { font-size:25px;margin:0 0 6px; }
         .muted { color:var(--muted); }
 
-        .logout {
+        .logout,.refresh {
             background:#1b2820;
             color:#dce8df;
             border:1px solid var(--line);
@@ -174,11 +176,12 @@
             font-size:25px;
             font-weight:800;
             margin-top:10px;
+            overflow-wrap:anywhere;
         }
 
-        .metric-label { color:var(--muted); font-size:12px; }
+        .metric-label { color:var(--muted);font-size:12px; }
         .section { margin-top:20px; }
-        .section h2 { font-size:16px; margin:0 0 12px; }
+        .section h2 { font-size:16px;margin:0 0 12px; }
 
         .toolbar {
             display:flex;
@@ -187,7 +190,7 @@
             margin-bottom:13px;
         }
 
-        .toolbar input { max-width:340px; }
+        .toolbar input,.toolbar select { max-width:260px; }
 
         .table-wrap {
             overflow:auto;
@@ -207,6 +210,7 @@
             padding:13px 14px;
             border-bottom:1px solid var(--line);
             white-space:nowrap;
+            vertical-align:middle;
         }
 
         th {
@@ -226,6 +230,7 @@
             color:#e8d49a;
             border-radius:10px;
             line-height:1.6;
+            margin-bottom:15px;
         }
 
         .empty {
@@ -246,13 +251,9 @@
             font-size:12px;
         }
 
-        .refresh {
-            background:#1b2820;
-            color:#dce8df;
-            border:1px solid var(--line);
-            border-radius:8px;
-            padding:10px 13px;
-        }
+        .status.pending { background:#332a14;color:#f1d58b; }
+        .status.rejected { background:#351820;color:#ff9baa; }
+        .status.completed { background:#123b29;color:#65e6a5; }
 
         .section-head {
             display:flex;
@@ -262,7 +263,85 @@
             margin:18px 0 12px;
         }
 
-        .section-head h2 { margin:0; font-size:16px; }
+        .section-head h2 { margin:0;font-size:16px; }
+
+        .action-btn {
+            border:1px solid var(--line);
+            border-radius:7px;
+            padding:7px 10px;
+            margin:2px;
+            font-size:12px;
+            font-weight:700;
+        }
+
+        .approve {
+            background:#123b29;
+            color:#65e6a5;
+            border-color:#246644;
+        }
+
+        .reject {
+            background:#3b1820;
+            color:#ff9baa;
+            border-color:#71313e;
+        }
+
+        .neutral {
+            background:#1b2820;
+            color:#dce8df;
+        }
+
+        .action-btn:hover { filter:brightness(1.2); }
+
+        .filters {
+            display:flex;
+            flex-wrap:wrap;
+            gap:10px;
+            margin-bottom:15px;
+        }
+
+        .filters > * { flex:1;min-width:150px; }
+
+        .finance-grid {
+            display:grid;
+            grid-template-columns:repeat(3,minmax(0,1fr));
+            gap:12px;
+        }
+
+        .finance-value {
+            font-size:22px;
+            font-weight:800;
+            margin-top:9px;
+        }
+
+        .positive { color:var(--green); }
+        .negative { color:var(--red); }
+
+        .modal-backdrop {
+            position:fixed;
+            inset:0;
+            z-index:50;
+            background:#000b;
+            display:grid;
+            place-items:center;
+            padding:18px;
+        }
+
+        .modal {
+            width:min(480px,100%);
+            padding:22px;
+            background:#111813;
+            border:1px solid var(--line);
+            border-radius:14px;
+        }
+
+        .modal h2 { margin:0 0 10px; }
+        .modal-actions {
+            display:flex;
+            justify-content:flex-end;
+            gap:9px;
+            margin-top:18px;
+        }
 
         @media(max-width:900px) {
             .grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
@@ -278,12 +357,13 @@
                 padding:12px;
             }
             .side .brand { padding:4px 8px; }
-            .nav { display:flex; overflow:auto; }
-            .nav button { white-space:nowrap; padding:9px 11px; }
+            .nav { display:flex;overflow:auto; }
+            .nav button { white-space:nowrap;padding:9px 11px; }
             .side-foot { display:none; }
             main { padding:17px; }
             .top { align-items:flex-start; }
             .grid { grid-template-columns:1fr 1fr; }
+            .finance-grid { grid-template-columns:1fr 1fr; }
             .metric { font-size:21px; }
         }
     </style>
@@ -322,6 +402,7 @@
             <button data-page="referrals">Referidos</button>
             <button data-page="games">Juegos y apuestas</button>
             <button data-page="commissions">Comisiones</button>
+            <button data-page="finance">Finanzas</button>
             <button data-page="audit">Auditoría</button>
         </nav>
 
@@ -340,9 +421,7 @@
             <button class="logout" id="logoutBtn">Cerrar sesión</button>
         </header>
 
-        <div class="notice" id="backendNotice">
-            El panel consulta los datos administrativos del backend de AXIOM.
-        </div>
+        <div class="notice hidden" id="backendNotice"></div>
 
         <section id="dashboard" class="page active">
             <div class="grid" style="margin-top:16px">
@@ -361,6 +440,25 @@
                 <div class="card">
                     <div class="metric-label">Saldo bono</div>
                     <div class="metric" id="mBonus">—</div>
+                </div>
+            </div>
+
+            <div class="grid section">
+                <div class="card">
+                    <div class="metric-label">Depósitos pendientes</div>
+                    <div class="metric" id="mPendingDeposits">—</div>
+                </div>
+                <div class="card">
+                    <div class="metric-label">Retiros pendientes</div>
+                    <div class="metric" id="mPendingWithdrawals">—</div>
+                </div>
+                <div class="card">
+                    <div class="metric-label">Comisión referente</div>
+                    <div class="metric">2%</div>
+                </div>
+                <div class="card">
+                    <div class="metric-label">Comisión AXIOM</div>
+                    <div class="metric">4%</div>
                 </div>
             </div>
 
@@ -435,12 +533,14 @@
                             <th>Método</th>
                             <th>Estado</th>
                             <th>Referencia</th>
+                            <th>Comprobante</th>
                             <th>Fecha</th>
                             <th>Nota administrativa</th>
+                            <th>Acciones</th>
                         </tr>
                     </thead>
                     <tbody id="depositRows">
-                        <tr><td colspan="8" class="empty">Sin datos.</td></tr>
+                        <tr><td colspan="10" class="empty">Sin datos.</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -461,14 +561,17 @@
                             <th>Comisión bancaria</th>
                             <th>Neto</th>
                             <th>Banco</th>
+                            <th>Tipo de cuenta</th>
                             <th>Cuenta</th>
                             <th>Titular</th>
+                            <th>Documento</th>
                             <th>Estado</th>
                             <th>Fecha</th>
+                            <th>Acciones</th>
                         </tr>
                     </thead>
                     <tbody id="withdrawRows">
-                        <tr><td colspan="10" class="empty">Sin datos.</td></tr>
+                        <tr><td colspan="13" class="empty">Sin datos.</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -576,7 +679,21 @@
                 <h2>Comisiones</h2>
                 <button class="refresh" onclick="loadSection('commissions')">Actualizar</button>
             </div>
-            <div class="table-wrap">
+            <div class="grid section" style="margin-top:0">
+                <div class="card">
+                    <div class="metric-label">Comisiones totales</div>
+                    <div class="metric" id="totalCommission">—</div>
+                </div>
+                <div class="card">
+                    <div class="metric-label">Referentes (2%)</div>
+                    <div class="metric" id="referralCommission">—</div>
+                </div>
+                <div class="card">
+                    <div class="metric-label">AXIOM (4%)</div>
+                    <div class="metric" id="axiomCommission">—</div>
+                </div>
+            </div>
+            <div class="table-wrap section">
                 <table>
                     <thead>
                         <tr>
@@ -595,6 +712,68 @@
                         <tr><td colspan="9" class="empty">Sin datos.</td></tr>
                     </tbody>
                 </table>
+            </div>
+        </section>
+
+        <section id="finance" class="page">
+            <div class="section-head">
+                <h2>Finanzas de AXIOM</h2>
+                <button class="refresh" onclick="loadFinance()">Actualizar finanzas</button>
+            </div>
+
+            <div class="filters">
+                <select id="financePeriod">
+                    <option value="all">Todo el historial</option>
+                    <option value="today">Hoy</option>
+                    <option value="week">Últimos 7 días</option>
+                    <option value="month">Este mes</option>
+                </select>
+                <select id="financeGame">
+                    <option value="all">Todos los juegos</option>
+                    <option value="snake">Snake</option>
+                    <option value="xo">X vs O</option>
+                    <option value="billar">Billar</option>
+                </select>
+                <input id="financeReferral" placeholder="Filtrar por ID de referente">
+                <button class="btn" onclick="loadFinance()">Aplicar filtros</button>
+            </div>
+
+            <div class="finance-grid">
+                <div class="card">
+                    <div class="metric-label">Comisión total</div>
+                    <div class="finance-value" id="financeTotalCommission">—</div>
+                </div>
+                <div class="card">
+                    <div class="metric-label">Ganancia AXIOM (4%)</div>
+                    <div class="finance-value positive" id="financeAxiom">—</div>
+                </div>
+                <div class="card">
+                    <div class="metric-label">Comisión referentes (2%)</div>
+                    <div class="finance-value" id="financeReferral">—</div>
+                </div>
+                <div class="card">
+                    <div class="metric-label">Depósitos registrados</div>
+                    <div class="finance-value" id="financeDeposits">—</div>
+                </div>
+                <div class="card">
+                    <div class="metric-label">Retiros registrados</div>
+                    <div class="finance-value" id="financeWithdrawals">—</div>
+                </div>
+                <div class="card">
+                    <div class="metric-label">Movimientos de juego</div>
+                    <div class="finance-value" id="financeGameMoves">—</div>
+                </div>
+            </div>
+
+            <div class="section card">
+                <h2>Reinicio de estadísticas</h2>
+                <p class="muted">
+                    El reinicio de estadísticas debe ejecutarse desde una operación administrativa del backend.
+                    No elimina los movimientos históricos ni modifica los saldos de los usuarios.
+                </p>
+                <button class="action-btn neutral" disabled title="Esta operación todavía no está disponible en el backend">
+                    Reinicio financiero no disponible
+                </button>
             </div>
         </section>
 
@@ -623,8 +802,24 @@
     </main>
 </div>
 
+<div id="actionModal" class="modal-backdrop hidden">
+    <div class="modal">
+        <h2 id="modalTitle">Confirmar operación</h2>
+        <p id="modalDescription" class="muted"></p>
+        <label for="adminNote">Nota administrativa</label>
+        <textarea id="adminNote" placeholder="Escribe una nota (opcional)"></textarea>
+        <div class="modal-actions">
+            <button class="logout" id="cancelAction">Cancelar</button>
+            <button class="btn" id="confirmAction">Confirmar</button>
+        </div>
+        <div id="actionError" class="error"></div>
+    </div>
+</div>
+
 <script>
 (() => {
+    "use strict";
+
     const SUPABASE_URL = "https://djdzytfdztctusnuuvrm.supabase.co";
     const SUPABASE_ANON_KEY = "sb_publishable_hxvxUJ5xLkdYdMJbF07kYQ_R_HQsJ2z";
     const API_URL = "https://casino-axiom.ethiodeploy.app";
@@ -633,7 +828,16 @@
 
     let supabaseClient = null;
     let accessToken = null;
+    let currentUser = null;
     let clientsCache = [];
+    let pendingAction = null;
+    let commissionCache = [];
+    let financeCache = {
+        commissions:[],
+        deposits:[],
+        withdrawals:[],
+        transactions:[]
+    };
 
     if (window.supabase && SUPABASE_ANON_KEY) {
         supabaseClient = window.supabase.createClient(
@@ -643,10 +847,11 @@
     }
 
     function escapeHtml(value) {
-        if (value === null || value === undefined) return "—";
+        if (value === null || value === undefined || value === "") return "—";
 
         if (typeof value === "object") {
-            value = JSON.stringify(value);
+            try { value = JSON.stringify(value); }
+            catch { value = String(value); }
         }
 
         return String(value).replace(/[&<>"']/g, c => ({
@@ -670,6 +875,11 @@
         }).format(number);
     }
 
+    function numberValue(value) {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : 0;
+    }
+
     function date(value) {
         if (!value) return "—";
 
@@ -681,7 +891,15 @@
 
     function status(value) {
         if (value === null || value === undefined) return "—";
-        return `<span class="status">${escapeHtml(value)}</span>`;
+
+        const normalized = String(value).toLowerCase();
+        let cls = "";
+
+        if (["pendiente","pending"].includes(normalized)) cls = "pending";
+        if (["rechazado","rejected","cancelado"].includes(normalized)) cls = "rejected";
+        if (["confirmado","completado","aprobado","completed"].includes(normalized)) cls = "completed";
+
+        return `<span class="status ${cls}">${escapeHtml(value)}</span>`;
     }
 
     function fullName(row) {
@@ -708,7 +926,7 @@
                 result = result.concat(
                     data[key].map(item => ({
                         ...item,
-                        _source: key
+                        _source:key
                     }))
                 );
             }
@@ -728,12 +946,20 @@
 
         tbody.innerHTML = rows.map(row => {
             const cells = columns.map(column => {
-                let value = column.value(row);
+                const rawValue = column.value(row);
+                let value;
 
-                if (column.money) value = money(value);
-                else if (column.date) value = date(value);
-                else if (column.status) value = status(value);
-                else value = escapeHtml(value);
+                if (column.html) {
+                    value = rawValue ?? "";
+                } else if (column.money) {
+                    value = money(rawValue);
+                } else if (column.date) {
+                    value = date(rawValue);
+                } else if (column.status) {
+                    value = status(rawValue);
+                } else {
+                    value = escapeHtml(rawValue);
+                }
 
                 return `<td>${value}</td>`;
             }).join("");
@@ -742,19 +968,24 @@
         }).join("");
     }
 
-    async function api(path) {
+    async function api(path, method = "GET", payload = null) {
         if (!accessToken) {
             throw new Error("La sesión no está iniciada.");
         }
 
-        const response = await fetch(API_URL + path, {
-            method:"GET",
+        const options = {
+            method,
             headers:{
                 "Authorization":"Bearer " + accessToken,
                 "Content-Type":"application/json"
             }
-        });
+        };
 
+        if (payload !== null) {
+            options.body = JSON.stringify(payload);
+        }
+
+        const response = await fetch(API_URL + path, options);
         const body = await response.json().catch(() => ({}));
 
         if (!response.ok) {
@@ -768,23 +999,28 @@
         return body;
     }
 
+    function showNotice(message) {
+        const notice = $("backendNotice");
+        notice.textContent = message;
+        notice.classList.remove("hidden");
+    }
+
+    function hideNotice() {
+        $("backendNotice").classList.add("hidden");
+    }
+
     async function loadDashboard() {
         $("dashboardMessage").textContent = "Consultando datos administrativos…";
 
         try {
             const data = await api("/admin/dashboard");
 
-            $("mClients").textContent =
-                data.total_clients ?? "—";
-
-            $("mPlay").textContent =
-                money(data.total_play_balance);
-
-            $("mWithdraw").textContent =
-                money(data.total_withdraw_balance);
-
-            $("mBonus").textContent =
-                money(data.total_bonus_balance);
+            $("mClients").textContent = data.total_clients ?? "—";
+            $("mPlay").textContent = money(data.total_play_balance);
+            $("mWithdraw").textContent = money(data.total_withdraw_balance);
+            $("mBonus").textContent = money(data.total_bonus_balance);
+            $("mPendingDeposits").textContent = data.pending_deposits ?? "—";
+            $("mPendingWithdrawals").textContent = data.pending_withdrawals ?? "—";
 
             $("dashboardMessage").textContent =
                 `Depósitos: ${data.total_deposits ?? 0} | ` +
@@ -792,20 +1028,59 @@
                 `Retiros: ${data.total_withdrawals ?? 0} | ` +
                 `Retiros pendientes: ${data.pending_withdrawals ?? 0}`;
 
-            $("backendNotice").classList.add("hidden");
-
+            hideNotice();
         } catch (error) {
             $("dashboardMessage").textContent =
                 "No se pudo cargar el resumen: " + error.message;
 
-            $("backendNotice").classList.remove("hidden");
-            $("backendNotice").textContent =
-                "Error al consultar el resumen administrativo: " + error.message;
+            showNotice("Error al consultar el resumen administrativo: " + error.message);
         }
     }
 
+    function depositActions(row) {
+        if (row.status !== "pendiente") {
+            return '<span class="muted">Sin acciones</span>';
+        }
+
+        const id = escapeHtml(row.id);
+
+        return `
+            <button class="action-btn approve" onclick="adminAction('deposit-approve','${id}')">
+                Confirmar
+            </button>
+            <button class="action-btn reject" onclick="adminAction('deposit-reject','${id}')">
+                Rechazar
+            </button>
+        `;
+    }
+
+    function withdrawalActions(row) {
+        const id = escapeHtml(row.id);
+
+        if (row.status === "pendiente") {
+            return `
+                <button class="action-btn approve" onclick="adminAction('withdraw-approve','${id}')">
+                    Aprobar
+                </button>
+                <button class="action-btn reject" onclick="adminAction('withdraw-reject','${id}')">
+                    Rechazar
+                </button>
+            `;
+        }
+
+        if (row.status === "aprobado") {
+            return `
+                <button class="action-btn approve" onclick="adminAction('withdraw-complete','${id}')">
+                    Completar
+                </button>
+            `;
+        }
+
+        return '<span class="muted">Sin acciones</span>';
+    }
+
     const configs = {
-        clients: {
+        clients:{
             route:"/admin/clients",
             target:"clientsRows",
             keys:["clients"],
@@ -820,7 +1095,7 @@
             ]
         },
 
-        wallets: {
+        wallets:{
             route:"/admin/wallet-transactions",
             target:"walletRows",
             keys:["transactions","conversions"],
@@ -835,7 +1110,7 @@
             ]
         },
 
-        deposits: {
+        deposits:{
             route:"/admin/deposits",
             target:"depositRows",
             keys:["deposits"],
@@ -846,12 +1121,16 @@
                 {label:"Método",value:r => r.method},
                 {label:"Estado",value:r => r.status,status:true},
                 {label:"Referencia",value:r => r.provider_reference},
+                {label:"Comprobante",value:r => r.receipt_path
+                    ? `<a href="${escapeHtml(r.receipt_path)}" target="_blank" rel="noopener" style="color:#34d399">Ver comprobante</a>`
+                    : "—",html:true},
                 {label:"Fecha",value:r => r.created_at,date:true},
-                {label:"Nota",value:r => r.admin_note}
+                {label:"Nota",value:r => r.admin_note},
+                {label:"Acciones",value:r => depositActions(r),html:true}
             ]
         },
 
-        withdrawals: {
+        withdrawals:{
             route:"/admin/withdrawals",
             target:"withdrawRows",
             keys:["withdrawals"],
@@ -862,14 +1141,17 @@
                 {label:"Comisión bancaria",value:r => r.bank_fee,money:true},
                 {label:"Neto",value:r => r.net_amount,money:true},
                 {label:"Banco",value:r => r.bank_name},
+                {label:"Tipo de cuenta",value:r => r.account_type},
                 {label:"Cuenta",value:r => r.account_number},
                 {label:"Titular",value:r => r.account_holder},
+                {label:"Documento",value:r => r.document_number},
                 {label:"Estado",value:r => r.status,status:true},
-                {label:"Fecha",value:r => r.created_at,date:true}
+                {label:"Fecha",value:r => r.created_at,date:true},
+                {label:"Acciones",value:r => withdrawalActions(r),html:true}
             ]
         },
 
-        bonuses: {
+        bonuses:{
             route:"/admin/bonuses",
             target:"bonusRows",
             keys:["codes"],
@@ -886,25 +1168,25 @@
             ]
         },
 
-        referrals: {
+        referrals:{
             route:"/admin/referrals",
             target:"referralRows",
             keys:["referrals"],
             columns:[
                 {label:"Usuario referido",value:r => fullName(r)},
-                {label:"ID del referido",value:r => r.id},
+                {label:"ID del referido",value:r => r.id || r.user_id},
                 {label:"Referente",value:r => r.referred_by},
                 {label:"Código",value:r => r.referral_code},
                 {label:"Fecha",value:r => r.created_at,date:true}
             ]
         },
 
-        games: {
+        games:{
             route:"/admin/games",
             target:"gameRows",
-            keys:["billar","settlements","bet_debits","payouts"],
+            keys:["billar","settlements","bet_debits","payouts","games"],
             columns:[
-                {label:"Juego",value:r => r.game || (r.apuesta !== undefined ? "Billar" : "Juego")},
+                {label:"Juego",value:r => r.game || (r.apuesta !== undefined ? "Billar" : r._source || "Juego")},
                 {label:"Sala",value:r => r.room_id},
                 {label:"Jugador 1",value:r => r.jugador1_id || r.player1_id || r.user_id || r.winner_user_id},
                 {label:"Jugador 2",value:r => r.jugador2_id || r.player2_id},
@@ -917,7 +1199,7 @@
             ]
         },
 
-        commissions: {
+        commissions:{
             route:"/admin/commissions",
             target:"commissionRows",
             keys:["commissions"],
@@ -934,7 +1216,7 @@
             ]
         },
 
-        audit: {
+        audit:{
             route:"/admin/audit",
             target:"auditRows",
             keys:["logs"],
@@ -960,19 +1242,19 @@
 
         try {
             const data = await api(config.route);
-
-            const rows = combineArrays(data, config.keys || []);
+            const rows = combineArrays(data,config.keys || []);
 
             if (name === "clients") {
                 clientsCache = rows;
+                renderClientRows(rows);
+            } else {
+                renderRows(config.target,rows,config.columns);
             }
 
-            renderRows(config.target, rows, config.columns);
-
             if (name === "bonuses") {
-                const redemptions = getArray(data, "redemptions");
+                const redemptions = getArray(data,"redemptions");
 
-                renderRows("redemptionRows", redemptions, [
+                renderRows("redemptionRows",redemptions,[
                     {label:"Usuario",value:r => r.user_id},
                     {label:"Código",value:r => r.code},
                     {label:"Monto",value:r => r.amount,money:true},
@@ -980,11 +1262,18 @@
                 ]);
             }
 
-            if (data && data.warning) {
-                $("backendNotice").classList.remove("hidden");
-                $("backendNotice").textContent = data.warning;
+            if (name === "commissions") {
+                commissionCache = rows;
+                updateCommissionTotals(rows);
             }
 
+            if (data && data.warning) {
+                showNotice(data.warning);
+            } else {
+                hideNotice();
+            }
+
+            return data;
         } catch (error) {
             tbody.innerHTML =
                 `<tr><td colspan="${config.columns.length}" class="empty">Error: ${escapeHtml(error.message)}</td></tr>`;
@@ -994,9 +1283,224 @@
                     '<tr><td colspan="4" class="empty">No se pudieron consultar los canjes.</td></tr>';
             }
 
-            $("backendNotice").classList.remove("hidden");
-            $("backendNotice").textContent =
-                "Error al consultar " + name + ": " + error.message;
+            showNotice("Error al consultar " + name + ": " + error.message);
+            return null;
+        }
+    }
+
+    function renderClientRows(rows) {
+        renderRows("clientsRows",rows,configs.clients.columns);
+        applyClientSearch();
+    }
+
+    function applyClientSearch() {
+        const query = $("clientSearch").value.trim().toLowerCase();
+
+        document.querySelectorAll("#clientsRows tr").forEach(row => {
+            row.classList.toggle(
+                "hidden",
+                query.length > 0 && !row.textContent.toLowerCase().includes(query)
+            );
+        });
+    }
+
+    function updateCommissionTotals(rows) {
+        const total = rows.reduce((sum,r) => sum + numberValue(r.comision),0);
+        const referral = rows.reduce((sum,r) => sum + numberValue(r.comision_referente),0);
+        const axiom = rows.reduce((sum,r) => sum + numberValue(r.comision_axiom),0);
+
+        $("totalCommission").textContent = money(total);
+        $("referralCommission").textContent = money(referral);
+        $("axiomCommission").textContent = money(axiom);
+    }
+
+    function openActionModal(type,id) {
+        const labels = {
+            "deposit-approve":["Confirmar depósito","Se acreditará el monto del depósito al saldo para jugar."],
+            "deposit-reject":["Rechazar depósito","La solicitud de depósito quedará rechazada."],
+            "withdraw-approve":["Aprobar retiro","El retiro pasará a estado aprobado."],
+            "withdraw-reject":["Rechazar retiro","Se devolverá el monto reservado al saldo para retirar."],
+            "withdraw-complete":["Completar retiro","El retiro quedará marcado como completado."]
+        };
+
+        if (!labels[type]) return;
+
+        pendingAction = {type,id};
+
+        $("modalTitle").textContent = labels[type][0];
+        $("modalDescription").textContent = labels[type][1];
+        $("adminNote").value = "";
+        $("actionError").textContent = "";
+        $("actionModal").classList.remove("hidden");
+    }
+
+    function closeActionModal() {
+        pendingAction = null;
+        $("actionModal").classList.add("hidden");
+        $("confirmAction").disabled = false;
+        $("confirmAction").textContent = "Confirmar";
+    }
+
+    async function executeAdminAction() {
+        if (!pendingAction) return;
+
+        const {type,id} = pendingAction;
+
+        const routes = {
+            "deposit-approve":`/admin/deposits/${encodeURIComponent(id)}/approve`,
+            "deposit-reject":`/admin/deposits/${encodeURIComponent(id)}/reject`,
+            "withdraw-approve":`/admin/withdrawals/${encodeURIComponent(id)}/approve`,
+            "withdraw-reject":`/admin/withdrawals/${encodeURIComponent(id)}/reject`,
+            "withdraw-complete":`/admin/withdrawals/${encodeURIComponent(id)}/complete`
+        };
+
+        const button = $("confirmAction");
+        button.disabled = true;
+        button.textContent = "Procesando…";
+        $("actionError").textContent = "";
+
+        try {
+            await api(routes[type],"POST",{
+                admin_note:$("adminNote").value.trim() || null
+            });
+
+            closeActionModal();
+            alert("Operación realizada correctamente.");
+
+            if (type.startsWith("deposit-")) {
+                await loadSection("deposits");
+            } else {
+                await loadSection("withdrawals");
+            }
+
+            await loadDashboard();
+        } catch (error) {
+            $("actionError").textContent = error.message;
+            button.disabled = false;
+            button.textContent = "Confirmar";
+        }
+    }
+
+    window.adminAction = openActionModal;
+    window.loadSection = loadSection;
+    window.loadDashboard = loadDashboard;
+
+    function isWithinPeriod(value,period) {
+        if (!value) return period === "all";
+
+        const d = new Date(value);
+        if (Number.isNaN(d.getTime())) return false;
+
+        const now = new Date();
+
+        if (period === "today") {
+            return d.toDateString() === now.toDateString();
+        }
+
+        if (period === "week") {
+            const start = new Date(now);
+            start.setDate(now.getDate()-7);
+            return d >= start && d <= now;
+        }
+
+        if (period === "month") {
+            return d.getFullYear() === now.getFullYear() &&
+                d.getMonth() === now.getMonth();
+        }
+
+        return true;
+    }
+
+    async function loadFinance() {
+        const button = document.querySelector('[onclick="loadFinance()"]');
+        if (button) {
+            button.disabled = true;
+            button.textContent = "Consultando…";
+        }
+
+        try {
+            const [commissionsData,depositsData,withdrawalsData,walletData] =
+                await Promise.all([
+                    api("/admin/commissions"),
+                    api("/admin/deposits"),
+                    api("/admin/withdrawals"),
+                    api("/admin/wallet-transactions")
+                ]);
+
+            financeCache.commissions = getArray(commissionsData,"commissions");
+            financeCache.deposits = getArray(depositsData,"deposits");
+            financeCache.withdrawals = getArray(withdrawalsData,"withdrawals");
+            financeCache.transactions = combineArrays(walletData,["transactions","conversions"]);
+
+            const period = $("financePeriod").value;
+            const game = $("financeGame").value;
+            const referralId = $("financeReferral").value.trim().toLowerCase();
+
+            const commissions = financeCache.commissions.filter(row => {
+                if (!isWithinPeriod(row.created_at,period)) return false;
+
+                if (game !== "all" &&
+                    String(row.game || "").toLowerCase() !== game) return false;
+
+                if (referralId &&
+                    String(row.referente_id || "").toLowerCase().includes(referralId) === false) {
+                    return false;
+                }
+
+                return true;
+            });
+
+            const deposits = financeCache.deposits.filter(row =>
+                isWithinPeriod(row.created_at,period)
+            );
+
+            const withdrawals = financeCache.withdrawals.filter(row =>
+                isWithinPeriod(row.created_at,period)
+            );
+
+            const transactions = financeCache.transactions.filter(row =>
+                isWithinPeriod(row.created_at,period)
+            );
+
+            const totalCommission = commissions.reduce(
+                (sum,r) => sum + numberValue(r.comision),0
+            );
+
+            const referralCommission = commissions.reduce(
+                (sum,r) => sum + numberValue(r.comision_referente),0
+            );
+
+            const axiomCommission = commissions.reduce(
+                (sum,r) => sum + numberValue(r.comision_axiom),0
+            );
+
+            const totalDeposits = deposits
+                .filter(r => r.status === "confirmado")
+                .reduce((sum,r) => sum + numberValue(r.amount),0);
+
+            const totalWithdrawals = withdrawals
+                .filter(r => r.status === "completado")
+                .reduce((sum,r) => sum + numberValue(r.amount),0);
+
+            const gameMoves = transactions.reduce(
+                (sum,r) => sum + Math.abs(numberValue(r.amount)),0
+            );
+
+            $("financeTotalCommission").textContent = money(totalCommission);
+            $("financeAxiom").textContent = money(axiomCommission);
+            $("financeReferral").textContent = money(referralCommission);
+            $("financeDeposits").textContent = money(totalDeposits);
+            $("financeWithdrawals").textContent = money(totalWithdrawals);
+            $("financeGameMoves").textContent = money(gameMoves);
+
+            hideNotice();
+        } catch (error) {
+            showNotice("No se pudieron cargar las finanzas: " + error.message);
+        } finally {
+            if (button) {
+                button.disabled = false;
+                button.textContent = "Actualizar finanzas";
+            }
         }
     }
 
@@ -1005,13 +1509,14 @@
     }
 
     function showApp(user) {
+        currentUser = user;
         $("adminEmail").textContent = user.email || user.id;
         $("loginView").classList.add("hidden");
         $("appView").classList.remove("hidden");
         loadDashboard();
     }
 
-    $("loginForm").addEventListener("submit", async event => {
+    $("loginForm").addEventListener("submit",async event => {
         event.preventDefault();
         showLoginError("");
 
@@ -1037,7 +1542,6 @@
 
             accessToken = data.session.access_token;
             showApp(data.user);
-
         } catch (error) {
             showLoginError(error.message || "No se pudo iniciar sesión.");
         } finally {
@@ -1046,29 +1550,31 @@
         }
     });
 
-    $("logoutBtn").addEventListener("click", async () => {
+    $("logoutBtn").addEventListener("click",async () => {
         if (supabaseClient) {
             await supabaseClient.auth.signOut();
         }
 
         accessToken = null;
+        currentUser = null;
         clientsCache = [];
+        commissionCache = [];
 
         $("appView").classList.add("hidden");
         $("loginView").classList.remove("hidden");
         $("password").value = "";
     });
 
-    $("nav").addEventListener("click", event => {
+    $("nav").addEventListener("click",event => {
         const button = event.target.closest("button[data-page]");
         if (!button) return;
 
         document.querySelectorAll(".nav button").forEach(b =>
-            b.classList.toggle("active", b === button)
+            b.classList.toggle("active",b === button)
         );
 
         document.querySelectorAll(".page").forEach(page =>
-            page.classList.toggle("active", page.id === button.dataset.page)
+            page.classList.toggle("active",page.id === button.dataset.page)
         );
 
         const labels = {
@@ -1081,6 +1587,7 @@
             referrals:["Referidos","Red de referidos"],
             games:["Juegos y apuestas","Actividad de las salas"],
             commissions:["Comisiones","Distribución de comisiones"],
+            finance:["Finanzas","Ingresos, egresos y comisiones"],
             audit:["Auditoría","Registro de acciones administrativas"]
         };
 
@@ -1091,25 +1598,44 @@
 
         if (name === "dashboard") {
             loadDashboard();
+        } else if (name === "finance") {
+            loadFinance();
         } else {
             loadSection(name);
         }
     });
 
-    $("clientSearch").addEventListener("input", () => {
-        const query = $("clientSearch").value.toLowerCase();
+    $("clientSearch").addEventListener("input",applyClientSearch);
 
-        document.querySelectorAll("#clientsRows tr").forEach(row => {
-            row.classList.toggle(
-                "hidden",
-                !row.textContent.toLowerCase().includes(query)
-            );
-        });
+    $("cancelAction").addEventListener("click",closeActionModal);
+    $("confirmAction").addEventListener("click",executeAdminAction);
+
+    $("actionModal").addEventListener("click",event => {
+        if (event.target === $("actionModal")) {
+            closeActionModal();
+        }
     });
 
-    // Permite que los botones HTML puedan ejecutar estas funciones.
-    window.loadSection = loadSection;
-    window.loadDashboard = loadDashboard;
+    $("financePeriod").addEventListener("change",loadFinance);
+    $("financeGame").addEventListener("change",loadFinance);
+
+    // Restaurar una sesión válida al recargar el panel.
+    async function restoreSession() {
+        if (!supabaseClient) return;
+
+        try {
+            const {data,error} = await supabaseClient.auth.getSession();
+
+            if (error || !data.session) return;
+
+            accessToken = data.session.access_token;
+            showApp(data.session.user);
+        } catch (error) {
+            console.error("No se pudo restaurar la sesión:",error);
+        }
+    }
+
+    restoreSession();
 
 })();
 </script>
