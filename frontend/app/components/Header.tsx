@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect, type FormEvent } from "react";
+import { useState, useEffect, useRef, type FormEvent } from "react";
 import { supabase } from "../lib/supabase";
 
 type AuthView = "none" | "login" | "register";
@@ -45,6 +45,11 @@ export default function Header() {
     password: "",
   });
 
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const sessionVersionRef = useRef(0);
+  const currentUserIdRef = useRef<string | null>(null);
+  const mountedRef = useRef(false);
+
   const showAlert = (title: string, message: string) => {
     setModal({ isOpen: true, title, message });
   };
@@ -63,8 +68,10 @@ export default function Header() {
 
       if (error) throw error;
 
-      if (profile) {
-        setFirstName(`${profile.first_name || ""} ${profile.last_name || ""}`.trim());
+      if (profile && currentUserIdRef.current === userId && mountedRef.current) {
+        setFirstName(
+          `${profile.first_name || ""} ${profile.last_name || ""}`.trim()
+        );
         setPlayBalance(Number(profile.balance) || 0);
         setWithdrawBalance(Number(profile.withdraw_balance) || 0);
         setBonusBalance(Number(profile.bonus_balance) || 0);
@@ -74,33 +81,33 @@ export default function Header() {
     }
   };
 
-  // ============================================================
   // SESIÓN Y ACTUALIZACIÓN AUTOMÁTICA DE SALDOS
-  // ============================================================
 
   useEffect(() => {
-    let profileChannel: any = null;
-    let currentUserId: string | null = null;
-    let sessionVersion = 0;
-    let mounted = true;
+    mountedRef.current = true;
+
+    let disposed = false;
 
     const removeProfileChannel = async () => {
-      if (profileChannel) {
-        const channelToRemove = profileChannel;
-        profileChannel = null;
-        await supabase.removeChannel(channelToRemove);
+      const channel = channelRef.current;
+      channelRef.current = null;
+
+      if (channel) {
+        try {
+          await supabase.removeChannel(channel);
+        } catch (err) {
+          console.error("Error cerrando canal de saldos:", err);
+        }
       }
     };
 
     const handleSession = async (session: any) => {
-      const version = ++sessionVersion;
+      const version = ++sessionVersionRef.current;
+
+      if (disposed || !mountedRef.current) return;
 
       if (!session) {
-        currentUserId = null;
-
-        await removeProfileChannel();
-
-        if (!mounted) return;
+        currentUserIdRef.current = null;
 
         setIsLoggedIn(false);
         setFirstName("");
@@ -108,26 +115,38 @@ export default function Header() {
         setWithdrawBalance(0);
         setBonusBalance(0);
 
+        await removeProfileChannel();
         return;
       }
 
       const userId = session.user.id;
-
-      currentUserId = userId;
-
-      if (!mounted) return;
+      currentUserIdRef.current = userId;
 
       setIsLoggedIn(true);
 
       await removeProfileChannel();
 
-      if (!mounted || version !== sessionVersion) return;
+      if (
+        disposed ||
+        !mountedRef.current ||
+        version !== sessionVersionRef.current ||
+        currentUserIdRef.current !== userId
+      ) {
+        return;
+      }
 
       await fetchUserBalances(userId);
 
-      if (!mounted || version !== sessionVersion) return;
+      if (
+        disposed ||
+        !mountedRef.current ||
+        version !== sessionVersionRef.current ||
+        currentUserIdRef.current !== userId
+      ) {
+        return;
+      }
 
-      profileChannel = supabase
+      const channel = supabase
         .channel(`profile-balances-${userId}`)
         .on(
           "postgres_changes",
@@ -140,15 +159,24 @@ export default function Header() {
           (payload) => {
             const profile = payload.new as any;
 
-            if (!mounted || currentUserId !== userId) return;
+            if (
+              !mountedRef.current ||
+              currentUserIdRef.current !== userId
+            ) {
+              return;
+            }
 
-            setFirstName(`${profile.first_name || ""} ${profile.last_name || ""}`.trim());
+            setFirstName(
+              `${profile.first_name || ""} ${profile.last_name || ""}`.trim()
+            );
             setPlayBalance(Number(profile.balance) || 0);
             setWithdrawBalance(Number(profile.withdraw_balance) || 0);
             setBonusBalance(Number(profile.bonus_balance) || 0);
           }
         )
         .subscribe((status, err) => {
+          if (disposed || !mountedRef.current) return;
+
           if (status === "SUBSCRIBED") {
             console.log("Realtime de saldos conectado correctamente.");
           }
@@ -160,24 +188,35 @@ export default function Header() {
           if (status === "TIMED_OUT") {
             console.error("Tiempo de espera agotado en Realtime:", err);
           }
-
-          if (status === "CLOSED") {
-            console.warn("El canal Realtime de saldos se cerró.");
-          }
         });
+
+      if (
+        disposed ||
+        version !== sessionVersionRef.current ||
+        currentUserIdRef.current !== userId
+      ) {
+        await supabase.removeChannel(channel);
+        return;
+      }
+
+      channelRef.current = channel;
     };
 
     const checkSession = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
 
-      if (mounted) {
-        await handleSession(session);
+        if (!disposed && mountedRef.current) {
+          await handleSession(session);
+        }
+      } catch (err) {
+        console.error("Error verificando sesión:", err);
       }
     };
 
-    checkSession();
+    void checkSession();
 
     const {
       data: { subscription },
@@ -185,14 +224,15 @@ export default function Header() {
       void handleSession(session);
     });
 
-    // Actualizar saldos cuando el usuario regresa a la pestaña.
-
     const refreshBalances = () => {
+      const userId = currentUserIdRef.current;
+
       if (
         document.visibilityState === "visible" &&
-        currentUserId
+        userId &&
+        mountedRef.current
       ) {
-        void fetchUserBalances(currentUserId);
+        void fetchUserBalances(userId);
       }
     };
 
@@ -200,31 +240,31 @@ export default function Header() {
     document.addEventListener("visibilitychange", refreshBalances);
 
     return () => {
-      mounted = false;
-      sessionVersion++;
+      disposed = true;
+      mountedRef.current = false;
+      sessionVersionRef.current++;
+      currentUserIdRef.current = null;
 
       subscription.unsubscribe();
 
       window.removeEventListener("focus", refreshBalances);
       document.removeEventListener("visibilitychange", refreshBalances);
 
-      if (profileChannel) {
-        void supabase.removeChannel(profileChannel);
-        profileChannel = null;
+      const channel = channelRef.current;
+      channelRef.current = null;
+
+      if (channel) {
+        void supabase.removeChannel(channel);
       }
     };
   }, []);
 
-  // ============================================================
   // REGISTRO
-  // ============================================================
 
   const handleRegisterSubmit = async (e: FormEvent) => {
     e.preventDefault();
 
     try {
-      // Comprobar que el documento no esté registrado.
-
       const { data: existingDoc, error: docError } = await supabase
         .from("profiles")
         .select("id")
@@ -241,13 +281,7 @@ export default function Header() {
         return;
       }
 
-      // ========================================================
-      // VALIDAR CÓDIGO DE REFERIDO
-      // ========================================================
-
-      const enteredReferralCode = regData.referralCode
-        .trim()
-        .toUpperCase();
+      const enteredReferralCode = regData.referralCode.trim().toUpperCase();
 
       let referredBy: string | null = null;
 
@@ -271,10 +305,6 @@ export default function Header() {
         referredBy = referrer.id;
       }
 
-      // ========================================================
-      // CREAR CUENTA DE AUTENTICACIÓN
-      // ========================================================
-
       const { data: authData, error: authError } =
         await supabase.auth.signUp({
           email: regData.email,
@@ -284,41 +314,30 @@ export default function Header() {
       if (authError) throw authError;
 
       if (authData.user) {
-        // Generar código propio del nuevo usuario.
-
         const ownReferralCode =
           "AX" +
-          authData.user.id
-            .replace(/-/g, "")
-            .slice(0, 8)
-            .toUpperCase();
+          authData.user.id.replace(/-/g, "").slice(0, 8).toUpperCase();
 
-        // Crear perfil y guardar la relación de referido.
-
-        const { error: profileError } = await supabase
-          .from("profiles")
-          .insert([
-            {
-              id: authData.user.id,
-              first_name: regData.firstName,
-              middle_name: regData.middleName,
-              last_name: regData.lastName,
-              second_last_name: regData.secondLastName,
-              doc_type: regData.docType,
-              doc_number: regData.docNumber,
-              phone: regData.phone,
-              birth_date: regData.birthDate,
-              promo_code: regData.promoCode,
-              bonus_code: regData.bonusCode,
-
-              referral_code: ownReferralCode,
-              referred_by: referredBy,
-
-              balance: 0.0,
-              withdraw_balance: 0.0,
-              bonus_balance: 0.0,
-            },
-          ]);
+        const { error: profileError } = await supabase.from("profiles").insert([
+          {
+            id: authData.user.id,
+            first_name: regData.firstName,
+            middle_name: regData.middleName,
+            last_name: regData.lastName,
+            second_last_name: regData.secondLastName,
+            doc_type: regData.docType,
+            doc_number: regData.docNumber,
+            phone: regData.phone,
+            birth_date: regData.birthDate,
+            promo_code: regData.promoCode,
+            bonus_code: regData.bonusCode,
+            referral_code: ownReferralCode,
+            referred_by: referredBy,
+            balance: 0.0,
+            withdraw_balance: 0.0,
+            bonus_balance: 0.0,
+          },
+        ]);
 
         if (profileError) throw profileError;
       }
@@ -350,9 +369,7 @@ export default function Header() {
     }
   };
 
-  // ============================================================
   // INICIO DE SESIÓN
-  // ============================================================
 
   const handleLoginSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -373,9 +390,7 @@ export default function Header() {
     }
   };
 
-  // ============================================================
   // INTERFAZ
-  // ============================================================
 
   return (
     <>
@@ -387,8 +402,9 @@ export default function Header() {
       )}
 
       <aside
-        className={`fixed top-0 left-0 h-full w-72 bg-zinc-950 border-r border-zinc-800 z-50 p-6 flex flex-col justify-between transform transition-transform duration-300 ${isMenuOpen ? "translate-x-0" : "-translate-x-full"
-          }`}
+        className={`fixed top-0 left-0 h-full w-72 bg-zinc-950 border-r border-zinc-800 z-50 p-6 flex flex-col justify-between transform transition-transform duration-300 ${
+          isMenuOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
       >
         <div>
           <div className="flex items-center justify-end mb-8 pb-4 border-b border-zinc-900">
@@ -467,11 +483,9 @@ export default function Header() {
                     <span className="text-[10px] text-zinc-400 font-bold uppercase">
                       Saldo:
                     </span>
-
                     <span className="text-xs font-black text-emerald-400">
                       ${playBalance.toFixed(2)}
                     </span>
-
                     <span className="text-[10px] text-zinc-500">▼</span>
                   </button>
 
@@ -535,15 +549,14 @@ export default function Header() {
         </div>
       </header>
 
-      {/* ========================================================
-          MODAL DE AUTENTICACIÓN
-      ======================================================== */}
+      {/* MODAL DE AUTENTICACIÓN */}
 
       {authView !== "none" && (
         <div className="fixed inset-0 z-[60] bg-black/90 backdrop-blur-md flex items-start justify-center overflow-y-auto p-4">
           <div
-            className={`w-full ${authView === "register" ? "max-w-2xl" : "max-w-md"
-              } bg-zinc-950 border border-zinc-800 rounded-3xl p-8 shadow-2xl space-y-6 my-auto`}
+            className={`w-full ${
+              authView === "register" ? "max-w-2xl" : "max-w-md"
+            } bg-zinc-950 border border-zinc-800 rounded-3xl p-8 shadow-2xl space-y-6 my-auto`}
           >
             {authView === "login" ? (
               <>
@@ -777,7 +790,6 @@ export default function Header() {
                     />
                   </div>
 
-
                   <div>
                     <label className="text-[10px] uppercase font-bold text-zinc-400 block mb-1">
                       Código de Bono (Opcional)
@@ -811,7 +823,6 @@ export default function Header() {
                     />
                   </div>
 
-
                   <div className="sm:col-span-2 pt-2">
                     <button
                       type="submit"
@@ -836,9 +847,7 @@ export default function Header() {
         </div>
       )}
 
-      {/* ========================================================
-          MODAL DE ALERTAS
-      ======================================================== */}
+      {/* MODAL DE ALERTAS */}
 
       {modal.isOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-4">

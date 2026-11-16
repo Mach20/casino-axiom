@@ -33,6 +33,37 @@ const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
 type View = "home" | "transfer" | "receipt" | "success";
 
+// IMPORTANTE: este componente debe estar fuera de DepositosPage.
+function StepIndicator({ current }: { current: number }) {
+    const steps = ["Monto", "Transferencia", "Comprobante"];
+
+    return (
+        <div className="mb-9 grid grid-cols-3 gap-2">
+            {steps.map((label, index) => {
+                const number = index + 1;
+                const active = number <= current;
+
+                return (
+                    <div key={label}>
+                        <div
+                            className={`h-1 rounded-full ${
+                                active ? "bg-emerald-400" : "bg-white/10"
+                            }`}
+                        />
+                        <p
+                            className={`mt-2 text-[11px] ${
+                                active ? "text-emerald-400" : "text-zinc-600"
+                            }`}
+                        >
+                            {number}. {label}
+                        </p>
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
 export default function DepositosPage() {
     const [view, setView] = useState<View>("home");
     const [token, setToken] = useState("");
@@ -50,6 +81,7 @@ export default function DepositosPage() {
 
     const fileInput = useRef<HTMLInputElement>(null);
 
+    // Crear y liberar la vista previa del comprobante.
     useEffect(() => {
         if (!receipt || !receipt.type.startsWith("image/")) {
             setReceiptPreview("");
@@ -59,7 +91,9 @@ export default function DepositosPage() {
         const imageUrl = URL.createObjectURL(receipt);
         setReceiptPreview(imageUrl);
 
-        return () => URL.revokeObjectURL(imageUrl);
+        return () => {
+            URL.revokeObjectURL(imageUrl);
+        };
     }, [receipt]);
 
     const getFreshAccessToken = async (): Promise<string> => {
@@ -95,10 +129,10 @@ export default function DepositosPage() {
             throw new Error("No se pudo obtener el token de tu sesión.");
         }
 
-        setToken(freshToken);
         return freshToken;
     };
 
+    // Cargar sesión y escuchar cambios de autenticación.
     useEffect(() => {
         let active = true;
 
@@ -108,11 +142,13 @@ export default function DepositosPage() {
 
                 if (active) {
                     setToken(freshToken);
+                    setError("");
                 }
             } catch (err) {
                 console.error("Error al verificar sesión:", err);
 
                 if (active) {
+                    setToken("");
                     setError(
                         err instanceof Error
                             ? err.message
@@ -150,6 +186,7 @@ export default function DepositosPage() {
         setDepositId(null);
         setReference("");
         setReceipt(null);
+        setReceiptPreview("");
         setError("");
         setCopied("");
 
@@ -166,6 +203,7 @@ export default function DepositosPage() {
         if (view === "receipt") {
             setView("transfer");
             setReceipt(null);
+            setReceiptPreview("");
 
             if (fileInput.current) {
                 fileInput.current.value = "";
@@ -277,6 +315,7 @@ export default function DepositosPage() {
     const handleReceipt = (file?: File) => {
         setError("");
         setReceipt(null);
+        setReceiptPreview("");
 
         if (!file) return;
 
@@ -367,40 +406,6 @@ export default function DepositosPage() {
         } finally {
             setLoading(false);
         }
-    };
-
-    const StepIndicator = ({ current }: { current: number }) => {
-        const steps = ["Monto", "Transferencia", "Comprobante"];
-
-        return (
-            <div className="mb-9 grid grid-cols-3 gap-2">
-                {steps.map((label, index) => {
-                    const number = index + 1;
-                    const active = number <= current;
-
-                    return (
-                        <div key={label}>
-                            <div
-                                className={`h-1 rounded-full ${
-                                    active
-                                        ? "bg-emerald-400"
-                                        : "bg-white/10"
-                                }`}
-                            />
-                            <p
-                                className={`mt-2 text-[11px] ${
-                                    active
-                                        ? "text-emerald-400"
-                                        : "text-zinc-600"
-                                }`}
-                            >
-                                {number}. {label}
-                            </p>
-                        </div>
-                    );
-                })}
-            </div>
-        );
     };
 
     return (
@@ -730,17 +735,18 @@ export default function DepositosPage() {
                                                 <div className="mt-4 overflow-hidden rounded-xl border border-white/10 bg-black/30 p-2">
                                                     <img
                                                         src={receiptPreview}
-                                                        alt="Comprobante"
+                                                        alt="Vista previa del comprobante"
                                                         className="max-h-[420px] w-full rounded-lg object-contain"
                                                     />
                                                 </div>
                                             )}
 
-                                            {receipt && receipt.type === "application/pdf" && (
-                                                <p className="mt-3 text-sm text-emerald-400">
-                                                    PDF seleccionado: {receipt.name}
-                                                </p>
-                                            )}
+                                            {receipt &&
+                                                receipt.type === "application/pdf" && (
+                                                    <p className="mt-3 text-sm text-emerald-400">
+                                                        PDF seleccionado: {receipt.name}
+                                                    </p>
+                                                )}
                                         </div>
 
                                         {error && (
