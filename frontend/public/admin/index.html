@@ -626,16 +626,20 @@
 <script>
 (() => {
     const SUPABASE_URL = "https://djdzytfdztctusnuuvrm.supabase.co";
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqZHp5dGZkenRjdHVzbnV1dnJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk1MTkxNzcsImV4cCI6MjEwNTA5NTE3N30.Pvqp1Hl4zfKzQj0pxrohZaj1sHR9HJAT1ESPv2P-ot4";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdWIiLCJyZWYiOiJkamR6eXRmZHp0Y3R1c251dXZybSIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNzg5NTE5MTc3LCJleHAiOjIxMDUwOTUxNzd9.Pvqp1Hl4zfKzQj0pxrohZaj1sHR9HJAT1ESPv2P-ot4";
     const API_URL = "https://casino-axiom.ethiodeploy.app";
 
     const $ = id => document.getElementById(id);
+
     let supabaseClient = null;
     let accessToken = null;
     let clientsCache = [];
 
-    if (window.supabase && SUPABASE_ANON_KEY !== "PEGA_AQUI_LA_CLAVE_ANON_PUBLIC") {
-        supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    if (window.supabase && SUPABASE_ANON_KEY) {
+        supabaseClient = window.supabase.createClient(
+            SUPABASE_URL,
+            SUPABASE_ANON_KEY
+        );
     }
 
     function escapeHtml(value) {
@@ -691,18 +695,26 @@
         return parts.length ? parts.join(" ") : "Sin nombre";
     }
 
-    function getArray(data, possibleKeys = []) {
-        if (Array.isArray(data)) return data;
-
+    function getArray(data, key) {
         if (!data || typeof data !== "object") return [];
+        return Array.isArray(data[key]) ? data[key] : [];
+    }
 
-        if (Array.isArray(data.items)) return data.items;
+    function combineArrays(data, keys) {
+        let result = [];
 
-        for (const key of possibleKeys) {
-            if (Array.isArray(data[key])) return data[key];
+        for (const key of keys) {
+            if (Array.isArray(data?.[key])) {
+                result = result.concat(
+                    data[key].map(item => ({
+                        ...item,
+                        _source: key
+                    }))
+                );
+            }
         }
 
-        return [];
+        return result;
     }
 
     function renderRows(tbodyId, rows, columns, emptyMessage = "No hay registros.") {
@@ -731,7 +743,9 @@
     }
 
     async function api(path) {
-        if (!accessToken) throw new Error("La sesión no está iniciada.");
+        if (!accessToken) {
+            throw new Error("La sesión no está iniciada.");
+        }
 
         const response = await fetch(API_URL + path, {
             method:"GET",
@@ -760,18 +774,33 @@
         try {
             const data = await api("/admin/dashboard");
 
-            $("mClients").textContent = data.clients ?? "—";
-            $("mPlay").textContent = money(data.play_balance);
-            $("mWithdraw").textContent = money(data.withdraw_balance);
-            $("mBonus").textContent = money(data.bonus_balance);
+            $("mClients").textContent =
+                data.total_clients ?? "—";
 
-            $("dashboardMessage").textContent = "Datos del resumen recibidos correctamente.";
+            $("mPlay").textContent =
+                money(data.total_play_balance);
+
+            $("mWithdraw").textContent =
+                money(data.total_withdraw_balance);
+
+            $("mBonus").textContent =
+                money(data.total_bonus_balance);
+
+            $("dashboardMessage").textContent =
+                `Depósitos: ${data.total_deposits ?? 0} | ` +
+                `Pendientes: ${data.pending_deposits ?? 0} | ` +
+                `Retiros: ${data.total_withdrawals ?? 0} | ` +
+                `Retiros pendientes: ${data.pending_withdrawals ?? 0}`;
+
             $("backendNotice").classList.add("hidden");
 
         } catch (error) {
-            $("dashboardMessage").textContent = "No se pudo cargar el resumen: " + error.message;
+            $("dashboardMessage").textContent =
+                "No se pudo cargar el resumen: " + error.message;
+
             $("backendNotice").classList.remove("hidden");
-            $("backendNotice").textContent = "Error al consultar el resumen administrativo. " + error.message;
+            $("backendNotice").textContent =
+                "Error al consultar el resumen administrativo: " + error.message;
         }
     }
 
@@ -779,7 +808,7 @@
         clients: {
             route:"/admin/clients",
             target:"clientsRows",
-            keys:["clients","profiles"],
+            keys:["clients"],
             columns:[
                 {label:"Usuario",value:r => fullName(r)},
                 {label:"Correo / ID",value:r => r.email || r.id || r.user_id},
@@ -794,11 +823,12 @@
         wallets: {
             route:"/admin/wallet-transactions",
             target:"walletRows",
+            keys:["transactions","conversions"],
             columns:[
                 {label:"Movimiento",value:r => r.id || r.transaction_key},
                 {label:"Usuario",value:r => r.user_id},
-                {label:"Juego / Sala",value:r => r.room_id || r.game},
-                {label:"Tipo",value:r => r.type},
+                {label:"Juego / Sala",value:r => r.room_id || r.game || "Conversión"},
+                {label:"Tipo",value:r => r.type || "Conversión"},
                 {label:"Monto",value:r => r.amount,money:true},
                 {label:"Billetera",value:r => r.wallet},
                 {label:"Fecha",value:r => r.created_at,date:true}
@@ -808,6 +838,7 @@
         deposits: {
             route:"/admin/deposits",
             target:"depositRows",
+            keys:["deposits"],
             columns:[
                 {label:"Solicitud",value:r => r.id},
                 {label:"Usuario",value:r => r.user_id},
@@ -823,6 +854,7 @@
         withdrawals: {
             route:"/admin/withdrawals",
             target:"withdrawRows",
+            keys:["withdrawals"],
             columns:[
                 {label:"Solicitud",value:r => r.id},
                 {label:"Usuario",value:r => r.user_id},
@@ -840,7 +872,7 @@
         bonuses: {
             route:"/admin/bonuses",
             target:"bonusRows",
-            keys:["bonuses"],
+            keys:["codes"],
             columns:[
                 {label:"ID",value:r => r.id},
                 {label:"Código",value:r => r.code},
@@ -857,6 +889,7 @@
         referrals: {
             route:"/admin/referrals",
             target:"referralRows",
+            keys:["referrals"],
             columns:[
                 {label:"Usuario referido",value:r => fullName(r)},
                 {label:"ID del referido",value:r => r.id},
@@ -869,14 +902,15 @@
         games: {
             route:"/admin/games",
             target:"gameRows",
+            keys:["billar","settlements","bet_debits","payouts"],
             columns:[
-                {label:"Juego",value:r => r.game || (r.room_id && r.apuesta !== undefined ? "Billar" : "Juego")},
+                {label:"Juego",value:r => r.game || (r.apuesta !== undefined ? "Billar" : "Juego")},
                 {label:"Sala",value:r => r.room_id},
-                {label:"Jugador 1",value:r => r.jugador1_id || r.player1_id || r.user_id},
+                {label:"Jugador 1",value:r => r.jugador1_id || r.player1_id || r.user_id || r.winner_user_id},
                 {label:"Jugador 2",value:r => r.jugador2_id || r.player2_id},
                 {label:"Apuesta",value:r => r.apuesta ?? r.bet ?? r.amount,money:true},
                 {label:"Comisión",value:r => r.comision_total ?? r.comision_por_jugador,money:true},
-                {label:"Estado",value:r => r.estado || r.status,status:true},
+                {label:"Estado",value:r => r.estado || r.status || r.result,status:true},
                 {label:"Ganador",value:r => r.ganador_id || r.winner_user_id},
                 {label:"Resultado",value:r => r.resultado || r.result},
                 {label:"Fecha",value:r => r.creada_en || r.created_at,date:true}
@@ -886,6 +920,7 @@
         commissions: {
             route:"/admin/commissions",
             target:"commissionRows",
+            keys:["commissions"],
             columns:[
                 {label:"Juego",value:r => r.game},
                 {label:"Sala",value:r => r.room_id},
@@ -920,23 +955,22 @@
         const tbody = $(config.target);
         if (!tbody) return;
 
-        tbody.innerHTML = `<tr><td colspan="${config.columns.length}" class="empty">Cargando registros…</td></tr>`;
+        tbody.innerHTML =
+            `<tr><td colspan="${config.columns.length}" class="empty">Cargando registros…</td></tr>`;
 
         try {
             const data = await api(config.route);
-            const rows = getArray(data, config.keys || []);
 
-            if (name === "clients") clientsCache = rows;
+            const rows = combineArrays(data, config.keys || []);
+
+            if (name === "clients") {
+                clientsCache = rows;
+            }
 
             renderRows(config.target, rows, config.columns);
 
-            if (data && data.warning) {
-                $("backendNotice").classList.remove("hidden");
-                $("backendNotice").textContent = data.warning;
-            }
-
             if (name === "bonuses") {
-                const redemptions = getArray(data, ["redemptions","bonus_redemptions"]);
+                const redemptions = getArray(data, "redemptions");
 
                 renderRows("redemptionRows", redemptions, [
                     {label:"Usuario",value:r => r.user_id},
@@ -946,13 +980,23 @@
                 ]);
             }
 
+            if (data && data.warning) {
+                $("backendNotice").classList.remove("hidden");
+                $("backendNotice").textContent = data.warning;
+            }
+
         } catch (error) {
-            tbody.innerHTML = `<tr><td colspan="${config.columns.length}" class="empty">Error: ${escapeHtml(error.message)}</td></tr>`;
+            tbody.innerHTML =
+                `<tr><td colspan="${config.columns.length}" class="empty">Error: ${escapeHtml(error.message)}</td></tr>`;
 
             if (name === "bonuses") {
                 $("redemptionRows").innerHTML =
                     '<tr><td colspan="4" class="empty">No se pudieron consultar los canjes.</td></tr>';
             }
+
+            $("backendNotice").classList.remove("hidden");
+            $("backendNotice").textContent =
+                "Error al consultar " + name + ": " + error.message;
         }
     }
 
@@ -987,6 +1031,10 @@
 
             if (error) throw error;
 
+            if (!data.session) {
+                throw new Error("Supabase no devolvió una sesión válida.");
+            }
+
             accessToken = data.session.access_token;
             showApp(data.user);
 
@@ -999,7 +1047,9 @@
     });
 
     $("logoutBtn").addEventListener("click", async () => {
-        if (supabaseClient) await supabaseClient.auth.signOut();
+        if (supabaseClient) {
+            await supabaseClient.auth.signOut();
+        }
 
         accessToken = null;
         clientsCache = [];
@@ -1035,20 +1085,31 @@
         };
 
         const name = button.dataset.page;
+
         $("pageTitle").textContent = labels[name][0];
         $("pageSubtitle").textContent = labels[name][1];
 
-        if (name === "dashboard") loadDashboard();
-        else loadSection(name);
+        if (name === "dashboard") {
+            loadDashboard();
+        } else {
+            loadSection(name);
+        }
     });
 
     $("clientSearch").addEventListener("input", () => {
         const query = $("clientSearch").value.toLowerCase();
 
         document.querySelectorAll("#clientsRows tr").forEach(row => {
-            row.classList.toggle("hidden", !row.textContent.toLowerCase().includes(query));
+            row.classList.toggle(
+                "hidden",
+                !row.textContent.toLowerCase().includes(query)
+            );
         });
     });
+
+    // Permite que los botones HTML puedan ejecutar estas funciones.
+    window.loadSection = loadSection;
+    window.loadDashboard = loadDashboard;
 
 })();
 </script>
