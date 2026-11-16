@@ -1,0 +1,829 @@
+<!doctype html>
+<html lang="es">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>AXIOM | Administración</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #090b0a;
+            --panel: #111613;
+            --line: #26332b;
+            --muted: #8b9a90;
+            --text: #eef5ef;
+            --green: #34d399;
+            --red: #fb7185
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font: 14px Inter, system-ui, Arial, sans-serif
+        }
+
+        button,
+        input {
+            font: inherit
+        }
+
+        button {
+            cursor: pointer
+        }
+
+        .hidden {
+            display: none !important
+        }
+
+        .login-wrap {
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            padding: 20px;
+            background: radial-gradient(ellipse at 50% 0, #123324 0, transparent 55%)
+        }
+
+        .login {
+            width: min(420px, 100%);
+            padding: 30px;
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            background: #0e1410
+        }
+
+        .brand {
+            font-size: 27px;
+            font-weight: 900;
+            letter-spacing: 5px;
+            color: var(--green)
+        }
+
+        .sub {
+            color: var(--muted);
+            margin: 8px 0 26px
+        }
+
+        label {
+            display: block;
+            color: #b8c5bc;
+            margin: 15px 0 7px
+        }
+
+        input {
+            width: 100%;
+            padding: 12px 13px;
+            border-radius: 9px;
+            border: 1px solid var(--line);
+            background: #090e0b;
+            color: white;
+            outline: none
+        }
+
+        input:focus {
+            border-color: var(--green)
+        }
+
+        .btn {
+            border: 0;
+            border-radius: 9px;
+            padding: 12px 16px;
+            background: var(--green);
+            color: #052014;
+            font-weight: 800
+        }
+
+        .btn:disabled {
+            opacity: .5;
+            cursor: wait
+        }
+
+        .login .btn {
+            width: 100%;
+            margin-top: 20px
+        }
+
+        .error {
+            color: var(--red);
+            min-height: 20px;
+            margin-top: 12px
+        }
+
+        .app {
+            min-height: 100vh;
+            display: grid;
+            grid-template-columns: 250px 1fr
+        }
+
+        .side {
+            border-right: 1px solid var(--line);
+            background: #0d120f;
+            padding: 22px 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 22px
+        }
+
+        .side .brand {
+            font-size: 22px;
+            padding: 0 10px
+        }
+
+        .nav {
+            display: grid;
+            gap: 5px
+        }
+
+        .nav button {
+            border: 0;
+            text-align: left;
+            padding: 12px;
+            border-radius: 9px;
+            background: transparent;
+            color: #aab8ae
+        }
+
+        .nav button.active,
+        .nav button:hover {
+            background: #17251c;
+            color: var(--green)
+        }
+
+        .side-foot {
+            margin-top: auto;
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.7;
+            overflow-wrap: anywhere
+        }
+
+        main {
+            padding: 28px;
+            min-width: 0
+        }
+
+        .top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 25px
+        }
+
+        h1 {
+            font-size: 25px;
+            margin: 0 0 6px
+        }
+
+        .muted {
+            color: var(--muted)
+        }
+
+        .logout {
+            background: #1b2820;
+            color: #dce8df;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 10px 13px
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 13px
+        }
+
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 13px;
+            padding: 17px;
+            min-width: 0
+        }
+
+        .metric {
+            font-size: 25px;
+            font-weight: 800;
+            margin-top: 10px
+        }
+
+        .metric-label {
+            color: var(--muted);
+            font-size: 12px
+        }
+
+        .section {
+            margin-top: 20px
+        }
+
+        .section h2 {
+            font-size: 16px;
+            margin: 0 0 12px
+        }
+
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 13px
+        }
+
+        .toolbar input {
+            max-width: 340px
+        }
+
+        .table-wrap {
+            overflow: auto;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            background: var(--panel)
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            min-width: 650px
+        }
+
+        th,
+        td {
+            text-align: left;
+            padding: 13px 14px;
+            border-bottom: 1px solid var(--line);
+            white-space: nowrap
+        }
+
+        th {
+            color: #9eafa3;
+            font-size: 12px;
+            font-weight: 600;
+            background: #141b16
+        }
+
+        td {
+            color: #e1eae3
+        }
+
+        .notice {
+            padding: 14px;
+            border: 1px solid #5b4820;
+            background: #211b0d;
+            color: #e8d49a;
+            border-radius: 10px;
+            line-height: 1.6
+        }
+
+        .empty {
+            padding: 26px;
+            text-align: center;
+            color: var(--muted)
+        }
+
+        .page {
+            display: none
+        }
+
+        .page.active {
+            display: block
+        }
+
+        @media(max-width:900px) {
+            .grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr))
+            }
+
+            .app {
+                grid-template-columns: 200px 1fr
+            }
+
+            main {
+                padding: 20px
+            }
+        }
+
+        @media(max-width:650px) {
+            .app {
+                display: block
+            }
+
+            .side {
+                border-right: 0;
+                border-bottom: 1px solid var(--line);
+                padding: 12px
+            }
+
+            .side .brand {
+                padding: 4px 8px
+            }
+
+            .nav {
+                display: flex;
+                overflow: auto
+            }
+
+            .nav button {
+                white-space: nowrap;
+                padding: 9px 11px
+            }
+
+            .side-foot {
+                display: none
+            }
+
+            main {
+                padding: 17px
+            }
+
+            .top {
+                align-items: flex-start
+            }
+
+            .grid {
+                grid-template-columns: 1fr 1fr
+            }
+
+            .metric {
+                font-size: 21px
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <section id="loginView" class="login-wrap">
+        <form id="loginForm" class="login">
+            <div class="brand">AXIOM</div>
+            <div class="sub">Panel de administración</div>
+            <label for="email">Correo del administrador</label>
+            <input id="email" type="email" autocomplete="username" required placeholder="admin@dominio.com">
+            <label for="password">Contraseña</label>
+            <input id="password" type="password" autocomplete="current-password" required placeholder="Contraseña">
+            <button class="btn" id="loginBtn" type="submit">Iniciar sesión</button>
+            <div id="loginError" class="error" role="alert"></div>
+        </form>
+    </section>
+
+    <div id="appView" class="app hidden">
+        <aside class="side">
+            <div class="brand">AXIOM</div>
+            <nav class="nav" id="nav">
+                <button class="active" data-page="dashboard">Resumen</button>
+                <button data-page="clients">Clientes</button>
+                <button data-page="wallets">Saldos</button>
+                <button data-page="deposits">Depósitos</button>
+                <button data-page="withdrawals">Retiros</button>
+                <button data-page="bonuses">Bonos</button>
+                <button data-page="referrals">Referidos</button>
+                <button data-page="games">Juegos y apuestas</button>
+                <button data-page="commissions">Comisiones</button>
+                <button data-page="audit">Auditoría</button>
+            </nav>
+            <div class="side-foot">Sesión administrativa<br><span id="adminEmail">—</span></div>
+        </aside>
+
+        <main>
+            <header class="top">
+                <div>
+                    <h1 id="pageTitle">Resumen</h1>
+                    <div class="muted" id="pageSubtitle">Estado general de AXIOM</div>
+                </div>
+                <button class="logout" id="logoutBtn">Cerrar sesión</button>
+            </header>
+
+            <div class="notice" id="backendNotice">
+                El panel inicia sesión con Supabase y consulta el backend de AXIOM. Las operaciones administrativas
+                requieren endpoints protegidos en el backend.
+            </div>
+
+            <section id="dashboard" class="page active">
+                <div class="grid" style="margin-top:16px">
+                    <div class="card">
+                        <div class="metric-label">Clientes</div>
+                        <div class="metric" id="mClients">—</div>
+                    </div>
+                    <div class="card">
+                        <div class="metric-label">Saldo para jugar</div>
+                        <div class="metric" id="mPlay">—</div>
+                    </div>
+                    <div class="card">
+                        <div class="metric-label">Saldo para retirar</div>
+                        <div class="metric" id="mWithdraw">—</div>
+                    </div>
+                    <div class="card">
+                        <div class="metric-label">Saldo bono</div>
+                        <div class="metric" id="mBonus">—</div>
+                    </div>
+                </div>
+                <div class="section card">
+                    <h2>Actividad administrativa</h2>
+                    <div id="dashboardMessage" class="muted">Esperando conexión con el backend.</div>
+                </div>
+            </section>
+
+            <section id="clients" class="page">
+                <div class="toolbar">
+                    <input id="clientSearch" placeholder="Buscar cliente por nombre, correo o ID">
+                    <button class="btn" onclick="loadSection('clients')">Actualizar</button>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Usuario</th>
+                                <th>Correo / ID</th>
+                                <th>Saldo jugar</th>
+                                <th>Saldo retirar</th>
+                                <th>Saldo bono</th>
+                            </tr>
+                        </thead>
+                        <tbody id="clientsRows">
+                            <tr>
+                                <td colspan="5" class="empty">Sin datos.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section id="wallets" class="page">
+                <div class="notice">Aquí se consultarán los movimientos y las acreditaciones o débitos autorizados, con
+                    registro de auditoría. No se realizan cambios de saldo desde el navegador.</div>
+                <div class="section table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Usuario</th>
+                                <th>Tipo</th>
+                                <th>Monto</th>
+                                <th>Motivo</th>
+                                <th>Fecha</th>
+                            </tr>
+                        </thead>
+                        <tbody id="walletRows">
+                            <tr>
+                                <td colspan="5" class="empty">Pendiente de conexión.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section id="deposits" class="page">
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Solicitud</th>
+                                <th>Usuario</th>
+                                <th>Monto</th>
+                                <th>Estado</th>
+                                <th>Fecha</th>
+                                <th>Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody id="depositRows">
+                            <tr>
+                                <td colspan="6" class="empty">Pendiente de conexión.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section id="withdrawals" class="page">
+                <div class="notice">Los retiros se mostrarán para revisión y aprobación manual. Se respetará el mínimo
+                    configurado en AXIOM.</div>
+                <div class="section table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Solicitud</th>
+                                <th>Usuario</th>
+                                <th>Monto</th>
+                                <th>Cuenta</th>
+                                <th>Estado</th>
+                                <th>Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody id="withdrawRows">
+                            <tr>
+                                <td colspan="6" class="empty">Pendiente de conexión.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section id="bonuses" class="page">
+                <div class="notice">Gestión de bonos, asignaciones, límites y vencimientos. Se conectará a las tablas y
+                    reglas reales de AXIOM.</div>
+            </section>
+
+            <section id="referrals" class="page">
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Referente</th>
+                                <th>Referido</th>
+                                <th>Comisión</th>
+                                <th>Fecha</th>
+                            </tr>
+                        </thead>
+                        <tbody id="referralRows">
+                            <tr>
+                                <td colspan="4" class="empty">Pendiente de conexión.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section id="games" class="page">
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Juego</th>
+                                <th>Sala</th>
+                                <th>Jugador</th>
+                                <th>Apuesta</th>
+                                <th>Estado</th>
+                                <th>Fecha</th>
+                            </tr>
+                        </thead>
+                        <tbody id="gameRows">
+                            <tr>
+                                <td colspan="6" class="empty">Pendiente de conexión.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section id="commissions" class="page">
+                <div class="notice">Consulta de comisiones de referidos y AXIOM. Se respetará la distribución
+                    configurada sin cobros duplicados.</div>
+                <div class="section table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Referencia</th>
+                                <th>Usuario</th>
+                                <th>Tipo</th>
+                                <th>Monto</th>
+                                <th>Fecha</th>
+                            </tr>
+                        </thead>
+                        <tbody id="commissionRows">
+                            <tr>
+                                <td colspan="5" class="empty">Pendiente de conexión.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section id="audit" class="page">
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Fecha</th>
+                                <th>Administrador</th>
+                                <th>Acción</th>
+                                <th>Objetivo</th>
+                                <th>Detalle</th>
+                            </tr>
+                        </thead>
+                        <tbody id="auditRows">
+                            <tr>
+                                <td colspan="5" class="empty">Pendiente de conexión.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        (() => {
+            // CONFIGURACIÓN
+            const SUPABASE_URL = "https://djdzytfdztctusnuuvrm.supabase.co";
+            const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqZHp5dGZkenRjdHVzbnV1dnJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk1MTkxNzcsImV4cCI6MjEwNTA5NTE3N30.Pvqp1Hl4zfKzQj0pxrohZaj1sHR9HJAT1ESPv2P-ot4";
+            const API_URL = "https://casino-axiom.ethiodeploy.app";
+
+            const $ = id => document.getElementById(id);
+            let supabaseClient = null;
+            let accessToken = null;
+
+            if (window.supabase && SUPABASE_ANON_KEY !== "PEGA_AQUI_LA_CLAVE_ANON_PUBLIC") {
+                supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            }
+
+            function showLoginError(message) {
+                $("loginError").textContent = message || "";
+            }
+
+            function showApp(user) {
+                $("adminEmail").textContent = user.email || user.id;
+                $("loginView").classList.add("hidden");
+                $("appView").classList.remove("hidden");
+                loadDashboard();
+            }
+
+            async function api(path, options = {}) {
+                if (!accessToken) throw new Error("La sesión no está iniciada.");
+
+                const response = await fetch(API_URL + path, {
+                    ...options,
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": "Bearer " + accessToken,
+                        ...(options.headers || {})
+                    }
+                });
+
+                const body = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    throw new Error(body.detail || body.message || `Error ${response.status}`);
+                }
+
+                return body;
+            }
+
+            async function loadDashboard() {
+                $("dashboardMessage").textContent = "Consultando datos administrativos…";
+
+                try {
+                    const data = await api("/admin/dashboard");
+
+                    $("mClients").textContent = data.clients ?? "—";
+                    $("mPlay").textContent = money(data.play_balance);
+                    $("mWithdraw").textContent = money(data.withdraw_balance);
+                    $("mBonus").textContent = money(data.bonus_balance);
+
+                    $("dashboardMessage").textContent = "Datos actualizados correctamente.";
+                    $("backendNotice").classList.add("hidden");
+                } catch (error) {
+                    $("dashboardMessage").textContent = error.message;
+                    $("backendNotice").classList.remove("hidden");
+                    $("backendNotice").textContent =
+                        "La sesión se inició, pero el backend todavía no responde con /admin/dashboard. Hay que añadir los endpoints administrativos protegidos en main.py. No se han modificado saldos ni datos.";
+                }
+            }
+
+            function money(value) {
+                if (value === null || value === undefined) return "—";
+                return new Intl.NumberFormat("es-EC", {
+                    style: "currency",
+                    currency: "USD"
+                }).format(Number(value));
+            }
+
+            async function loadSection(name) {
+                const routes = {
+                    clients: "/admin/clients",
+                    wallets: "/admin/wallet-transactions",
+                    deposits: "/admin/deposits",
+                    withdrawals: "/admin/withdrawals",
+                    bonuses: "/admin/bonuses",
+                    referrals: "/admin/referrals",
+                    games: "/admin/games",
+                    commissions: "/admin/commissions",
+                    audit: "/admin/audit"
+                };
+
+                const targetMap = {
+                    clients: "clientsRows",
+                    wallets: "walletRows",
+                    deposits: "depositRows",
+                    withdrawals: "withdrawRows",
+                    referrals: "referralRows",
+                    games: "gameRows",
+                    commissions: "commissionRows",
+                    audit: "auditRows"
+                };
+
+                if (!routes[name]) return;
+
+                const tbody = $(targetMap[name]);
+                if (!tbody) return;
+
+                tbody.innerHTML = '<tr><td colspan="6" class="empty">Cargando…</td></tr>';
+
+                try {
+                    const data = await api(routes[name]);
+                    tbody.innerHTML =
+                        '<tr><td colspan="6" class="empty">Endpoint conectado. Falta definir el formato de visualización de estos registros.</td></tr>';
+
+                    if (Array.isArray(data.items) && data.items.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="6" class="empty">No hay registros.</td></tr>';
+                    }
+                } catch (error) {
+                    tbody.innerHTML =
+                        `<tr><td colspan="6" class="empty">${escapeHtml(error.message)}</td></tr>`;
+                }
+            }
+
+            function escapeHtml(value) {
+                return String(value).replace(/[&<>"']/g, c => ({
+                    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+                }[c]));
+            }
+
+            $("loginForm").addEventListener("submit", async event => {
+                event.preventDefault();
+                showLoginError("");
+
+                const button = $("loginBtn");
+                button.disabled = true;
+                button.textContent = "Verificando…";
+
+                try {
+                    if (!supabaseClient) {
+                        throw new Error("Falta configurar la clave ANON/PUBLIC de Supabase en este archivo.");
+                    }
+
+                    const { data, error } = await supabaseClient.auth.signInWithPassword({
+                        email: $("email").value.trim(),
+                        password: $("password").value
+                    });
+
+                    if (error) throw error;
+
+                    accessToken = data.session.access_token;
+                    showApp(data.user);
+
+                } catch (error) {
+                    showLoginError(error.message || "No se pudo iniciar sesión.");
+                } finally {
+                    button.disabled = false;
+                    button.textContent = "Iniciar sesión";
+                }
+            });
+
+            $("logoutBtn").addEventListener("click", async () => {
+                if (supabaseClient) await supabaseClient.auth.signOut();
+
+                accessToken = null;
+                $("appView").classList.add("hidden");
+                $("loginView").classList.remove("hidden");
+            });
+
+            $("nav").addEventListener("click", event => {
+                const button = event.target.closest("button[data-page]");
+                if (!button) return;
+
+                document.querySelectorAll(".nav button").forEach(b =>
+                    b.classList.toggle("active", b === button)
+                );
+
+                document.querySelectorAll(".page").forEach(p =>
+                    p.classList.toggle("active", p.id === button.dataset.page)
+                );
+
+                const labels = {
+                    dashboard: ["Resumen", "Estado general de AXIOM"],
+                    clients: ["Clientes", "Cuentas registradas"],
+                    wallets: ["Saldos", "Movimientos de las billeteras"],
+                    deposits: ["Depósitos", "Solicitudes de depósito"],
+                    withdrawals: ["Retiros", "Solicitudes de retiro"],
+                    bonuses: ["Bonos", "Configuración y asignaciones"],
+                    referrals: ["Referidos", "Red de referidos"],
+                    games: ["Juegos y apuestas", "Actividad de las salas"],
+                    commissions: ["Comisiones", "Distribución de comisiones"],
+                    audit: ["Auditoría", "Registro de acciones administrativas"]
+                };
+
+                $("pageTitle").textContent = labels[button.dataset.page][0];
+                $("pageSubtitle").textContent = labels[button.dataset.page][1];
+
+                if (button.dataset.page !== "dashboard") {
+                    loadSection(button.dataset.page);
+                } else {
+                    loadDashboard();
+                }
+            });
+
+            $("clientSearch").addEventListener("input", () => {
+                const query = $("clientSearch").value.toLowerCase();
+
+                document.querySelectorAll("#clientsRows tr").forEach(row => {
+                    row.classList.toggle("hidden", !row.textContent.toLowerCase().includes(query));
+                });
+            });
+        })();
+    </script>
+</body>
+
+</html>
