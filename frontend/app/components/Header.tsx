@@ -38,6 +38,7 @@ export default function Header() {
     promoCode: "",
     bonusCode: "",
     referralCode: "",
+    acceptsTerms: false,
   });
 
   const [loginData, setLoginData] = useState({
@@ -363,6 +364,7 @@ export default function Header() {
         promoCode: "",
         bonusCode: "",
         referralCode: "",
+        acceptsTerms: false,
       });
     } catch (error: any) {
       showAlert("Error de Registro", error.message);
@@ -402,9 +404,8 @@ export default function Header() {
       )}
 
       <aside
-        className={`fixed top-0 left-0 h-full w-72 bg-zinc-950 border-r border-zinc-800 z-50 p-6 flex flex-col justify-between transform transition-transform duration-300 ${
-          isMenuOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
+        className={`fixed top-0 left-0 h-full w-72 bg-zinc-950 border-r border-zinc-800 z-50 p-6 flex flex-col justify-between transform transition-transform duration-300 ${isMenuOpen ? "translate-x-0" : "-translate-x-full"
+          }`}
       >
         <div>
           <div className="flex items-center justify-end mb-8 pb-4 border-b border-zinc-900">
@@ -554,9 +555,8 @@ export default function Header() {
       {authView !== "none" && (
         <div className="fixed inset-0 z-[60] bg-black/90 backdrop-blur-md flex items-start justify-center overflow-y-auto p-4">
           <div
-            className={`w-full ${
-              authView === "register" ? "max-w-2xl" : "max-w-md"
-            } bg-zinc-950 border border-zinc-800 rounded-3xl p-8 shadow-2xl space-y-6 my-auto`}
+            className={`w-full ${authView === "register" ? "max-w-2xl" : "max-w-md"
+              } bg-zinc-950 border border-zinc-800 rounded-3xl p-8 shadow-2xl space-y-6 my-auto`}
           >
             {authView === "login" ? (
               <>
@@ -823,7 +823,34 @@ export default function Header() {
                     />
                   </div>
 
-                  <div className="sm:col-span-2 pt-2">
+                  <div className="sm:col-span-2 pt-2 space-y-4">
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        required
+                        checked={regData.acceptsTerms}
+                        onChange={(e) =>
+                          setRegData({
+                            ...regData,
+                            acceptsTerms: e.target.checked,
+                          })
+                        }
+                        className="mt-1 h-4 w-4 accent-emerald-500 shrink-0 cursor-pointer"
+                      />
+
+                      <span className="text-xs text-zinc-300 leading-relaxed">
+                        Declaro que soy mayor de 18 años y acepto los{" "}
+                        <span className="text-emerald-400 font-bold">
+                          Términos y Condiciones
+                        </span>{" "}
+                        y las{" "}
+                        <span className="text-emerald-400 font-bold">
+                          Políticas de Juego
+                        </span>{" "}
+                        de AXIOM.
+                      </span>
+                    </label>
+
                     <button
                       type="submit"
                       className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg active:scale-95"
