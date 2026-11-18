@@ -279,14 +279,6 @@ export default function DepositosPage() {
                         </button>
                     </div>
 
-                    <div className="mt-7 flex max-w-4xl gap-3 rounded-xl border border-white/10 bg-[#111714] p-4">
-                        <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-400" />
-                        <p className="text-xs leading-relaxed text-zinc-400">
-                            Los depósitos crypto deben verificarse en la blockchain antes
-                            de acreditar cualquier saldo. Nunca envíes fondos por una red
-                            distinta a la indicada en la solicitud.
-                        </p>
-                    </div>
                 </div>
             )}
 
