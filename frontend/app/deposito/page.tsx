@@ -228,15 +228,13 @@ export default function DepositosPage() {
                             className="flex items-center gap-2 rounded-xl border border-white/10 bg-[#111714] px-4 py-3 text-sm font-semibold text-zinc-300 transition hover:border-emerald-500/40 hover:bg-[#141e18] hover:text-white"
                         >
                             <ArrowLeft className="h-4 w-4" />
-                            Retroceder
+                            Volver
                         </button>
                     </div>
 
                     <div className="mb-8">
-                        <h1 className="text-3xl font-bold">Depositar fondos</h1>
-                        <p className="mt-2 text-sm text-zinc-400">
-                            Elige cómo deseas ingresar fondos a tu cuenta AXIOM.
-                        </p>
+                        <h1 className="text-3xl font-bold">Depositos</h1>
+                        
                     </div>
 
                     <div className="grid max-w-4xl gap-5 md:grid-cols-2">
@@ -251,11 +249,9 @@ export default function DepositosPage() {
                             </div>
                             <div className="min-w-0 flex-1">
                                 <p className="font-bold">Transferencia bancaria</p>
-                                <p className="mt-2 text-sm text-zinc-400">
-                                    Solicita tu depósito directamente por WhatsApp.
-                                </p>
+                                
                                 <p className="mt-3 text-xs font-semibold text-emerald-400">
-                                    Contactar al 099 224 1485
+                                    Min: $5 Max: $10.000
                                 </p>
                             </div>
                             <ExternalLink className="h-5 w-5 shrink-0 text-zinc-500 transition group-hover:text-emerald-400" />
@@ -273,12 +269,10 @@ export default function DepositosPage() {
                                 <Wallet className="h-7 w-7 text-emerald-400" />
                             </div>
                             <div className="min-w-0 flex-1">
-                                <p className="font-bold">Depósito con crypto</p>
-                                <p className="mt-2 text-sm text-zinc-400">
-                                    Deposita con USDT utilizando la red TRON (TRC20).
-                                </p>
+                                <p className="font-bold">crypto</p>
+                                
                                 <p className="mt-3 text-xs font-semibold text-emerald-400">
-                                    Ver depósito crypto
+                                    Min: $10 Max: $10.000
                                 </p>
                             </div>
                             <ArrowRight className="h-5 w-5 shrink-0 text-zinc-500 transition group-hover:translate-x-1 group-hover:text-emerald-400" />
