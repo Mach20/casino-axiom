@@ -684,6 +684,7 @@ def verify_nowpayments_signature(payload: dict, signature: str) -> bool:
     )
 
 
+
 @app.post("/crypto/deposits/create")
 async def create_crypto_deposit(
     body: CryptoDepositBody,
@@ -715,6 +716,66 @@ async def create_crypto_deposit(
         raise HTTPException(
             status_code=400,
             detail="El depósito debe ser mínimo de $10 y máximo de $10.000."
+        )
+
+    # 1. Consultar el mínimo actual de NOWPayments
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            min_response = await client.get(
+                f"{NOWPAYMENTS_API_URL}/min-amount",
+                headers={
+                    "x-api-key": NOWPAYMENTS_API_KEY,
+                },
+                params={
+                    "currency_from": "usd",
+                    "currency_to": CRYPTO_PAY_CURRENCY,
+                    "fiat_equivalent": "usd",
+                },
+            )
+
+        if min_response.status_code != 200:
+            print(
+                "ERROR consultando mínimo NOWPayments:",
+                min_response.status_code,
+                min_response.text
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="No se pudo consultar el mínimo de NOWPayments. Intenta nuevamente."
+            )
+
+        min_data = min_response.json()
+        minimum_usd = Decimal(str(min_data.get("fiat_equivalent") or "0"))
+
+        if not minimum_usd.is_finite() or minimum_usd <= 0:
+            print("RESPUESTA MÍNIMO NOWPayments:", min_data)
+            raise HTTPException(
+                status_code=503,
+                detail="NOWPayments no devolvió un mínimo válido."
+            )
+
+        required_minimum = (
+            minimum_usd * Decimal("1.02")
+        ).quantize(Decimal("0.01"))
+
+        if amount < required_minimum:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"El depósito mínimo actual es de "
+                    f"${required_minimum:.2f} USD. "
+                    "Aumenta el monto e intenta nuevamente."
+                )
+            )
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        print(f"ERROR consultando mínimo NOWPayments: {exc!r}")
+        raise HTTPException(
+            status_code=503,
+            detail="No se pudo verificar el mínimo de NOWPayments."
         )
 
     order_id = f"AXIOM-CRYPTO-{uuid.uuid4().hex[:16].upper()}"
@@ -756,9 +817,23 @@ async def create_crypto_deposit(
             )
 
             supabase.table("crypto_deposits").update({
-    "payment_status": "failed",
-    "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-}).eq("order_id", order_id).execute()
+                "payment_status": "failed",
+                "updated_at": time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ",
+                    time.gmtime()
+                ),
+            }).eq("order_id", order_id).execute()
+
+            error_data = response.json() if response.content else {}
+
+            if error_data.get("code") == "AMOUNT_MINIMAL_ERROR":
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "NOWPayments aumentó su mínimo de depósito. "
+                        "Intenta con un monto superior."
+                    )
+                )
 
             raise HTTPException(
                 status_code=502,
@@ -783,7 +858,10 @@ async def create_crypto_deposit(
             "payment_status": str(
                 payment_data.get("payment_status") or "waiting"
             ).lower(),
-            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "updated_at": time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ",
+                time.gmtime()
+            ),
         }).eq("order_id", order_id).execute()
 
         return {
@@ -817,126 +895,6 @@ async def create_crypto_deposit(
             detail="No se pudo crear el depósito cripto."
         )
 
-
-@app.post("/crypto/deposits/ipn")
-async def nowpayments_ipn(
-    payload: dict,
-    x_nowpayments_sig: str | None = Header(
-        default=None,
-        alias="x-nowpayments-sig"
-    ),
-):
-    if not NOWPAYMENTS_IPN_SECRET:
-        raise HTTPException(
-            status_code=503,
-            detail="La verificación IPN no está configurada."
-        )
-
-    if not verify_nowpayments_signature(payload, x_nowpayments_sig or ""):
-        print("ERROR: firma IPN de NOWPayments no válida.")
-        raise HTTPException(
-            status_code=401,
-            detail="Firma IPN no válida."
-        )
-
-    order_id = str(payload.get("order_id") or "").strip()
-    payment_id = str(payload.get("payment_id") or "").strip()
-    payment_status = str(payload.get("payment_status") or "").lower()
-    price_currency = str(payload.get("price_currency") or "").lower()
-    pay_currency = str(payload.get("pay_currency") or "").lower()
-
-    if not all([
-        order_id,
-        payment_id,
-        payment_status,
-        price_currency,
-        pay_currency,
-    ]):
-        raise HTTPException(
-            status_code=400,
-            detail="La notificación no contiene todos los datos necesarios."
-        )
-
-    try:
-        price_amount = Decimal(str(payload.get("price_amount")))
-
-        if not price_amount.is_finite():
-            raise ValueError("Monto no válido.")
-
-    except (InvalidOperation, ValueError, TypeError):
-        raise HTTPException(
-            status_code=400,
-            detail="El monto notificado no es válido."
-        )
-
-    try:
-        result = rpc_json(
-            "apply_nowpayments_deposit",
-            {
-                "p_order_id": order_id,
-                "p_payment_id": payment_id,
-                "p_payment_status": payment_status,
-                "p_price_amount": float(price_amount),
-                "p_price_currency": price_currency,
-                "p_pay_currency": pay_currency,
-            }
-        )
-
-        return {
-            "success": True,
-            "result": result,
-        }
-
-    except Exception as exc:
-        print(f"ERROR procesando IPN NOWPayments: {exc!r}")
-        raise HTTPException(
-            status_code=500,
-            detail="No se pudo procesar la notificación del pago."
-        )
-
-
-@app.get("/crypto/deposits/{order_id}")
-def get_crypto_deposit_status(
-    order_id: str,
-    authorization: str | None = Header(default=None),
-):
-    user_id = get_authenticated_user_id(authorization)
-
-    try:
-        response = (
-            supabase.table("crypto_deposits")
-            .select(
-                "order_id,amount,pay_currency,pay_amount,"
-                "pay_address,payment_status,credited_at,created_at"
-            )
-            .eq("order_id", order_id)
-            .eq("user_id", user_id)
-            .limit(1)
-            .execute()
-        )
-
-        rows = response.data or []
-
-        if not rows:
-            raise HTTPException(
-                status_code=404,
-                detail="No se encontró este depósito."
-            )
-
-        return {
-            "success": True,
-            "deposit": rows[0],
-        }
-
-    except HTTPException:
-        raise
-
-    except Exception as exc:
-        print(f"ERROR consultando depósito cripto: {exc!r}")
-        raise HTTPException(
-            status_code=500,
-            detail="No se pudo consultar el depósito."
-        )
 
 # ============================================================
 # WEBSOCKET LOBBY X VS O
