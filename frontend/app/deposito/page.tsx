@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useState } from "react";
@@ -9,18 +10,14 @@ import {
     Check,
     Copy,
     Loader2,
-    MessageCircle,
     Wallet,
     QrCode,
-    ExternalLink,
     Clock3,
     AlertTriangle,
     RefreshCw,
 } from "lucide-react";
 
 const API_URL = "https://casino-axiom.ethiodeploy.app";
-const WHATSAPP_URL =
-    "https://wa.me/593992241485?text=Hola%2C%20quiero%20realizar%20un%20dep%C3%B3sito%20en%20AXIOM.";
 
 const MIN_AMOUNT = 20;
 const MAX_AMOUNT = 10000;
@@ -165,7 +162,8 @@ export default function DepositosPage() {
             );
 
             if (!response.ok) {
-                let message = "No se pudo generar el depósito. Intenta con un monto mayor o vuelve a intentarlo.";
+                let message =
+                    "No se pudo generar el depósito. Intenta nuevamente.";
 
                 try {
                     const data = await response.json();
@@ -188,7 +186,7 @@ export default function DepositosPage() {
                             "Tu sesión no está activa. Inicia sesión nuevamente.";
                     }
                 } catch {
-                    // Mantener el mensaje general.
+                    // Mantener mensaje general.
                 }
 
                 throw new Error(message);
@@ -207,15 +205,21 @@ export default function DepositosPage() {
                 );
             }
 
+            if (
+                String(data.pay_currency || "").toLowerCase() !== "usdttrc20"
+            ) {
+                throw new Error(
+                    "El servidor no devolvió un pago USDT por la red TRC20."
+                );
+            }
+
             setDeposit({
                 order_id: String(data.order_id),
                 pay_address: String(data.pay_address),
                 pay_amount: String(data.pay_amount),
-                pay_currency: String(data.pay_currency || "usdttrc20"),
+                pay_currency: "usdttrc20",
                 amount_usd: Number(data.amount_usd ?? value),
-                payment_status: String(
-                    data.payment_status || "waiting"
-                ),
+                payment_status: String(data.payment_status || "waiting"),
             });
 
             setView("crypto-details");
@@ -327,24 +331,6 @@ export default function DepositosPage() {
         }
     };
 
-    const getStatusLabel = (status: string) => {
-        const normalized = status.toLowerCase();
-
-        const labels: Record<string, string> = {
-            waiting: "Esperando pago",
-            confirming: "Confirmando pago",
-            confirmed: "Pago confirmado",
-            sending: "Procesando acreditación",
-            finished: "Pago completado",
-            failed: "Pago fallido",
-            expired: "Pago expirado",
-            refunded: "Pago reembolsado",
-            partially_paid: "Pago parcial",
-        };
-
-        return labels[normalized] || status.toUpperCase();
-    };
-
     const isFinished =
         deposit?.payment_status.toLowerCase() === "finished";
 
@@ -375,44 +361,25 @@ export default function DepositosPage() {
                         <h1 className="text-3xl font-bold">Depósitos</h1>
                     </div>
 
-                    <div className="grid max-w-4xl gap-5 md:grid-cols-2">
-                        <a
-                            href={WHATSAPP_URL}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="group flex min-h-44 items-center gap-4 rounded-2xl border border-white/10 bg-[#111714] p-6 text-left transition hover:border-emerald-500/50 hover:bg-[#141e18]"
-                        >
-                            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-emerald-500/20 bg-emerald-500/10">
-                                <MessageCircle className="h-7 w-7 text-emerald-400" />
-                            </div>
-
-                            <div className="min-w-0 flex-1">
-                                <p className="font-bold">
-                                    Transferencia bancaria
-                                </p>
-
-                                <p className="mt-3 text-xs font-semibold text-emerald-400">
-                                    Min: $5 Max: $10.000
-                                </p>
-                            </div>
-
-                            <ExternalLink className="h-5 w-5 shrink-0 text-zinc-500 transition group-hover:text-emerald-400" />
-                        </a>
-
+                    <div className="max-w-xl">
                         <button
                             type="button"
                             onClick={() => {
                                 setError("");
                                 setView("crypto");
                             }}
-                            className="group flex min-h-44 items-center gap-4 rounded-2xl border border-emerald-500/25 bg-[#111714] p-6 text-left transition hover:border-emerald-400/70 hover:bg-[#141e18]"
+                            className="group flex min-h-44 w-full items-center gap-4 rounded-2xl border border-emerald-500/25 bg-[#111714] p-6 text-left transition hover:border-emerald-400/70 hover:bg-[#141e18]"
                         >
                             <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-emerald-500/20 bg-emerald-500/10">
                                 <Wallet className="h-7 w-7 text-emerald-400" />
                             </div>
 
                             <div className="min-w-0 flex-1">
-                                <p className="font-bold">Criptomonedas</p>
+                                <p className="font-bold">USDT TRC20</p>
+
+                                <p className="mt-2 text-xs text-zinc-400">
+                                    Depósito mediante criptomonedas
+                                </p>
 
                                 <p className="mt-3 text-xs font-semibold text-emerald-400">
                                     Min: $20 Max: $10.000
@@ -445,7 +412,7 @@ export default function DepositosPage() {
                                 </div>
 
                                 <h1 className="mt-4 text-2xl font-bold">
-                                    Depósito USDT
+                                    Depósito USDT TRC20
                                 </h1>
 
                                 <p className="mt-2 text-sm text-zinc-400">
@@ -521,12 +488,12 @@ export default function DepositosPage() {
 
                                 <ol className="mt-3 list-inside list-decimal space-y-2 text-xs leading-relaxed text-zinc-400">
                                     <li>Ingresa el valor que deseas depositar.</li>
-                                    <li>Presiona el botón Depositar.</li>
-                                    <li>Envía el monto exacto a la dirección que aparecerá.</li>
+                                    <li>Presiona Depositar.</li>
+                                    <li>Envía el monto exacto a la dirección generada.</li>
                                 </ol>
 
                                 <p className="mt-3 text-xs text-zinc-500">
-                                    Utiliza únicamente USDT por la red TRON (TRC20).
+                                    Utiliza exclusivamente USDT por la red TRON (TRC20).
                                 </p>
                             </div>
                         </div>
@@ -606,18 +573,14 @@ export default function DepositosPage() {
                                 )}
                             </div>
 
-                            <div className="mt-6 grid gap-3 sm:grid-cols-2">
-                                <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-                                    <p className="text-xs text-zinc-500">
-                                        Solicitud
-                                    </p>
+                            <div className="mt-6 rounded-xl border border-white/10 bg-black/20 p-4">
+                                <p className="text-xs text-zinc-500">
+                                    Solicitud
+                                </p>
 
-                                    <p className="mt-1 break-all font-semibold">
-                                        #{deposit.order_id}
-                                    </p>
-                                </div>
-
-                                
+                                <p className="mt-1 break-all font-semibold">
+                                    #{deposit.order_id}
+                                </p>
                             </div>
 
                             <div className="mt-6 rounded-xl border border-white/10 bg-black/20 p-4">
@@ -625,6 +588,8 @@ export default function DepositosPage() {
                                     <div className="flex items-center gap-3">
                                         {isFinished ? (
                                             <Check className="h-5 w-5 text-emerald-400" />
+                                        ) : isFailed ? (
+                                            <AlertTriangle className="h-5 w-5 text-red-400" />
                                         ) : (
                                             <Clock3 className="h-5 w-5 text-amber-400" />
                                         )}
@@ -633,18 +598,22 @@ export default function DepositosPage() {
                                             <p className="text-sm font-semibold">
                                                 {isFinished
                                                     ? "Depósito confirmado"
-                                                    : "Verificación automática"}
+                                                    : isFailed
+                                                        ? "Depósito no completado"
+                                                        : "Verificación automática"}
                                             </p>
 
                                             <p className="mt-1 text-xs text-zinc-500">
                                                 {isFinished
-                                                    ? "Consulta el saldo de tu cuenta AXIOM."
-                                                    : "AXIOM consulta el estado del pago automáticamente."}
+                                                    ? "NOWPayments confirmó el pago. Consulta tu saldo AXIOM."
+                                                    : isFailed
+                                                        ? "Este pago no se completó. Revisa el estado de tu solicitud."
+                                                        : "AXIOM consulta el estado del pago automáticamente."}
                                             </p>
                                         </div>
                                     </div>
 
-                                    {!isFinished && (
+                                    {!isFinished && !isFailed && (
                                         <button
                                             type="button"
                                             onClick={refreshDepositStatus}
@@ -667,9 +636,8 @@ export default function DepositosPage() {
 
                                 <p className="text-xs leading-relaxed text-zinc-400">
                                     Verifica la red y el monto antes de enviar.
-                                    No envíes otros tokens ni uses otra red.
-                                    Nunca compartas esta dirección como si
-                                    fuera una dirección para otra moneda.
+                                    No envíes otros tokens ni utilices otra red.
+                                    Esta dirección corresponde únicamente a tu solicitud de depósito USDT TRC20.
                                 </p>
                             </div>
 
