@@ -535,8 +535,6 @@ export default function DepositosPage() {
                         </button>
 
                         <div className="grid min-h-[calc(100vh-180px)] items-stretch gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
-                            {/* COLUMNA IZQUIERDA */}
-
                             <aside className="space-y-4">
                                 <div>
                                     <p className="mb-3 text-xs font-bold uppercase tracking-wider text-zinc-500">
@@ -607,8 +605,6 @@ export default function DepositosPage() {
                                 </div>
                             </aside>
 
-                            {/* PANEL DERECHO */}
-
                             <div className="flex min-h-[600px] min-w-0 flex-col rounded-2xl border border-white/10 bg-[#111714] p-5 sm:p-8 lg:p-10">
                                 {loading ? (
                                     <div className="flex flex-1 flex-col items-center justify-center text-center">
@@ -652,7 +648,7 @@ export default function DepositosPage() {
                                             </div>
                                         </div>
 
-                                        {/* DIRECCIÓN DE ENVÍO */}
+                                        {/* PRIMERO: DIRECCIÓN DE ENVÍO */}
 
                                         <div className="mt-8">
                                             <p className="mb-3 text-sm font-semibold">
@@ -685,10 +681,10 @@ export default function DepositosPage() {
                                             )}
                                         </div>
 
-                                        {/* CANTIDAD Y VALOR */}
+                                        {/* SEGUNDO: CANTIDAD EXACTA */}
 
-                                        <div className="mt-6 rounded-xl border border-white/10 bg-black/20 p-5">
-                                            <p className="text-sm text-zinc-500">
+                                        <div className="mt-6 rounded-xl border border-emerald-500/20 bg-emerald-500/[0.04] p-5">
+                                            <p className="text-sm text-zinc-400">
                                                 Cantidad exacta que debes enviar
                                             </p>
 
@@ -704,11 +700,11 @@ export default function DepositosPage() {
                                                 <p className="mt-1 text-xl font-bold text-white">
                                                     ${deposit.amount_usd.toFixed(2)} USD
                                                 </p>
-
-                                                <p className="mt-2 text-xs text-zinc-500">
-                                                    Mínimo de depósito: $20 USD
-                                                </p>
                                             </div>
+
+                                            <p className="mt-4 border-t border-white/10 pt-4 text-xs font-medium text-zinc-400">
+                                                Mínimo de depósito: $20 USD
+                                            </p>
                                         </div>
 
                                         <div className="mt-6 rounded-xl border border-white/10 bg-black/20 p-5">
