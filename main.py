@@ -894,7 +894,128 @@ async def create_crypto_deposit(
             status_code=500,
             detail="No se pudo crear el depósito cripto."
         )
+from fastapi import Request
 
+
+def _credit_crypto_deposit_to_user(
+    user_id: str,
+    order_id: str,
+    amount_usd: float,
+    payment_id: str | None = None,
+):
+    """
+    Acredita el saldo al cliente de forma segura.
+    Si creas una función RPC en Supabase (ej. `credit_crypto_deposit`),
+    úsala aquí para garantizar atomicidad e idempotencia.
+    """
+    # Opción recomendada: crear una RPC en Supabase llamada `credit_crypto_deposit`
+    # que verifique si ya fue acreditado y sume `balance` en `profiles`.
+    # Ejemplo de llamada RPC:
+    # return rpc_json("credit_crypto_deposit", {
+    #     "p_user_id": user_id,
+    #     "p_order_id": order_id,
+    #     "p_payment_id": payment_id,
+    #     "p_amount": round(float(amount_usd), 2),
+    # })
+
+    # Fallback directo si aún no creaste la RPC (menos atómico que un RPC SQL):
+    profile_res = (
+        supabase.table("profiles")
+        .select("id,balance")
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+    )
+    rows = profile_res.data or []
+    if not rows:
+        raise RuntimeError(f"Perfil no encontrado para user_id={user_id}")
+
+    current_balance = Decimal(str(rows[0].get("balance") or "0"))
+    new_balance = float((current_balance + Decimal(str(amount_usd))).quantize(Decimal("0.01")))
+
+    (
+        supabase.table("profiles")
+        .update({"balance": new_balance})
+        .eq("id", user_id)
+        .execute()
+    )
+    return {"success": True, "new_balance": new_balance}
+
+
+@app.post("/crypto/deposits/ipn")
+async def nowpayments_ipn(
+    request: Request,
+    x_nowpayments_sig: str | None = Header(default=None),
+):
+    raw_body = await request.body()
+
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="JSON inválido.")
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Payload inválido.")
+
+    # 1. Verificar firma HMAC-SHA512 de NOWPayments
+    if not verify_nowpayments_signature(payload, x_nowpayments_sig or ""):
+        print("ALERTA IPN: Firma de NOWPayments inválida.")
+        raise HTTPException(status_code=401, detail="Firma IPN no válida.")
+
+    order_id = str(payload.get("order_id") or "").strip()
+    payment_id = str(payload.get("payment_id") or "").strip()
+    payment_status = str(payload.get("payment_status") or "").strip().lower()
+
+    if not order_id:
+        raise HTTPException(status_code=400, detail="Falta order_id.")
+
+    # 2. Buscar el depósito en Supabase
+    dep_res = (
+        supabase.table("crypto_deposits")
+        .select("id,user_id,order_id,amount,payment_status,credited_at")
+        .eq("order_id", order_id)
+        .limit(1)
+        .execute()
+    )
+    dep_rows = dep_res.data or []
+
+    if not dep_rows:
+        raise HTTPException(status_code=404, detail="Depósito no encontrado.")
+
+    deposit = dep_rows[0]
+    user_id = str(deposit["user_id"])
+    amount_usd = float(deposit["amount"])
+
+    # 3. Actualizar estado del pago en crypto_deposits
+    now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    update_fields = {
+        "payment_status": payment_status or deposit.get("payment_status"),
+        "updated_at": now_iso,
+    }
+    if payment_id:
+        update_fields["payment_id"] = payment_id
+
+    # 4. Acreditar solo cuando esté finalizado y aún no haya sido acreditado
+    final_statuses = {"finished"}  # Si quieres acreditar antes, añade "confirmed"
+    already_credited = bool(deposit.get("credited_at"))
+
+    if payment_status in final_statuses and not already_credited:
+        _credit_crypto_deposit_to_user(
+            user_id=user_id,
+            order_id=order_id,
+            amount_usd=amount_usd,
+            payment_id=payment_id or None,
+        )
+        update_fields["credited_at"] = now_iso
+
+    (
+        supabase.table("crypto_deposits")
+        .update(update_fields)
+        .eq("order_id", order_id)
+        .execute()
+    )
+
+    return {"ok": True, "order_id": order_id, "status": payment_status}
 
 # ============================================================
 # WEBSOCKET LOBBY X VS O

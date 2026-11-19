@@ -1,13 +1,13 @@
-
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import Header from "../components/Header";
 import {
     ArrowLeft,
     ArrowRight,
     Check,
+    CheckCircle2,
     Copy,
     Loader2,
     Wallet,
@@ -28,9 +28,45 @@ type CryptoDeposit = {
     pay_currency: string;
     amount_usd: number;
     payment_status: string;
+    credited?: boolean;
 };
 
 type View = "form" | "details";
+
+const STATUS_MESSAGES: Record<string, { title: string; subtitle: string }> = {
+    waiting: {
+        title: "Esperando confirmación",
+        subtitle: "Verificación automática del pago cada 5 segundos.",
+    },
+    confirming: {
+        title: "Confirmando en la red TRON",
+        subtitle: "Pago detectado. Esperando confirmaciones...",
+    },
+    sending: {
+        title: "Acreditando saldo",
+        subtitle: "Confirmaciones listas. Aplicando tu saldo AXIOM...",
+    },
+    partially_paid: {
+        title: "Pago incompleto",
+        subtitle: "Se recibió un monto menor al solicitado.",
+    },
+    finished: {
+        title: "¡Depósito confirmado y acreditado!",
+        subtitle: "Tu saldo AXIOM ya está actualizado.",
+    },
+    failed: {
+        title: "Depósito no completado",
+        subtitle: "El pago falló. Intenta generar una nueva orden.",
+    },
+    expired: {
+        title: "Orden expirada",
+        subtitle: "El tiempo de pago expiró. Crea un nuevo depósito.",
+    },
+    refunded: {
+        title: "Pago reembolsado",
+        subtitle: "El pago fue reembolsado.",
+    },
+};
 
 export default function DepositosPage() {
     const [view, setView] = useState<View>("form");
@@ -41,9 +77,10 @@ export default function DepositosPage() {
     const [statusLoading, setStatusLoading] = useState(false);
     const [sessionLoading, setSessionLoading] = useState(true);
     const [error, setError] = useState("");
-    const [copied, setCopied] = useState(false);
+    const [copiedAddress, setCopiedAddress] = useState(false);
+    const [copiedAmount, setCopiedAmount] = useState(false);
 
-    const getFreshAccessToken = async (): Promise<string> => {
+    const getFreshAccessToken = useCallback(async (): Promise<string> => {
         const { data, error } = await supabase.auth.getSession();
 
         if (error || !data.session) {
@@ -75,7 +112,7 @@ export default function DepositosPage() {
         }
 
         return session.access_token;
-    };
+    }, []);
 
     useEffect(() => {
         let active = true;
@@ -116,7 +153,7 @@ export default function DepositosPage() {
             active = false;
             subscription.unsubscribe();
         };
-    }, []);
+    }, [getFreshAccessToken]);
 
     const goBack = () => {
         if (loading) return;
@@ -125,7 +162,8 @@ export default function DepositosPage() {
         setDeposit(null);
         setAmount("20");
         setError("");
-        setCopied(false);
+        setCopiedAddress(false);
+        setCopiedAmount(false);
     };
 
     const createCryptoDeposit = async () => {
@@ -185,6 +223,8 @@ export default function DepositosPage() {
                     ) {
                         message =
                             "Tu sesión no está activa. Inicia sesión nuevamente.";
+                    } else if (serverMessage) {
+                        message = serverMessage;
                     }
                 } catch {
                     // Mantener mensaje general.
@@ -224,7 +264,8 @@ export default function DepositosPage() {
                 amount_usd: Number(data.amount_usd ?? value),
                 payment_status: String(
                     data.payment_status || "waiting"
-                ),
+                ).toLowerCase(),
+                credited: false,
             });
 
             setView("details");
@@ -244,7 +285,7 @@ export default function DepositosPage() {
         }
     };
 
-    const refreshDepositStatus = async () => {
+    const refreshDepositStatus = useCallback(async () => {
         if (!deposit?.order_id || statusLoading) return;
 
         setStatusLoading(true);
@@ -277,16 +318,27 @@ export default function DepositosPage() {
                 data.payment_status ||
                 data.status ||
                 deposit.payment_status
-            );
+            ).toLowerCase();
+
+            const wasFinished =
+                deposit.payment_status.toLowerCase() === "finished" ||
+                Boolean(deposit.credited);
+            const nowFinished =
+                newStatus === "finished" || Boolean(data.credited);
 
             setDeposit((previous) =>
                 previous
                     ? {
                         ...previous,
                         payment_status: newStatus,
+                        credited: Boolean(data.credited),
                     }
                     : previous
             );
+
+            if (!wasFinished && nowFinished) {
+                window.dispatchEvent(new Event("axiom:balance-updated"));
+            }
         } catch (err) {
             console.error(
                 "Error consultando estado del depósito:",
@@ -295,7 +347,13 @@ export default function DepositosPage() {
         } finally {
             setStatusLoading(false);
         }
-    };
+    }, [
+        deposit?.credited,
+        deposit?.order_id,
+        deposit?.payment_status,
+        getFreshAccessToken,
+        statusLoading,
+    ]);
 
     useEffect(() => {
         if (view !== "details" || !deposit?.order_id) {
@@ -305,7 +363,8 @@ export default function DepositosPage() {
         const status = deposit.payment_status.toLowerCase();
 
         if (
-            ["finished", "failed", "expired", "refunded"].includes(status)
+            ["finished", "failed", "expired", "refunded"].includes(status) ||
+            deposit.credited
         ) {
             return;
         }
@@ -315,28 +374,46 @@ export default function DepositosPage() {
         }, 5000);
 
         return () => window.clearInterval(interval);
-    }, [view, deposit?.order_id, deposit?.payment_status]);
+    }, [
+        deposit?.credited,
+        deposit?.order_id,
+        deposit?.payment_status,
+        refreshDepositStatus,
+        view,
+    ]);
 
     const copyAddress = async () => {
         if (!deposit?.pay_address) return;
 
         try {
             await navigator.clipboard.writeText(deposit.pay_address);
-            setCopied(true);
-            window.setTimeout(() => setCopied(false), 1800);
+            setCopiedAddress(true);
+            window.setTimeout(() => setCopiedAddress(false), 1800);
         } catch {
             setError("No se pudo copiar la dirección.");
         }
     };
 
-    const isFinished =
-        deposit?.payment_status.toLowerCase() === "finished";
+    const copyAmount = async () => {
+        if (!deposit?.pay_amount) return;
 
-    const isFailed =
-        deposit &&
-        ["failed", "expired", "refunded"].includes(
-            deposit.payment_status.toLowerCase()
-        );
+        try {
+            await navigator.clipboard.writeText(String(deposit.pay_amount));
+            setCopiedAmount(true);
+            window.setTimeout(() => setCopiedAmount(false), 1800);
+        } catch {
+            setError("No se pudo copiar el monto.");
+        }
+    };
+
+    const currentStatus = (deposit?.payment_status || "waiting").toLowerCase();
+    const isFinished = currentStatus === "finished" || Boolean(deposit?.credited);
+    const isFailed = ["failed", "expired", "refunded"].includes(currentStatus);
+
+    const statusInfo = STATUS_MESSAGES[currentStatus] || {
+        title: `Estado: ${currentStatus}`,
+        subtitle: "Verificación automática del pago.",
+    };
 
     return (
         <main className="min-h-screen bg-[#080b0a] text-white">
@@ -514,7 +591,7 @@ export default function DepositosPage() {
                                         </h2>
 
                                         <p className="text-xs text-zinc-500">
-                                            TRON (TRC20)
+                                            TRON (TRC20) · {deposit.order_id}
                                         </p>
                                     </div>
                                 </div>
@@ -528,9 +605,23 @@ export default function DepositosPage() {
                                         ${deposit.amount_usd.toFixed(2)} USD
                                     </p>
 
-                                    <p className="mt-2 text-sm text-zinc-300">
-                                        Envía {deposit.pay_amount} USDT por TRC20
-                                    </p>
+                                    <div className="mt-2 flex items-center justify-between gap-2">
+                                        <p className="text-sm text-zinc-300">
+                                            Envía{" "}
+                                            <span className="font-mono font-bold text-white">
+                                                {deposit.pay_amount} USDT
+                                            </span>{" "}
+                                            por TRC20
+                                        </p>
+
+                                        <button
+                                            type="button"
+                                            onClick={copyAmount}
+                                            className="rounded-md border border-white/10 px-2.5 py-1 text-xs text-zinc-300 transition hover:border-emerald-500/40 hover:text-emerald-400"
+                                        >
+                                            {copiedAmount ? "Monto copiado" : "Copiar monto"}
+                                        </button>
+                                    </div>
                                 </div>
 
                                 <div className="mt-4">
@@ -549,47 +640,47 @@ export default function DepositosPage() {
                                             className="shrink-0 rounded-lg border border-white/10 p-2 text-zinc-300 transition hover:border-emerald-500/40 hover:text-emerald-400"
                                             aria-label="Copiar dirección"
                                         >
-                                            {copied ? (
-                                                <Check className="h-4 w-4" />
+                                            {copiedAddress ? (
+                                                <Check className="h-4 w-4 text-emerald-400" />
                                             ) : (
                                                 <Copy className="h-4 w-4" />
                                             )}
                                         </button>
                                     </div>
 
-                                    {copied && (
+                                    {copiedAddress && (
                                         <p className="mt-2 text-xs text-emerald-400">
                                             Dirección copiada.
                                         </p>
                                     )}
                                 </div>
 
-                                <div className="mt-4 rounded-lg border border-white/10 bg-black/20 p-3">
+                                <div
+                                    className={`mt-4 rounded-lg border p-3 ${
+                                        isFinished
+                                            ? "border-emerald-500/30 bg-emerald-500/10"
+                                            : isFailed
+                                                ? "border-red-500/30 bg-red-500/10"
+                                                : "border-white/10 bg-black/20"
+                                    }`}
+                                >
                                     <div className="flex items-center justify-between gap-3">
                                         <div className="flex items-center gap-2">
                                             {isFinished ? (
-                                                <Check className="h-4 w-4 text-emerald-400" />
+                                                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
                                             ) : isFailed ? (
-                                                <AlertTriangle className="h-4 w-4 text-red-400" />
+                                                <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
                                             ) : (
-                                                <Clock3 className="h-4 w-4 text-amber-400" />
+                                                <Clock3 className="h-4 w-4 shrink-0 text-amber-400" />
                                             )}
 
                                             <div>
                                                 <p className="text-xs font-semibold">
-                                                    {isFinished
-                                                        ? "Depósito confirmado"
-                                                        : isFailed
-                                                            ? "Depósito no completado"
-                                                            : "Esperando confirmación"}
+                                                    {statusInfo.title}
                                                 </p>
 
-                                                <p className="mt-1 text-xs text-zinc-500">
-                                                    {isFinished
-                                                        ? "Consulta tu saldo AXIOM."
-                                                        : isFailed
-                                                            ? "El pago no se completó."
-                                                            : "Verificación automática del pago."}
+                                                <p className="mt-1 text-xs text-zinc-400">
+                                                    {statusInfo.subtitle}
                                                 </p>
                                             </div>
                                         </div>
