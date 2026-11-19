@@ -19,7 +19,6 @@ import {
 const API_URL = "https://casino-axiom.ethiodeploy.app";
 
 const MIN_AMOUNT = 20;
-const MAX_AMOUNT = 10000;
 
 type CryptoDeposit = {
     order_id: string;
@@ -36,7 +35,7 @@ type View = "form" | "details";
 const STATUS_MESSAGES: Record<string, { title: string; subtitle: string }> = {
     waiting: {
         title: "Esperando confirmación",
-        subtitle: "Verificación automática del pago cada 5 segundos.",
+        subtitle: "AXIOM detecta tu pago y acredita el saldo automáticamente.",
     },
     confirming: {
         title: "Confirmando en la red TRON",
@@ -48,7 +47,7 @@ const STATUS_MESSAGES: Record<string, { title: string; subtitle: string }> = {
     },
     partially_paid: {
         title: "Pago incompleto",
-        subtitle: "Se recibió un monto menor al solicitado.",
+        subtitle: "Se recibió un monto menor al mínimo.",
     },
     finished: {
         title: "¡Depósito confirmado y acreditado!",
@@ -71,7 +70,6 @@ const STATUS_MESSAGES: Record<string, { title: string; subtitle: string }> = {
 export default function DepositosPage() {
     const [view, setView] = useState<View>("form");
     const [token, setToken] = useState("");
-    const [amount, setAmount] = useState("20");
     const [deposit, setDeposit] = useState<CryptoDeposit | null>(null);
     const [loading, setLoading] = useState(false);
     const [statusLoading, setStatusLoading] = useState(false);
@@ -160,7 +158,6 @@ export default function DepositosPage() {
 
         setView("form");
         setDeposit(null);
-        setAmount("20");
         setError("");
         setCopiedAddress(false);
         setCopiedAmount(false);
@@ -168,19 +165,6 @@ export default function DepositosPage() {
 
     const createCryptoDeposit = async () => {
         setError("");
-
-        const value = Number(amount);
-
-        if (
-            !Number.isFinite(value) ||
-            value < MIN_AMOUNT ||
-            value > MAX_AMOUNT ||
-            Math.round(value * 100) !== value * 100
-        ) {
-            setError("Ingresa un monto entre $20 y $10.000.");
-            return;
-        }
-
         setLoading(true);
 
         try {
@@ -195,7 +179,7 @@ export default function DepositosPage() {
                         Authorization: `Bearer ${freshToken}`,
                     },
                     body: JSON.stringify({
-                        amount: value,
+                        amount: MIN_AMOUNT,
                     }),
                 }
             );
@@ -211,13 +195,6 @@ export default function DepositosPage() {
                     );
 
                     if (
-                        serverMessage.toLowerCase().includes("mínimo") ||
-                        serverMessage.toLowerCase().includes("minimal") ||
-                        serverMessage.toLowerCase().includes("amount_minimal")
-                    ) {
-                        message =
-                            "El monto es inferior al mínimo permitido.";
-                    } else if (
                         response.status === 401 ||
                         response.status === 403
                     ) {
@@ -261,7 +238,7 @@ export default function DepositosPage() {
                 pay_address: String(data.pay_address),
                 pay_amount: String(data.pay_amount),
                 pay_currency: currency,
-                amount_usd: Number(data.amount_usd ?? value),
+                amount_usd: Number(data.amount_usd ?? MIN_AMOUNT),
                 payment_status: String(
                     data.payment_status || "waiting"
                 ).toLowerCase(),
@@ -468,11 +445,7 @@ export default function DepositosPage() {
                             </p>
 
                             <p className="mt-1 text-xs text-emerald-400">
-                                Min. $20
-                            </p>
-
-                            <p className="text-xs text-zinc-500">
-                                Máx. $10.000
+                                Mínimo $20
                             </p>
                         </div>
 
@@ -496,14 +469,14 @@ export default function DepositosPage() {
                                         </h2>
 
                                         <p className="text-xs text-zinc-500">
-                                            Red TRON (TRC20)
+                                            Red TRON (TRC20) · Detección automática
                                         </p>
                                     </div>
                                 </div>
 
                                 <div className="mb-4 rounded-lg border border-emerald-500/20 bg-emerald-500/[0.05] px-4 py-3">
                                     <p className="text-xs text-zinc-400">
-                                        Monto mínimo
+                                        Mínimo
                                     </p>
 
                                     <p className="mt-1 text-xl font-bold text-emerald-400">
@@ -511,35 +484,8 @@ export default function DepositosPage() {
                                     </p>
 
                                     <p className="mt-1 text-xs text-zinc-500">
-                                        Máximo $10.000 USD
+                                        AXIOM detecta tu pago y acredita el saldo automáticamente.
                                     </p>
-                                </div>
-
-                                <label className="mb-2 block text-xs font-semibold text-zinc-300">
-                                    Valor a depositar
-                                </label>
-
-                                <div className="flex items-center rounded-lg border border-white/10 bg-black/30 px-3 focus-within:border-emerald-500">
-                                    <span className="text-lg font-bold text-zinc-500">
-                                        $
-                                    </span>
-
-                                    <input
-                                        type="number"
-                                        min={MIN_AMOUNT}
-                                        max={MAX_AMOUNT}
-                                        step="0.01"
-                                        value={amount}
-                                        onChange={(event) =>
-                                            setAmount(event.target.value)
-                                        }
-                                        className="w-full bg-transparent px-3 py-3 text-lg font-bold outline-none"
-                                        placeholder="20.00"
-                                    />
-
-                                    <span className="text-xs text-zinc-500">
-                                        USD
-                                    </span>
                                 </div>
 
                                 {error && (
@@ -570,7 +516,7 @@ export default function DepositosPage() {
                                         </>
                                     ) : (
                                         <>
-                                            Depositar
+                                            Generar depósito (Mínimo $20)
                                             <ArrowRight className="h-4 w-4" />
                                         </>
                                     )}
@@ -598,7 +544,7 @@ export default function DepositosPage() {
 
                                 <div className="rounded-lg border border-white/10 bg-black/20 p-4">
                                     <p className="text-xs text-zinc-500">
-                                        Valor del depósito
+                                        Mínimo del depósito
                                     </p>
 
                                     <p className="mt-1 text-2xl font-bold text-emerald-400">
