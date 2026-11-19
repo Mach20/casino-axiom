@@ -652,29 +652,11 @@ export default function DepositosPage() {
                                             </div>
                                         </div>
 
-                                        <div className="mt-7 grid gap-4 sm:grid-cols-2">
-                                            <div className="rounded-xl border border-white/10 bg-black/20 p-5">
-                                                <p className="text-sm text-zinc-500">
-                                                    Valor del depósito
-                                                </p>
-                                                <p className="mt-2 text-2xl font-bold text-emerald-400">
-                                                    ${deposit.amount_usd.toFixed(2)} USD
-                                                </p>
-                                            </div>
-
-                                            <div className="rounded-xl border border-white/10 bg-black/20 p-5">
-                                                <p className="text-sm text-zinc-500">
-                                                    Cantidad exacta a enviar
-                                                </p>
-                                                <p className="mt-2 break-all text-2xl font-bold">
-                                                    {deposit.pay_amount} {selectedCrypto.symbol}
-                                                </p>
-                                            </div>
-                                        </div>
+                                        {/* DIRECCIÓN DE ENVÍO */}
 
                                         <div className="mt-8">
                                             <p className="mb-3 text-sm font-semibold">
-                                                Dirección de recepción
+                                                Dirección de envío
                                             </p>
 
                                             <div className="flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-black/30 p-4 sm:p-5">
@@ -701,6 +683,32 @@ export default function DepositosPage() {
                                                     Dirección copiada.
                                                 </p>
                                             )}
+                                        </div>
+
+                                        {/* CANTIDAD Y VALOR */}
+
+                                        <div className="mt-6 rounded-xl border border-white/10 bg-black/20 p-5">
+                                            <p className="text-sm text-zinc-500">
+                                                Cantidad exacta que debes enviar
+                                            </p>
+
+                                            <p className="mt-2 break-all text-2xl font-bold text-emerald-400">
+                                                {deposit.pay_amount} {selectedCrypto.symbol}
+                                            </p>
+
+                                            <div className="mt-5 border-t border-white/10 pt-4">
+                                                <p className="text-sm text-zinc-500">
+                                                    Valor del depósito
+                                                </p>
+
+                                                <p className="mt-1 text-xl font-bold text-white">
+                                                    ${deposit.amount_usd.toFixed(2)} USD
+                                                </p>
+
+                                                <p className="mt-2 text-xs text-zinc-500">
+                                                    Mínimo de depósito: $20 USD
+                                                </p>
+                                            </div>
                                         </div>
 
                                         <div className="mt-6 rounded-xl border border-white/10 bg-black/20 p-5">
