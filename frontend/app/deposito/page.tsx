@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useState } from "react";
@@ -16,22 +17,23 @@ import {
     ExternalLink,
     Clock3,
     AlertTriangle,
+    RefreshCw,
 } from "lucide-react";
 
 const API_URL = "https://casino-axiom.ethiodeploy.app";
 const WHATSAPP_URL =
     "https://wa.me/593992241485?text=Hola%2C%20quiero%20realizar%20un%20dep%C3%B3sito%20en%20AXIOM.";
+
 const MIN_AMOUNT = 10;
 const MAX_AMOUNT = 10000;
 
 type CryptoDeposit = {
-    deposit_id: number | string;
-    address: string;
-    amount_usdt: number | string;
-    network: string;
-    status?: string;
-    expires_at?: string;
-    qr_code_url?: string;
+    order_id: string;
+    pay_address: string;
+    pay_amount: string;
+    pay_currency: string;
+    amount_usd: number;
+    payment_status: string;
 };
 
 type View = "home" | "crypto" | "crypto-details";
@@ -42,6 +44,7 @@ export default function DepositosPage() {
     const [amount, setAmount] = useState("10");
     const [deposit, setDeposit] = useState<CryptoDeposit | null>(null);
     const [loading, setLoading] = useState(false);
+    const [statusLoading, setStatusLoading] = useState(false);
     const [sessionLoading, setSessionLoading] = useState(true);
     const [error, setError] = useState("");
     const [copied, setCopied] = useState(false);
@@ -63,7 +66,9 @@ export default function DepositosPage() {
                 await supabase.auth.refreshSession();
 
             if (refreshError || !refreshed.session) {
-                throw new Error("No se pudo renovar tu sesión. Inicia sesión nuevamente.");
+                throw new Error(
+                    "No se pudo renovar tu sesión. Inicia sesión nuevamente."
+                );
             }
 
             session = refreshed.session;
@@ -82,6 +87,7 @@ export default function DepositosPage() {
         const loadSession = async () => {
             try {
                 const freshToken = await getFreshAccessToken();
+
                 if (active) {
                     setToken(freshToken);
                     setError("");
@@ -105,7 +111,9 @@ export default function DepositosPage() {
         const {
             data: { subscription },
         } = supabase.auth.onAuthStateChange((_event, session) => {
-            if (active) setToken(session?.access_token || "");
+            if (active) {
+                setToken(session?.access_token || "");
+            }
         });
 
         return () => {
@@ -116,6 +124,7 @@ export default function DepositosPage() {
 
     const goHome = () => {
         if (loading) return;
+
         setView("home");
         setAmount("10");
         setDeposit(null);
@@ -127,6 +136,7 @@ export default function DepositosPage() {
         setError("");
 
         const value = Number(amount);
+
         if (
             !Number.isFinite(value) ||
             value < MIN_AMOUNT ||
@@ -142,28 +152,34 @@ export default function DepositosPage() {
         try {
             const freshToken = await getFreshAccessToken();
 
-            // Este endpoint debe implementarse en el backend FastAPI.
-            const response = await fetch(`${API_URL}/crypto/deposits/request`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${freshToken}`,
-                },
-                body: JSON.stringify({
-                    amount_usd: value,
-                    network: "TRON",
-                    token: "USDT",
-                }),
-            });
+            const response = await fetch(
+                `${API_URL}/crypto/deposits/create`,
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${freshToken}`,
+                    },
+                    body: JSON.stringify({
+                        amount: value,
+                    }),
+                }
+            );
 
             if (!response.ok) {
                 let message = `Error del servidor (${response.status}).`;
+
                 try {
                     const data = await response.json();
-                    message = data.detail || data.message || data.error || message;
+                    message =
+                        data.detail ||
+                        data.message ||
+                        data.error ||
+                        message;
                 } catch {
-                    // Mantener el mensaje HTTP si la respuesta no es JSON.
+                    // Mantener el mensaje HTTP.
                 }
+
                 throw new Error(message);
             }
 
@@ -171,27 +187,31 @@ export default function DepositosPage() {
 
             if (
                 !data.success ||
-                !data.deposit_id ||
-                !data.address ||
-                data.amount_usdt === undefined
+                !data.order_id ||
+                !data.pay_address ||
+                data.pay_amount === undefined
             ) {
                 throw new Error(
-                    "El servidor no devolvió los datos necesarios para el depósito crypto."
+                    "El servidor no devolvió los datos necesarios para el pago."
                 );
             }
 
             setDeposit({
-                deposit_id: data.deposit_id,
-                address: String(data.address),
-                amount_usdt: data.amount_usdt,
-                network: String(data.network || "TRON (TRC20)"),
-                status: String(data.status || "pending"),
-                expires_at: data.expires_at,
-                qr_code_url: data.qr_code_url,
+                order_id: String(data.order_id),
+                pay_address: String(data.pay_address),
+                pay_amount: String(data.pay_amount),
+                pay_currency: String(data.pay_currency || "usdttrc20"),
+                amount_usd: Number(data.amount_usd ?? value),
+                payment_status: String(
+                    data.payment_status || "waiting"
+                ),
             });
+
             setView("crypto-details");
+            setError("");
         } catch (err) {
             console.error("Error al crear depósito crypto:", err);
+
             setError(
                 err instanceof TypeError
                     ? "No se pudo conectar con AXIOM. Comprueba que el backend esté disponible y que CORS esté configurado."
@@ -204,16 +224,124 @@ export default function DepositosPage() {
         }
     };
 
-    const copyAddress = async () => {
-        if (!deposit?.address) return;
+    const refreshDepositStatus = async () => {
+        if (!deposit?.order_id || statusLoading) return;
+
+        setStatusLoading(true);
+
         try {
-            await navigator.clipboard.writeText(deposit.address);
+            const freshToken = await getFreshAccessToken();
+
+            const response = await fetch(
+                `${API_URL}/crypto/deposits/${encodeURIComponent(
+                    deposit.order_id
+                )}`,
+                {
+                    method: "GET",
+                    headers: {
+                        Authorization: `Bearer ${freshToken}`,
+                    },
+                    cache: "no-store",
+                }
+            );
+
+            if (!response.ok) {
+                let message = `No se pudo consultar el estado (${response.status}).`;
+
+                try {
+                    const data = await response.json();
+                    message = data.detail || message;
+                } catch {
+                    // Mantener mensaje.
+                }
+
+                throw new Error(message);
+            }
+
+            const data = await response.json();
+
+            const newStatus = String(
+                data.payment_status ||
+                data.status ||
+                deposit.payment_status
+            );
+
+            setDeposit((previous) =>
+                previous
+                    ? {
+                          ...previous,
+                          payment_status: newStatus,
+                      }
+                    : previous
+            );
+        } catch (err) {
+            console.error("Error consultando estado del depósito:", err);
+        } finally {
+            setStatusLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        if (
+            view !== "crypto-details" ||
+            !deposit?.order_id
+        ) {
+            return;
+        }
+
+        const status = deposit.payment_status.toLowerCase();
+
+        if (
+            ["finished", "failed", "expired", "refunded"].includes(status)
+        ) {
+            return;
+        }
+
+        const interval = window.setInterval(() => {
+            refreshDepositStatus();
+        }, 5000);
+
+        return () => window.clearInterval(interval);
+    }, [view, deposit?.order_id, deposit?.payment_status]);
+
+    const copyAddress = async () => {
+        if (!deposit?.pay_address) return;
+
+        try {
+            await navigator.clipboard.writeText(deposit.pay_address);
             setCopied(true);
             window.setTimeout(() => setCopied(false), 1800);
         } catch {
             setError("No se pudo copiar la dirección. Cópiala manualmente.");
         }
     };
+
+    const getStatusLabel = (status: string) => {
+        const normalized = status.toLowerCase();
+
+        const labels: Record<string, string> = {
+            waiting: "Esperando pago",
+            confirming: "Confirmando pago",
+            confirmed: "Pago confirmado",
+            sending: "Procesando acreditación",
+            finished: "Pago completado",
+            failed: "Pago fallido",
+            expired: "Pago expirado",
+            refunded: "Pago reembolsado",
+            partially_paid: "Pago parcial",
+        };
+
+        return labels[normalized] || status.toUpperCase();
+    };
+
+    const isFinished =
+        deposit?.payment_status.toLowerCase() === "finished";
+
+    const isFailed =
+        deposit &&
+        ["failed", "expired", "refunded"].includes(
+            deposit.payment_status.toLowerCase()
+        );
 
     return (
         <main className="min-h-screen bg-[#080b0a] text-white">
@@ -233,8 +361,7 @@ export default function DepositosPage() {
                     </div>
 
                     <div className="mb-8">
-                        <h1 className="text-3xl font-bold">Depositos</h1>
-                        
+                        <h1 className="text-3xl font-bold">Depósitos</h1>
                     </div>
 
                     <div className="grid max-w-4xl gap-5 md:grid-cols-2">
@@ -247,13 +374,17 @@ export default function DepositosPage() {
                             <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-emerald-500/20 bg-emerald-500/10">
                                 <MessageCircle className="h-7 w-7 text-emerald-400" />
                             </div>
+
                             <div className="min-w-0 flex-1">
-                                <p className="font-bold">Transferencia bancaria</p>
-                                
+                                <p className="font-bold">
+                                    Transferencia bancaria
+                                </p>
+
                                 <p className="mt-3 text-xs font-semibold text-emerald-400">
                                     Min: $5 Max: $10.000
                                 </p>
                             </div>
+
                             <ExternalLink className="h-5 w-5 shrink-0 text-zinc-500 transition group-hover:text-emerald-400" />
                         </a>
 
@@ -268,17 +399,18 @@ export default function DepositosPage() {
                             <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-emerald-500/20 bg-emerald-500/10">
                                 <Wallet className="h-7 w-7 text-emerald-400" />
                             </div>
+
                             <div className="min-w-0 flex-1">
-                                <p className="font-bold">crypto</p>
-                                
+                                <p className="font-bold">Criptomonedas</p>
+
                                 <p className="mt-3 text-xs font-semibold text-emerald-400">
                                     Min: $10 Max: $10.000
                                 </p>
                             </div>
+
                             <ArrowRight className="h-5 w-5 shrink-0 text-zinc-500 transition group-hover:translate-x-1 group-hover:text-emerald-400" />
                         </button>
                     </div>
-
                 </div>
             )}
 
@@ -299,8 +431,11 @@ export default function DepositosPage() {
                             <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-emerald-500/20 bg-emerald-500/10">
                                 <Wallet className="h-7 w-7 text-emerald-400" />
                             </div>
+
                             <div>
-                                <h1 className="text-2xl font-bold">Depósito con USDT</h1>
+                                <h1 className="text-2xl font-bold">
+                                    Depósito con USDT
+                                </h1>
                                 <p className="mt-1 text-sm text-zinc-400">
                                     Red TRON (TRC20)
                                 </p>
@@ -310,11 +445,14 @@ export default function DepositosPage() {
                         <div className="mx-auto max-w-xl rounded-2xl border border-white/10 bg-[#111714] p-5 sm:p-8">
                             <div className="mb-6 flex items-center justify-between rounded-xl border border-white/10 bg-black/20 p-4">
                                 <div>
-                                    <p className="text-sm font-semibold">Tether USD (USDT)</p>
+                                    <p className="text-sm font-semibold">
+                                        Tether USD (USDT)
+                                    </p>
                                     <p className="mt-1 text-xs text-zinc-500">
                                         Red seleccionada: TRON / TRC20
                                     </p>
                                 </div>
+
                                 <span className="rounded-lg bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-400">
                                     USDT
                                 </span>
@@ -323,19 +461,28 @@ export default function DepositosPage() {
                             <label className="mb-2 block text-sm font-medium text-zinc-300">
                                 Monto que deseas depositar (USD)
                             </label>
+
                             <div className="flex items-center rounded-xl border border-white/10 bg-black/30 px-4 transition focus-within:border-emerald-500">
-                                <span className="text-xl font-bold text-zinc-500">$</span>
+                                <span className="text-xl font-bold text-zinc-500">
+                                    $
+                                </span>
+
                                 <input
                                     type="number"
                                     min={MIN_AMOUNT}
                                     max={MAX_AMOUNT}
                                     step="0.01"
                                     value={amount}
-                                    onChange={(event) => setAmount(event.target.value)}
+                                    onChange={(event) =>
+                                        setAmount(event.target.value)
+                                    }
                                     className="w-full bg-transparent px-3 py-4 text-xl font-bold outline-none"
                                     placeholder="10.00"
                                 />
-                                <span className="text-xs text-zinc-500">USD</span>
+
+                                <span className="text-xs text-zinc-500">
+                                    USD
+                                </span>
                             </div>
 
                             <div className="mt-3 flex justify-between text-xs text-zinc-500">
@@ -346,10 +493,13 @@ export default function DepositosPage() {
                             <div className="mt-6 rounded-xl border border-emerald-500/15 bg-emerald-500/[0.05] p-4">
                                 <div className="flex gap-3">
                                     <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-400" />
+
                                     <p className="text-xs leading-relaxed text-zinc-400">
-                                        AXIOM debe generar una solicitud de depósito y verificar
-                                        la transferencia en la blockchain. No envíes USDT hasta
-                                        que aparezca una dirección válida en la siguiente pantalla.
+                                        AXIOM generará una solicitud de pago
+                                        mediante NOWPayments. Envía únicamente
+                                        USDT por la red TRON (TRC20) y respeta
+                                        el monto exacto que aparecerá en la
+                                        siguiente pantalla.
                                     </p>
                                 </div>
                             </div>
@@ -363,7 +513,11 @@ export default function DepositosPage() {
                             <button
                                 type="button"
                                 onClick={createCryptoDeposit}
-                                disabled={loading || sessionLoading || !token}
+                                disabled={
+                                    loading ||
+                                    sessionLoading ||
+                                    !token
+                                }
                                 className="mt-7 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-4 font-bold text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                                 {loading ? (
@@ -405,39 +559,40 @@ export default function DepositosPage() {
                                 <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-emerald-500/20 bg-emerald-500/10">
                                     <QrCode className="h-8 w-8 text-emerald-400" />
                                 </div>
+
                                 <h1 className="mt-5 text-2xl font-bold">
                                     Envía tu USDT
                                 </h1>
+
                                 <p className="mt-2 text-sm text-zinc-400">
-                                    Usa exclusivamente la red {deposit.network}.
+                                    Usa exclusivamente la red TRON (TRC20).
                                 </p>
                             </div>
 
                             <div className="mt-7 rounded-xl border border-white/10 bg-black/20 p-5 text-center">
-                                <p className="text-xs text-zinc-500">Monto exacto</p>
+                                <p className="text-xs text-zinc-500">
+                                    Monto exacto
+                                </p>
+
                                 <p className="mt-2 text-3xl font-bold text-emerald-400">
-                                    {deposit.amount_usdt} USDT
+                                    {deposit.pay_amount} USDT
+                                </p>
+
+                                <p className="mt-2 text-xs text-zinc-500">
+                                    Equivalente a ${deposit.amount_usd.toFixed(2)} USD
                                 </p>
                             </div>
-
-                            {deposit.qr_code_url && (
-                                <div className="mt-6 flex justify-center">
-                                    <img
-                                        src={deposit.qr_code_url}
-                                        alt="Código QR de la dirección de depósito"
-                                        className="h-48 w-48 rounded-xl bg-white p-2"
-                                    />
-                                </div>
-                            )}
 
                             <div className="mt-6">
                                 <p className="mb-2 text-sm font-semibold">
                                     Dirección de recepción
                                 </p>
+
                                 <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/30 p-3">
                                     <p className="min-w-0 flex-1 break-all font-mono text-sm text-zinc-200">
-                                        {deposit.address}
+                                        {deposit.pay_address}
                                     </p>
+
                                     <button
                                         type="button"
                                         onClick={copyAddress}
@@ -451,6 +606,7 @@ export default function DepositosPage() {
                                         )}
                                     </button>
                                 </div>
+
                                 {copied && (
                                     <p className="mt-2 text-xs text-emerald-400">
                                         Dirección copiada.
@@ -460,34 +616,86 @@ export default function DepositosPage() {
 
                             <div className="mt-6 grid gap-3 sm:grid-cols-2">
                                 <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-                                    <p className="text-xs text-zinc-500">Solicitud</p>
-                                    <p className="mt-1 font-semibold">
-                                        #{deposit.deposit_id}
+                                    <p className="text-xs text-zinc-500">
+                                        Solicitud
+                                    </p>
+
+                                    <p className="mt-1 break-all font-semibold">
+                                        #{deposit.order_id}
                                     </p>
                                 </div>
+
                                 <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-                                    <p className="text-xs text-zinc-500">Estado</p>
-                                    <p className="mt-1 font-semibold text-amber-400">
-                                        {deposit.status || "PENDIENTE"}
+                                    <p className="text-xs text-zinc-500">
+                                        Estado del pago
                                     </p>
+
+                                    <p
+                                        className={`mt-1 font-semibold ${
+                                            isFinished
+                                                ? "text-emerald-400"
+                                                : isFailed
+                                                  ? "text-red-400"
+                                                  : "text-amber-400"
+                                        }`}
+                                    >
+                                        {getStatusLabel(deposit.payment_status)}
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="mt-6 rounded-xl border border-white/10 bg-black/20 p-4">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div className="flex items-center gap-3">
+                                        {isFinished ? (
+                                            <Check className="h-5 w-5 text-emerald-400" />
+                                        ) : (
+                                            <Clock3 className="h-5 w-5 text-amber-400" />
+                                        )}
+
+                                        <div>
+                                            <p className="text-sm font-semibold">
+                                                {isFinished
+                                                    ? "Depósito confirmado"
+                                                    : "Verificación automática"}
+                                            </p>
+
+                                            <p className="mt-1 text-xs text-zinc-500">
+                                                {isFinished
+                                                    ? "Consulta el saldo de tu cuenta AXIOM."
+                                                    : "AXIOM consulta el estado del pago automáticamente."}
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {!isFinished && (
+                                        <button
+                                            type="button"
+                                            onClick={refreshDepositStatus}
+                                            disabled={statusLoading}
+                                            className="rounded-lg border border-white/10 p-3 text-zinc-300 transition hover:border-emerald-500/40 hover:text-emerald-400 disabled:opacity-50"
+                                            aria-label="Actualizar estado"
+                                        >
+                                            {statusLoading ? (
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                            ) : (
+                                                <RefreshCw className="h-4 w-4" />
+                                            )}
+                                        </button>
+                                    )}
                                 </div>
                             </div>
 
                             <div className="mt-6 flex gap-3 rounded-xl border border-amber-500/20 bg-amber-500/[0.05] p-4">
                                 <AlertTriangle className="h-5 w-5 shrink-0 text-amber-400" />
+
                                 <p className="text-xs leading-relaxed text-zinc-400">
-                                    Verifica la red y el monto antes de enviar. No envíes
-                                    otros tokens ni uses otra red. El saldo solo debe
-                                    acreditarse después de la confirmación on-chain.
+                                    Verifica la red y el monto antes de enviar.
+                                    No envíes otros tokens ni uses otra red.
+                                    Nunca compartas esta dirección como si
+                                    fuera una dirección para otra moneda.
                                 </p>
                             </div>
-
-                            {deposit.expires_at && (
-                                <p className="mt-4 flex items-center justify-center gap-2 text-xs text-zinc-500">
-                                    <Clock3 className="h-4 w-4" />
-                                    Válido hasta: {new Date(deposit.expires_at).toLocaleString()}
-                                </p>
-                            )}
 
                             <button
                                 type="button"
