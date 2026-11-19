@@ -753,9 +753,9 @@ async def create_crypto_deposit(
             )
 
             supabase.table("crypto_deposits").update({
-                "payment_status": "failed",
-                "updated_at": "now()",
-            }).eq("order_id", order_id).execute()
+    "payment_status": "failed",
+    "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+}).eq("order_id", order_id).execute()
 
             raise HTTPException(
                 status_code=502,
