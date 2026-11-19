@@ -11,7 +11,6 @@ import {
     Copy,
     Loader2,
     MessageCircle,
-    ShieldCheck,
     Wallet,
     QrCode,
     ExternalLink,
@@ -24,7 +23,7 @@ const API_URL = "https://casino-axiom.ethiodeploy.app";
 const WHATSAPP_URL =
     "https://wa.me/593992241485?text=Hola%2C%20quiero%20realizar%20un%20dep%C3%B3sito%20en%20AXIOM.";
 
-const MIN_AMOUNT = 10;
+const MIN_AMOUNT = 20;
 const MAX_AMOUNT = 10000;
 
 type CryptoDeposit = {
@@ -41,7 +40,7 @@ type View = "home" | "crypto" | "crypto-details";
 export default function DepositosPage() {
     const [view, setView] = useState<View>("home");
     const [token, setToken] = useState("");
-    const [amount, setAmount] = useState("10");
+    const [amount, setAmount] = useState("20");
     const [deposit, setDeposit] = useState<CryptoDeposit | null>(null);
     const [loading, setLoading] = useState(false);
     const [statusLoading, setStatusLoading] = useState(false);
@@ -126,7 +125,7 @@ export default function DepositosPage() {
         if (loading) return;
 
         setView("home");
-        setAmount("10");
+        setAmount("20");
         setDeposit(null);
         setError("");
         setCopied(false);
@@ -143,7 +142,7 @@ export default function DepositosPage() {
             value > MAX_AMOUNT ||
             Math.round(value * 100) !== value * 100
         ) {
-            setError("Ingresa un monto válido entre $10 y $10.000.");
+            setError("Ingresa un monto válido entre $20 y $10.000.");
             return;
         }
 
@@ -167,17 +166,30 @@ export default function DepositosPage() {
             );
 
             if (!response.ok) {
-                let message = `Error del servidor (${response.status}).`;
+                let message = "No se pudo generar el depósito. Intenta con un monto mayor o vuelve a intentarlo.";
 
                 try {
                     const data = await response.json();
-                    message =
-                        data.detail ||
-                        data.message ||
-                        data.error ||
-                        message;
+                    const serverMessage = String(
+                        data.detail || data.message || data.error || ""
+                    );
+
+                    if (
+                        serverMessage.toLowerCase().includes("mínimo") ||
+                        serverMessage.toLowerCase().includes("minimal") ||
+                        serverMessage.toLowerCase().includes("amount_minimal")
+                    ) {
+                        message =
+                            "No se pudo generar el depósito con ese monto. Intenta con un monto mayor.";
+                    } else if (
+                        response.status === 401 ||
+                        response.status === 403
+                    ) {
+                        message =
+                            "Tu sesión no está activa. Inicia sesión nuevamente.";
+                    }
                 } catch {
-                    // Mantener el mensaje HTTP.
+                    // Mantener el mensaje general.
                 }
 
                 throw new Error(message);
@@ -214,7 +226,7 @@ export default function DepositosPage() {
 
             setError(
                 err instanceof TypeError
-                    ? "No se pudo conectar con AXIOM. Comprueba que el backend esté disponible y que CORS esté configurado."
+                    ? "No se pudo conectar con AXIOM. Intenta nuevamente."
                     : err instanceof Error
                       ? err.message
                       : "No se pudo crear el depósito crypto."
@@ -404,7 +416,7 @@ export default function DepositosPage() {
                                 <p className="font-bold">Criptomonedas</p>
 
                                 <p className="mt-3 text-xs font-semibold text-emerald-400">
-                                    Min: $10 Max: $10.000
+                                    Min: $20 Max: $10.000
                                 </p>
                             </div>
 
@@ -427,39 +439,23 @@ export default function DepositosPage() {
                             Volver a depósitos
                         </button>
 
-                        <div className="mb-8 flex items-center gap-4">
-                            <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-emerald-500/20 bg-emerald-500/10">
-                                <Wallet className="h-7 w-7 text-emerald-400" />
-                            </div>
-
-                            <div>
-                                <h1 className="text-2xl font-bold">
-                                    Depósito con USDT
-                                </h1>
-                                <p className="mt-1 text-sm text-zinc-400">
-                                    Red TRON (TRC20)
-                                </p>
-                            </div>
-                        </div>
-
                         <div className="mx-auto max-w-xl rounded-2xl border border-white/10 bg-[#111714] p-5 sm:p-8">
-                            <div className="mb-6 flex items-center justify-between rounded-xl border border-white/10 bg-black/20 p-4">
-                                <div>
-                                    <p className="text-sm font-semibold">
-                                        Tether USD (USDT)
-                                    </p>
-                                    <p className="mt-1 text-xs text-zinc-500">
-                                        Red seleccionada: TRON / TRC20
-                                    </p>
+                            <div className="mb-8 text-center">
+                                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-emerald-500/20 bg-emerald-500/10">
+                                    <Wallet className="h-7 w-7 text-emerald-400" />
                                 </div>
 
-                                <span className="rounded-lg bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-400">
-                                    USDT
-                                </span>
+                                <h1 className="mt-4 text-2xl font-bold">
+                                    Depósito USDT
+                                </h1>
+
+                                <p className="mt-2 text-sm text-zinc-400">
+                                    Mínimo $20 USD
+                                </p>
                             </div>
 
                             <label className="mb-2 block text-sm font-medium text-zinc-300">
-                                Monto que deseas depositar (USD)
+                                Valor a depositar
                             </label>
 
                             <div className="flex items-center rounded-xl border border-white/10 bg-black/30 px-4 transition focus-within:border-emerald-500">
@@ -477,31 +473,12 @@ export default function DepositosPage() {
                                         setAmount(event.target.value)
                                     }
                                     className="w-full bg-transparent px-3 py-4 text-xl font-bold outline-none"
-                                    placeholder="10.00"
+                                    placeholder="20.00"
                                 />
 
                                 <span className="text-xs text-zinc-500">
                                     USD
                                 </span>
-                            </div>
-
-                            <div className="mt-3 flex justify-between text-xs text-zinc-500">
-                                <span>Mínimo $10</span>
-                                <span>Máximo $10.000</span>
-                            </div>
-
-                            <div className="mt-6 rounded-xl border border-emerald-500/15 bg-emerald-500/[0.05] p-4">
-                                <div className="flex gap-3">
-                                    <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-400" />
-
-                                    <p className="text-xs leading-relaxed text-zinc-400">
-                                        AXIOM generará una solicitud de pago
-                                        mediante NOWPayments. Envía únicamente
-                                        USDT por la red TRON (TRC20) y respeta
-                                        el monto exacto que aparecerá en la
-                                        siguiente pantalla.
-                                    </p>
-                                </div>
                             </div>
 
                             {error && (
@@ -518,12 +495,12 @@ export default function DepositosPage() {
                                     sessionLoading ||
                                     !token
                                 }
-                                className="mt-7 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-4 font-bold text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+                                className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-4 font-bold text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                                 {loading ? (
                                     <>
                                         <Loader2 className="h-5 w-5 animate-spin" />
-                                        Generando solicitud...
+                                        Generando depósito...
                                     </>
                                 ) : sessionLoading ? (
                                     <>
@@ -532,11 +509,27 @@ export default function DepositosPage() {
                                     </>
                                 ) : (
                                     <>
-                                        Generar depósito USDT
+                                        Depositar
                                         <ArrowRight className="h-5 w-5" />
                                     </>
                                 )}
                             </button>
+
+                            <div className="mt-6 border-t border-white/10 pt-5">
+                                <p className="text-sm font-semibold text-white">
+                                    ¿Cómo depositar?
+                                </p>
+
+                                <ol className="mt-3 list-inside list-decimal space-y-2 text-xs leading-relaxed text-zinc-400">
+                                    <li>Ingresa el valor que deseas depositar.</li>
+                                    <li>Presiona el botón Depositar.</li>
+                                    <li>Envía el monto exacto a la dirección que aparecerá.</li>
+                                </ol>
+
+                                <p className="mt-3 text-xs text-zinc-500">
+                                    Utiliza únicamente USDT por la red TRON (TRC20).
+                                </p>
+                            </div>
                         </div>
                     </div>
                 </section>
