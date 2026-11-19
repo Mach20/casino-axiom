@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -228,8 +227,8 @@ export default function DepositosPage() {
                 err instanceof TypeError
                     ? "No se pudo conectar con AXIOM. Intenta nuevamente."
                     : err instanceof Error
-                      ? err.message
-                      : "No se pudo crear el depósito crypto."
+                        ? err.message
+                        : "No se pudo crear el depósito crypto."
             );
         } finally {
             setLoading(false);
@@ -281,9 +280,9 @@ export default function DepositosPage() {
             setDeposit((previous) =>
                 previous
                     ? {
-                          ...previous,
-                          payment_status: newStatus,
-                      }
+                        ...previous,
+                        payment_status: newStatus,
+                    }
                     : previous
             );
         } catch (err) {
@@ -564,15 +563,15 @@ export default function DepositosPage() {
 
                             <div className="mt-7 rounded-xl border border-white/10 bg-black/20 p-5 text-center">
                                 <p className="text-xs text-zinc-500">
-                                    Monto exacto
+                                    Valor del depósito
                                 </p>
 
                                 <p className="mt-2 text-3xl font-bold text-emerald-400">
-                                    {deposit.pay_amount} USDT
+                                    ${deposit.amount_usd.toFixed(2)} USD
                                 </p>
 
-                                <p className="mt-2 text-xs text-zinc-500">
-                                    Equivalente a ${deposit.amount_usd.toFixed(2)} USD
+                                <p className="mt-3 text-sm text-zinc-400">
+                                    Envía {deposit.pay_amount} USDT por TRC20
                                 </p>
                             </div>
 
@@ -618,23 +617,7 @@ export default function DepositosPage() {
                                     </p>
                                 </div>
 
-                                <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-                                    <p className="text-xs text-zinc-500">
-                                        Estado del pago
-                                    </p>
-
-                                    <p
-                                        className={`mt-1 font-semibold ${
-                                            isFinished
-                                                ? "text-emerald-400"
-                                                : isFailed
-                                                  ? "text-red-400"
-                                                  : "text-amber-400"
-                                        }`}
-                                    >
-                                        {getStatusLabel(deposit.payment_status)}
-                                    </p>
-                                </div>
+                                
                             </div>
 
                             <div className="mt-6 rounded-xl border border-white/10 bg-black/20 p-4">
