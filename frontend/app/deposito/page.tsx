@@ -9,72 +9,21 @@ import {
     Check,
     Copy,
     Loader2,
+    MessageCircle,
     Wallet,
+    QrCode,
+    ExternalLink,
     Clock3,
     AlertTriangle,
     RefreshCw,
 } from "lucide-react";
 
 const API_URL = "https://casino-axiom.ethiodeploy.app";
-const DEPOSIT_AMOUNT = 20;
+const WHATSAPP_URL =
+    "https://wa.me/593992241485?text=Hola%2C%20quiero%20realizar%20un%20dep%C3%B3sito%20en%20AXIOM.";
 
-type CryptoOption = {
-    id: string;
-    name: string;
-    symbol: string;
-    apiCurrency: string;
-    network: string;
-    color: string;
-    description: string;
-};
-
-const CRYPTO_OPTIONS: CryptoOption[] = [
-    {
-        id: "btc",
-        name: "Bitcoin",
-        symbol: "BTC",
-        apiCurrency: "btc",
-        network: "Bitcoin",
-        color: "#F7931A",
-        description: "Red Bitcoin",
-    },
-    {
-        id: "eth",
-        name: "Ethereum",
-        symbol: "ETH",
-        apiCurrency: "eth",
-        network: "Ethereum (ERC20)",
-        color: "#627EEA",
-        description: "Red Ethereum",
-    },
-    {
-        id: "ltc",
-        name: "Litecoin",
-        symbol: "LTC",
-        apiCurrency: "ltc",
-        network: "Litecoin",
-        color: "#B8B8B8",
-        description: "Red Litecoin",
-    },
-    {
-        id: "usdt",
-        name: "Tether",
-        symbol: "USDT",
-        apiCurrency: "usdttrc20",
-        network: "TRON (TRC20)",
-        color: "#26A17B",
-        description: "Red TRON",
-    },
-    {
-        id: "bnb",
-        name: "BNB",
-        symbol: "BNB",
-        apiCurrency: "bnbbsc",
-        network: "BNB Smart Chain (BEP20)",
-        color: "#F3BA2F",
-        description: "Red BNB Smart Chain",
-    },
-];
+const MIN_AMOUNT = 20;
+const MAX_AMOUNT = 10000;
 
 type CryptoDeposit = {
     order_id: string;
@@ -85,57 +34,12 @@ type CryptoDeposit = {
     payment_status: string;
 };
 
-type View = "home" | "crypto";
-
-function CryptoIcon({
-    currency,
-    size = "large",
-}: {
-    currency: CryptoOption;
-    size?: "small" | "large";
-}) {
-    const dimensions =
-        size === "large"
-            ? "h-14 w-14 text-2xl"
-            : "h-10 w-10 text-lg";
-
-    return (
-        <div
-            className={`flex shrink-0 items-center justify-center rounded-full font-extrabold ${dimensions}`}
-            style={{
-                backgroundColor: `${currency.color}18`,
-                color: currency.color,
-                border: `1px solid ${currency.color}45`,
-            }}
-        >
-            {currency.symbol === "BTC" ? (
-                <span>₿</span>
-            ) : currency.symbol === "ETH" ? (
-                <svg
-                    viewBox="0 0 32 32"
-                    className="h-7 w-7"
-                    fill="currentColor"
-                >
-                    <path d="M16 2L7 16l9 5.5 9-5.5L16 2z" opacity=".9" />
-                    <path d="M7 18l9 12 9-12-9 5.5L7 18z" opacity=".6" />
-                </svg>
-            ) : currency.symbol === "LTC" ? (
-                <span>Ł</span>
-            ) : currency.symbol === "USDT" ? (
-                <span>₮</span>
-            ) : (
-                <span className="text-xl">◆</span>
-            )}
-        </div>
-    );
-}
+type View = "home" | "crypto" | "crypto-details";
 
 export default function DepositosPage() {
     const [view, setView] = useState<View>("home");
     const [token, setToken] = useState("");
-    const [selectedCrypto, setSelectedCrypto] =
-        useState<CryptoOption>(CRYPTO_OPTIONS[3]);
-
+    const [amount, setAmount] = useState("20");
     const [deposit, setDeposit] = useState<CryptoDeposit | null>(null);
     const [loading, setLoading] = useState(false);
     const [statusLoading, setStatusLoading] = useState(false);
@@ -147,9 +51,7 @@ export default function DepositosPage() {
         const { data, error } = await supabase.auth.getSession();
 
         if (error || !data.session) {
-            throw new Error(
-                "Tu sesión no está activa. Inicia sesión nuevamente."
-            );
+            throw new Error("Tu sesión no está activa. Inicia sesión nuevamente.");
         }
 
         let session = data.session;
@@ -171,9 +73,7 @@ export default function DepositosPage() {
         }
 
         if (!session.access_token) {
-            throw new Error(
-                "No se pudo obtener el token de tu sesión."
-            );
+            throw new Error("No se pudo obtener el token de tu sesión.");
         }
 
         return session.access_token;
@@ -224,18 +124,27 @@ export default function DepositosPage() {
         if (loading) return;
 
         setView("home");
+        setAmount("20");
         setDeposit(null);
         setError("");
         setCopied(false);
     };
 
-    const createCryptoDeposit = async (crypto: CryptoOption) => {
-        if (loading || sessionLoading || !token) return;
-
-        setSelectedCrypto(crypto);
-        setDeposit(null);
+    const createCryptoDeposit = async () => {
         setError("");
-        setCopied(false);
+
+        const value = Number(amount);
+
+        if (
+            !Number.isFinite(value) ||
+            value < MIN_AMOUNT ||
+            value > MAX_AMOUNT ||
+            Math.round(value * 100) !== value * 100
+        ) {
+            setError("Ingresa un monto válido entre $20 y $10.000.");
+            return;
+        }
+
         setLoading(true);
 
         try {
@@ -250,37 +159,36 @@ export default function DepositosPage() {
                         Authorization: `Bearer ${freshToken}`,
                     },
                     body: JSON.stringify({
-                        amount: DEPOSIT_AMOUNT,
-                        pay_currency: crypto.apiCurrency,
+                        amount: value,
                     }),
                 }
             );
 
             if (!response.ok) {
-                let message =
-                    "No se pudo generar el depósito. Intenta nuevamente.";
+                let message = "No se pudo generar el depósito. Intenta con un monto mayor o vuelve a intentarlo.";
 
                 try {
                     const data = await response.json();
-
                     const serverMessage = String(
-                        data.detail ||
-                        data.message ||
-                        data.error ||
-                        ""
+                        data.detail || data.message || data.error || ""
                     );
 
                     if (
+                        serverMessage.toLowerCase().includes("mínimo") ||
+                        serverMessage.toLowerCase().includes("minimal") ||
+                        serverMessage.toLowerCase().includes("amount_minimal")
+                    ) {
+                        message =
+                            "No se pudo generar el depósito con ese monto. Intenta con un monto mayor.";
+                    } else if (
                         response.status === 401 ||
                         response.status === 403
                     ) {
                         message =
                             "Tu sesión no está activa. Inicia sesión nuevamente.";
-                    } else if (serverMessage) {
-                        message = serverMessage;
                     }
                 } catch {
-                    // Mantener mensaje general.
+                    // Mantener el mensaje general.
                 }
 
                 throw new Error(message);
@@ -303,15 +211,14 @@ export default function DepositosPage() {
                 order_id: String(data.order_id),
                 pay_address: String(data.pay_address),
                 pay_amount: String(data.pay_amount),
-                pay_currency: String(
-                    data.pay_currency || crypto.apiCurrency
-                ),
-                amount_usd: Number(data.amount_usd ?? DEPOSIT_AMOUNT),
+                pay_currency: String(data.pay_currency || "usdttrc20"),
+                amount_usd: Number(data.amount_usd ?? value),
                 payment_status: String(
                     data.payment_status || "waiting"
                 ),
             });
 
+            setView("crypto-details");
             setError("");
         } catch (err) {
             console.error("Error al crear depósito crypto:", err);
@@ -350,8 +257,7 @@ export default function DepositosPage() {
             );
 
             if (!response.ok) {
-                let message =
-                    `No se pudo consultar el estado (${response.status}).`;
+                let message = `No se pudo consultar el estado (${response.status}).`;
 
                 try {
                     const data = await response.json();
@@ -380,10 +286,7 @@ export default function DepositosPage() {
                     : previous
             );
         } catch (err) {
-            console.error(
-                "Error consultando estado del depósito:",
-                err
-            );
+            console.error("Error consultando estado del depósito:", err);
         } finally {
             setStatusLoading(false);
         }
@@ -391,7 +294,7 @@ export default function DepositosPage() {
 
     useEffect(() => {
         if (
-            view !== "crypto" ||
+            view !== "crypto-details" ||
             !deposit?.order_id
         ) {
             return;
@@ -420,9 +323,7 @@ export default function DepositosPage() {
             setCopied(true);
             window.setTimeout(() => setCopied(false), 1800);
         } catch {
-            setError(
-                "No se pudo copiar la dirección. Cópiala manualmente."
-            );
+            setError("No se pudo copiar la dirección. Cópiala manualmente.");
         }
     };
 
@@ -458,345 +359,327 @@ export default function DepositosPage() {
             <Header />
 
             {view === "home" && (
-                <div className="mx-auto max-w-7xl px-5 py-8">
-                    <button
-                        type="button"
-                        onClick={() => window.history.back()}
-                        className="mb-8 flex items-center gap-2 rounded-xl border border-white/10 bg-[#111714] px-4 py-3 text-sm font-semibold text-zinc-300 transition hover:border-emerald-500/40 hover:text-white"
-                    >
-                        <ArrowLeft className="h-4 w-4" />
-                        Volver
-                    </button>
+                <div className="mx-auto max-w-6xl px-5 py-8">
+                    <div className="mb-7">
+                        <button
+                            type="button"
+                            onClick={() => window.history.back()}
+                            className="flex items-center gap-2 rounded-xl border border-white/10 bg-[#111714] px-4 py-3 text-sm font-semibold text-zinc-300 transition hover:border-emerald-500/40 hover:bg-[#141e18] hover:text-white"
+                        >
+                            <ArrowLeft className="h-4 w-4" />
+                            Volver
+                        </button>
+                    </div>
 
-                    <h1 className="mb-2 text-3xl font-bold">
-                        Depósitos
-                    </h1>
+                    <div className="mb-8">
+                        <h1 className="text-3xl font-bold">Depósitos</h1>
+                    </div>
 
-                    <p className="mb-8 text-sm text-zinc-400">
-                        Selecciona tu método de pago.
-                    </p>
-
-                    <div className="grid gap-5 md:grid-cols-[270px_1fr]">
-                        <div>
-                            <p className="mb-3 text-xs font-bold uppercase tracking-wider text-zinc-500">
-                                Método de pago
-                            </p>
-
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setError("");
-                                    setDeposit(null);
-                                    setView("crypto");
-                                }}
-                                className="flex w-full items-center gap-3 rounded-xl border border-emerald-500/40 bg-[#121b16] p-4 text-left transition hover:border-emerald-400 hover:bg-[#17231b]"
-                            >
-                                <div className="flex h-11 w-11 items-center justify-center rounded-lg border border-emerald-500/20 bg-emerald-500/10">
-                                    <Wallet className="h-6 w-6 text-emerald-400" />
-                                </div>
-
-                                <div className="min-w-0 flex-1">
-                                    <p className="font-bold">
-                                        Criptomonedas
-                                    </p>
-                                </div>
-
-                                <ArrowRight className="h-4 w-4 text-emerald-400" />
-                            </button>
-                        </div>
-
-                        <div className="flex min-h-[250px] items-center justify-center rounded-2xl border border-white/10 bg-[#111714] p-8 text-center">
-                            <div>
-                                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-500/10">
-                                    <Wallet className="h-8 w-8 text-emerald-400" />
-                                </div>
-
-                                <h2 className="mt-5 text-xl font-bold">
-                                    Métodos de pago
-                                </h2>
+                    <div className="grid max-w-4xl gap-5 md:grid-cols-2">
+                        <a
+                            href={WHATSAPP_URL}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="group flex min-h-44 items-center gap-4 rounded-2xl border border-white/10 bg-[#111714] p-6 text-left transition hover:border-emerald-500/50 hover:bg-[#141e18]"
+                        >
+                            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-emerald-500/20 bg-emerald-500/10">
+                                <MessageCircle className="h-7 w-7 text-emerald-400" />
                             </div>
-                        </div>
+
+                            <div className="min-w-0 flex-1">
+                                <p className="font-bold">
+                                    Transferencia bancaria
+                                </p>
+
+                                <p className="mt-3 text-xs font-semibold text-emerald-400">
+                                    Min: $5 Max: $10.000
+                                </p>
+                            </div>
+
+                            <ExternalLink className="h-5 w-5 shrink-0 text-zinc-500 transition group-hover:text-emerald-400" />
+                        </a>
+
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setError("");
+                                setView("crypto");
+                            }}
+                            className="group flex min-h-44 items-center gap-4 rounded-2xl border border-emerald-500/25 bg-[#111714] p-6 text-left transition hover:border-emerald-400/70 hover:bg-[#141e18]"
+                        >
+                            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-emerald-500/20 bg-emerald-500/10">
+                                <Wallet className="h-7 w-7 text-emerald-400" />
+                            </div>
+
+                            <div className="min-w-0 flex-1">
+                                <p className="font-bold">Criptomonedas</p>
+
+                                <p className="mt-3 text-xs font-semibold text-emerald-400">
+                                    Min: $20 Max: $10.000
+                                </p>
+                            </div>
+
+                            <ArrowRight className="h-5 w-5 shrink-0 text-zinc-500 transition group-hover:translate-x-1 group-hover:text-emerald-400" />
+                        </button>
                     </div>
                 </div>
             )}
 
             {view === "crypto" && (
                 <section className="min-h-[calc(100vh-80px)]">
-                    <div className="mx-auto max-w-[1500px] px-4 py-6 sm:px-6 lg:px-8">
+                    <div className="mx-auto max-w-5xl px-5 py-7 sm:py-10">
                         <button
                             type="button"
                             onClick={goHome}
                             disabled={loading}
-                            className="mb-6 flex items-center gap-2 text-sm text-zinc-400 transition hover:text-white disabled:opacity-50"
+                            className="mb-8 flex items-center gap-2 text-sm text-zinc-400 transition hover:text-white disabled:opacity-50"
                         >
                             <ArrowLeft className="h-4 w-4" />
                             Volver a depósitos
                         </button>
 
-                        <div className="grid min-h-[calc(100vh-180px)] items-stretch gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
-                            {/* COLUMNA IZQUIERDA */}
+                        <div className="mx-auto max-w-xl rounded-2xl border border-white/10 bg-[#111714] p-5 sm:p-8">
+                            <div className="mb-8 text-center">
+                                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-emerald-500/20 bg-emerald-500/10">
+                                    <Wallet className="h-7 w-7 text-emerald-400" />
+                                </div>
 
-                            <aside>
-                                <p className="mb-3 text-xs font-bold uppercase tracking-wider text-zinc-500">
-                                    Método de pago
+                                <h1 className="mt-4 text-2xl font-bold">
+                                    Depósito USDT
+                                </h1>
+
+                                <p className="mt-2 text-sm text-zinc-400">
+                                    Mínimo $20 USD
+                                </p>
+                            </div>
+
+                            <label className="mb-2 block text-sm font-medium text-zinc-300">
+                                Valor a depositar
+                            </label>
+
+                            <div className="flex items-center rounded-xl border border-white/10 bg-black/30 px-4 transition focus-within:border-emerald-500">
+                                <span className="text-xl font-bold text-zinc-500">
+                                    $
+                                </span>
+
+                                <input
+                                    type="number"
+                                    min={MIN_AMOUNT}
+                                    max={MAX_AMOUNT}
+                                    step="0.01"
+                                    value={amount}
+                                    onChange={(event) =>
+                                        setAmount(event.target.value)
+                                    }
+                                    className="w-full bg-transparent px-3 py-4 text-xl font-bold outline-none"
+                                    placeholder="20.00"
+                                />
+
+                                <span className="text-xs text-zinc-500">
+                                    USD
+                                </span>
+                            </div>
+
+                            {error && (
+                                <p className="mt-4 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-400">
+                                    {error}
+                                </p>
+                            )}
+
+                            <button
+                                type="button"
+                                onClick={createCryptoDeposit}
+                                disabled={
+                                    loading ||
+                                    sessionLoading ||
+                                    !token
+                                }
+                                className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-4 font-bold text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                                {loading ? (
+                                    <>
+                                        <Loader2 className="h-5 w-5 animate-spin" />
+                                        Generando depósito...
+                                    </>
+                                ) : sessionLoading ? (
+                                    <>
+                                        <Loader2 className="h-5 w-5 animate-spin" />
+                                        Verificando sesión...
+                                    </>
+                                ) : (
+                                    <>
+                                        Depositar
+                                        <ArrowRight className="h-5 w-5" />
+                                    </>
+                                )}
+                            </button>
+
+                            <div className="mt-6 border-t border-white/10 pt-5">
+                                <p className="text-sm font-semibold text-white">
+                                    ¿Cómo depositar?
                                 </p>
 
-                                <div className="flex items-center gap-3 rounded-xl border border-emerald-500/40 bg-[#121b16] p-4">
-                                    <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-emerald-500/10">
-                                        <Wallet className="h-6 w-6 text-emerald-400" />
-                                    </div>
+                                <ol className="mt-3 list-inside list-decimal space-y-2 text-xs leading-relaxed text-zinc-400">
+                                    <li>Ingresa el valor que deseas depositar.</li>
+                                    <li>Presiona el botón Depositar.</li>
+                                    <li>Envía el monto exacto a la dirección que aparecerá.</li>
+                                </ol>
 
-                                    <div>
-                                        <p className="font-bold">
-                                            Criptomonedas
-                                        </p>
-                                        <p className="mt-1 text-xs text-emerald-400">
-                                            Seleccionado
-                                        </p>
-                                    </div>
+                                <p className="mt-3 text-xs text-zinc-500">
+                                    Utiliza únicamente USDT por la red TRON (TRC20).
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            )}
+
+            {view === "crypto-details" && deposit && (
+                <section className="min-h-[calc(100vh-80px)]">
+                    <div className="mx-auto max-w-5xl px-5 py-7 sm:py-10">
+                        <button
+                            type="button"
+                            onClick={goHome}
+                            className="mb-8 flex items-center gap-2 text-sm text-zinc-400 transition hover:text-white"
+                        >
+                            <ArrowLeft className="h-4 w-4" />
+                            Volver a depósitos
+                        </button>
+
+                        <div className="mx-auto max-w-2xl rounded-2xl border border-white/10 bg-[#111714] p-5 sm:p-8">
+                            <div className="text-center">
+                                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-emerald-500/20 bg-emerald-500/10">
+                                    <QrCode className="h-8 w-8 text-emerald-400" />
                                 </div>
-                            </aside>
 
-                            {/* CENTRO-DERECHA: MONEDAS O TRANSACCIÓN */}
+                                <h1 className="mt-5 text-2xl font-bold">
+                                    Envía tu USDT
+                                </h1>
 
-                            <div className="flex min-h-[600px] min-w-0 items-center justify-center rounded-2xl border border-white/10 bg-[#111714] p-5 sm:p-8 lg:p-10">
-                                <div className="w-full max-w-[760px]">
-                                    {loading ? (
-                                        <div className="flex min-h-[450px] flex-col items-center justify-center text-center">
-                                            <Loader2 className="h-10 w-10 animate-spin text-emerald-400" />
+                                <p className="mt-2 text-sm text-zinc-400">
+                                    Usa exclusivamente la red TRON (TRC20).
+                                </p>
+                            </div>
 
-                                            <h2 className="mt-6 text-xl font-bold">
-                                                Generando dirección de depósito
-                                            </h2>
+                            <div className="mt-7 rounded-xl border border-white/10 bg-black/20 p-5 text-center">
+                                <p className="text-xs text-zinc-500">
+                                    Valor del depósito
+                                </p>
 
-                                            <p className="mt-2 text-sm text-zinc-400">
-                                                Estamos preparando tu dirección para {selectedCrypto.name}.
+                                <p className="mt-2 text-3xl font-bold text-emerald-400">
+                                    ${deposit.amount_usd.toFixed(2)} USD
+                                </p>
+
+                                <p className="mt-3 text-sm text-zinc-400">
+                                    Envía {deposit.pay_amount} USDT por TRC20
+                                </p>
+                            </div>
+
+                            <div className="mt-6">
+                                <p className="mb-2 text-sm font-semibold">
+                                    Dirección de recepción
+                                </p>
+
+                                <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/30 p-3">
+                                    <p className="min-w-0 flex-1 break-all font-mono text-sm text-zinc-200">
+                                        {deposit.pay_address}
+                                    </p>
+
+                                    <button
+                                        type="button"
+                                        onClick={copyAddress}
+                                        className="shrink-0 rounded-lg border border-white/10 p-3 text-zinc-300 transition hover:border-emerald-500/40 hover:text-emerald-400"
+                                        aria-label="Copiar dirección"
+                                    >
+                                        {copied ? (
+                                            <Check className="h-4 w-4" />
+                                        ) : (
+                                            <Copy className="h-4 w-4" />
+                                        )}
+                                    </button>
+                                </div>
+
+                                {copied && (
+                                    <p className="mt-2 text-xs text-emerald-400">
+                                        Dirección copiada.
+                                    </p>
+                                )}
+                            </div>
+
+                            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+                                <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+                                    <p className="text-xs text-zinc-500">
+                                        Solicitud
+                                    </p>
+
+                                    <p className="mt-1 break-all font-semibold">
+                                        #{deposit.order_id}
+                                    </p>
+                                </div>
+
+                                
+                            </div>
+
+                            <div className="mt-6 rounded-xl border border-white/10 bg-black/20 p-4">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div className="flex items-center gap-3">
+                                        {isFinished ? (
+                                            <Check className="h-5 w-5 text-emerald-400" />
+                                        ) : (
+                                            <Clock3 className="h-5 w-5 text-amber-400" />
+                                        )}
+
+                                        <div>
+                                            <p className="text-sm font-semibold">
+                                                {isFinished
+                                                    ? "Depósito confirmado"
+                                                    : "Verificación automática"}
+                                            </p>
+
+                                            <p className="mt-1 text-xs text-zinc-500">
+                                                {isFinished
+                                                    ? "Consulta el saldo de tu cuenta AXIOM."
+                                                    : "AXIOM consulta el estado del pago automáticamente."}
                                             </p>
                                         </div>
-                                    ) : deposit ? (
-                                        <div className="w-full">
-                                            <div className="flex flex-wrap items-center justify-between gap-5 border-b border-white/10 pb-7">
-                                                <div className="flex items-center gap-4">
-                                                    <CryptoIcon
-                                                        currency={selectedCrypto}
-                                                        size="large"
-                                                    />
+                                    </div>
 
-                                                    <div>
-                                                        <p className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
-                                                            Dirección de depósito
-                                                        </p>
-
-                                                        <h1 className="mt-1 text-2xl font-bold sm:text-3xl">
-                                                            {selectedCrypto.name}
-                                                        </h1>
-
-                                                        <p className="mt-1 text-sm text-zinc-400">
-                                                            Red: {selectedCrypto.network}
-                                                        </p>
-                                                    </div>
-                                                </div>
-
-                                                <div className="rounded-lg border border-white/10 bg-black/20 px-4 py-3">
-                                                    <p className="text-xs text-zinc-500">
-                                                        Estado del pago
-                                                    </p>
-
-                                                    <p className="mt-1 text-sm font-bold text-emerald-400">
-                                                        {getStatusLabel(deposit.payment_status)}
-                                                    </p>
-                                                </div>
-                                            </div>
-
-                                            <div className="mt-8">
-                                                <p className="mb-3 text-sm font-semibold">
-                                                    Dirección de envío
-                                                </p>
-
-                                                <div className="flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-black/30 p-4 sm:p-5">
-                                                    <p className="min-w-0 flex-1 break-all font-mono text-sm leading-relaxed text-zinc-200">
-                                                        {deposit.pay_address}
-                                                    </p>
-
-                                                    <button
-                                                        type="button"
-                                                        onClick={copyAddress}
-                                                        className="shrink-0 rounded-lg border border-white/10 p-3 text-zinc-300 transition hover:border-emerald-500/40 hover:text-emerald-400"
-                                                        aria-label="Copiar dirección"
-                                                    >
-                                                        {copied ? (
-                                                            <Check className="h-5 w-5" />
-                                                        ) : (
-                                                            <Copy className="h-5 w-5" />
-                                                        )}
-                                                    </button>
-                                                </div>
-
-                                                {copied && (
-                                                    <p className="mt-2 text-xs text-emerald-400">
-                                                        Dirección copiada.
-                                                    </p>
-                                                )}
-                                            </div>
-
-                                            <div className="mt-6 rounded-xl border border-emerald-500/20 bg-emerald-500/[0.05] p-5">
-                                                <p className="text-sm text-zinc-400">
-                                                    Mínimo de depósito
-                                                </p>
-
-                                                <p className="mt-2 text-3xl font-bold text-emerald-400">
-                                                    $20 USD
-                                                </p>
-                                            </div>
-
-                                            <div className="mt-6 rounded-xl border border-white/10 bg-black/20 p-5">
-                                                <div className="flex flex-wrap items-center justify-between gap-4">
-                                                    <div className="flex items-center gap-3">
-                                                        {isFinished ? (
-                                                            <Check className="h-5 w-5 text-emerald-400" />
-                                                        ) : isFailed ? (
-                                                            <AlertTriangle className="h-5 w-5 text-red-400" />
-                                                        ) : (
-                                                            <Clock3 className="h-5 w-5 text-amber-400" />
-                                                        )}
-
-                                                        <div>
-                                                            <p className="font-semibold">
-                                                                {getStatusLabel(deposit.payment_status)}
-                                                            </p>
-
-                                                            <p className="mt-1 text-xs text-zinc-500">
-                                                                {isFinished
-                                                                    ? "Consulta el saldo de tu cuenta AXIOM."
-                                                                    : "AXIOM consulta el estado del pago automáticamente."}
-                                                            </p>
-                                                        </div>
-                                                    </div>
-
-                                                    {!isFinished && !isFailed && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={refreshDepositStatus}
-                                                            disabled={statusLoading}
-                                                            className="flex items-center gap-2 rounded-lg border border-white/10 px-4 py-3 text-sm text-zinc-300 transition hover:border-emerald-500/40 hover:text-emerald-400 disabled:opacity-50"
-                                                        >
-                                                            {statusLoading ? (
-                                                                <Loader2 className="h-4 w-4 animate-spin" />
-                                                            ) : (
-                                                                <RefreshCw className="h-4 w-4" />
-                                                            )}
-                                                            Actualizar
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </div>
-
-                                            <div className="mt-6 flex gap-3 rounded-xl border border-amber-500/20 bg-amber-500/[0.05] p-4">
-                                                <AlertTriangle className="h-5 w-5 shrink-0 text-amber-400" />
-
-                                                <p className="text-xs leading-relaxed text-zinc-400">
-                                                    Verifica cuidadosamente la red y la moneda antes de enviar. No envíes otros tokens ni utilices una red diferente. Un envío incorrecto puede ocasionar la pérdida de tus fondos.
-                                                </p>
-                                            </div>
-
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    setDeposit(null);
-                                                    setError("");
-                                                    setCopied(false);
-                                                }}
-                                                className="mt-7 w-full rounded-xl border border-white/10 px-5 py-4 font-semibold text-zinc-200 transition hover:border-emerald-500/40 hover:text-white"
-                                            >
-                                                Volver a las monedas
-                                            </button>
-                                        </div>
-                                    ) : (
-                                        <div className="w-full">
-                                            <div className="mb-7 text-center">
-                                                <h1 className="text-2xl font-bold">
-                                                    Selecciona tu criptomoneda
-                                                </h1>
-
-                                                <p className="mt-3 text-sm text-zinc-400">
-                                                    Selecciona una moneda para generar tu dirección de depósito.
-                                                </p>
-                                            </div>
-
-                                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                                {CRYPTO_OPTIONS.map((crypto) => {
-                                                    const selected =
-                                                        selectedCrypto.id === crypto.id;
-
-                                                    return (
-                                                        <button
-                                                            key={crypto.id}
-                                                            type="button"
-                                                            disabled={loading || sessionLoading || !token}
-                                                            onClick={() =>
-                                                                createCryptoDeposit(crypto)
-                                                            }
-                                                            className={`flex items-center gap-4 rounded-xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
-                                                                selected
-                                                                    ? "border-emerald-500/60 bg-emerald-500/[0.09]"
-                                                                    : "border-white/[0.08] bg-black/20 hover:border-emerald-500/40 hover:bg-white/[0.03]"
-                                                            }`}
-                                                        >
-                                                            <CryptoIcon
-                                                                currency={crypto}
-                                                                size="large"
-                                                            />
-
-                                                            <div className="min-w-0 flex-1">
-                                                                <p className="font-bold">
-                                                                    {crypto.name}
-                                                                </p>
-
-                                                                <p className="mt-1 text-xs text-zinc-500">
-                                                                    {crypto.symbol}
-                                                                </p>
-
-                                                                <p className="mt-1 text-xs text-zinc-500">
-                                                                    {crypto.network}
-                                                                </p>
-                                                            </div>
-
-                                                            <ArrowRight className="h-4 w-4 shrink-0 text-emerald-400" />
-                                                        </button>
-                                                    );
-                                                })}
-                                            </div>
-
-                                            {error && (
-                                                <div className="mt-6 rounded-xl border border-red-500/20 bg-red-500/10 p-4">
-                                                    <p className="text-sm text-red-400">
-                                                        {error}
-                                                    </p>
-
-                                                    <button
-                                                        type="button"
-                                                        onClick={() =>
-                                                            createCryptoDeposit(selectedCrypto)
-                                                        }
-                                                        disabled={loading || sessionLoading || !token}
-                                                        className="mt-4 flex items-center gap-2 text-sm font-semibold text-white hover:text-emerald-400 disabled:opacity-50"
-                                                    >
-                                                        Reintentar
-                                                        <ArrowRight className="h-4 w-4" />
-                                                    </button>
-                                                </div>
+                                    {!isFinished && (
+                                        <button
+                                            type="button"
+                                            onClick={refreshDepositStatus}
+                                            disabled={statusLoading}
+                                            className="rounded-lg border border-white/10 p-3 text-zinc-300 transition hover:border-emerald-500/40 hover:text-emerald-400 disabled:opacity-50"
+                                            aria-label="Actualizar estado"
+                                        >
+                                            {statusLoading ? (
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                            ) : (
+                                                <RefreshCw className="h-4 w-4" />
                                             )}
-
-                                            {sessionLoading && (
-                                                <p className="mt-5 flex items-center justify-center gap-2 text-sm text-zinc-500">
-                                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                                    Verificando sesión...
-                                                </p>
-                                            )}
-                                        </div>
+                                        </button>
                                     )}
                                 </div>
                             </div>
+
+                            <div className="mt-6 flex gap-3 rounded-xl border border-amber-500/20 bg-amber-500/[0.05] p-4">
+                                <AlertTriangle className="h-5 w-5 shrink-0 text-amber-400" />
+
+                                <p className="text-xs leading-relaxed text-zinc-400">
+                                    Verifica la red y el monto antes de enviar.
+                                    No envíes otros tokens ni uses otra red.
+                                    Nunca compartas esta dirección como si
+                                    fuera una dirección para otra moneda.
+                                </p>
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={goHome}
+                                className="mt-7 w-full rounded-xl border border-white/10 px-5 py-4 font-semibold text-zinc-200 transition hover:border-emerald-500/40 hover:text-white"
+                            >
+                                Volver a depósitos
+                            </button>
                         </div>
                     </div>
                 </section>
