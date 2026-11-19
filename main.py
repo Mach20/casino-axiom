@@ -14,6 +14,7 @@ from fastapi import (
     FastAPI,
     WebSocket,
     WebSocketDisconnect,
+    Request,
     Query,
     Header,
     HTTPException,
@@ -1016,7 +1017,45 @@ async def nowpayments_ipn(
     )
 
     return {"ok": True, "order_id": order_id, "status": payment_status}
+@app.get("/crypto/deposits/{order_id}")
+async def get_crypto_deposit_status(
+    order_id: str,
+    authorization: str | None = Header(default=None),
+):
+    user_id = get_authenticated_user_id(authorization)
+    clean_order_id = order_id.strip()
 
+    if not clean_order_id:
+        raise HTTPException(status_code=400, detail="order_id no válido.")
+
+    res = (
+        supabase.table("crypto_deposits")
+        .select(
+            "order_id,amount,pay_currency,pay_amount,pay_address,"
+            "payment_status,credited_at,created_at,updated_at"
+        )
+        .eq("order_id", clean_order_id)
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    )
+
+    rows = res.data or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Depósito no encontrado.")
+
+    row = rows[0]
+    return {
+        "success": True,
+        "order_id": row["order_id"],
+        "amount_usd": float(row["amount"]),
+        "pay_currency": row.get("pay_currency") or "usdttrc20",
+        "pay_amount": row.get("pay_amount"),
+        "pay_address": row.get("pay_address"),
+        "payment_status": str(row.get("payment_status") or "waiting").lower(),
+        "credited": bool(row.get("credited_at")),
+        "credited_at": row.get("credited_at"),
+    }
 # ============================================================
 # WEBSOCKET LOBBY X VS O
 # ============================================================
