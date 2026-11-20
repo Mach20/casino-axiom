@@ -591,7 +591,7 @@ export default function Header() {
               onClick={() => setIsMenuOpen(false)}
               className="flex items-center gap-3 px-4 py-3 bg-zinc-900 text-emerald-400 font-bold text-xs uppercase tracking-wider rounded-xl border border-zinc-800"
             >
-              Juegos Online
+              Casino Online
             </a>
           </nav>
         </div>
