@@ -642,11 +642,11 @@ export default function Header() {
         </div>
       </aside>
 
-      {/* BARRA SUPERIOR PROPORCIONADA */}
+      {/* BARRA SUPERIOR COMPLETA AL INICIAR SESIÓN */}
       <header className="w-full bg-zinc-950/95 border-b border-zinc-900 sticky top-0 z-30 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 h-16 flex items-center justify-between gap-2">
+        <div className="max-w-7xl mx-auto px-2 sm:px-4 md:px-6 h-16 flex items-center justify-between gap-1.5 sm:gap-3">
           {/* IZQUIERDA: BOTÓN MENÚ + MARCA */}
-          <div className="flex items-center gap-2.5 sm:gap-3.5 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-3.5 shrink-0">
             <button
               type="button"
               onClick={() => {
@@ -655,22 +655,22 @@ export default function Header() {
                 setIsNotifOpen(false);
               }}
               aria-label="Abrir menú"
-              className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center bg-zinc-900 hover:bg-zinc-800 text-zinc-200 rounded-xl border border-zinc-800 transition-all active:scale-95 shrink-0"
+              className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center bg-zinc-900 hover:bg-zinc-800 text-zinc-200 rounded-xl border border-zinc-800 transition-all active:scale-95 shrink-0"
             >
-              <span className="text-base leading-none">☰</span>
+              <span className="text-sm sm:text-base leading-none">☰</span>
             </button>
 
             <a
               href="/"
               onClick={closeAllPopups}
-              className="text-base sm:text-xl font-black text-emerald-400 tracking-wider sm:tracking-widest uppercase whitespace-nowrap"
+              className="text-sm sm:text-xl font-black text-emerald-400 tracking-wider sm:tracking-widest uppercase whitespace-nowrap"
             >
               AXIOM
             </a>
           </div>
 
           {/* DERECHA: ACCESOS DE CUENTA */}
-          <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+          <div className="flex items-center gap-1 sm:gap-2.5 shrink-0">
             {!isLoggedIn ? (
               <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                 <button
@@ -696,17 +696,18 @@ export default function Header() {
                 </button>
               </div>
             ) : (
-              <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+              <div className="flex items-center gap-1 sm:gap-2.5 shrink-0">
                 <span className="hidden lg:inline-block text-xs sm:text-sm font-bold text-white max-w-[150px] truncate">
                   {firstName}
                 </span>
 
+                {/* BOTÓN DEPOSITAR */}
                 <a
                   href="/deposito"
                   onClick={closeAllPopups}
-                  className="h-9 sm:h-10 px-2.5 sm:px-3.5 flex items-center justify-center bg-emerald-500 hover:bg-emerald-400 text-black border border-emerald-400 rounded-xl whitespace-nowrap transition-all shadow-lg shadow-emerald-500/10 active:scale-95 shrink-0"
+                  className="h-8 sm:h-10 px-2 sm:px-3.5 flex items-center justify-center bg-emerald-500 hover:bg-emerald-400 text-black border border-emerald-400 rounded-xl whitespace-nowrap transition-all shadow-lg shadow-emerald-500/10 active:scale-95 shrink-0"
                 >
-                  <span className="text-[11px] sm:text-xs font-black uppercase tracking-wide">
+                  <span className="text-[10px] sm:text-xs font-black uppercase tracking-tight sm:tracking-wide">
                     + Depositar
                   </span>
                 </a>
@@ -719,19 +720,21 @@ export default function Header() {
                       setIsBalanceOpen((prev) => !prev);
                       setIsNotifOpen(false);
                     }}
-                    className="h-9 sm:h-10 flex items-center gap-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 px-2.5 sm:px-3 rounded-xl whitespace-nowrap transition-all"
+                    className="h-8 sm:h-10 flex items-center gap-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 px-2 sm:px-3 rounded-xl whitespace-nowrap transition-all"
                   >
                     <span className="hidden md:inline text-[10px] text-zinc-400 font-bold uppercase">
                       Saldo:
                     </span>
-                    <span className="text-xs font-black text-emerald-400 tabular-nums">
+                    <span className="text-[11px] sm:text-xs font-black text-emerald-400 tabular-nums">
                       ${playBalance.toFixed(2)}
                     </span>
-                    <span className="text-[9px] text-zinc-500">▼</span>
+                    <span className="text-[8px] sm:text-[9px] text-zinc-500">
+                      ▼
+                    </span>
                   </button>
 
                   {isBalanceOpen && (
-                    <div className="fixed sm:absolute right-3 sm:right-0 left-3 sm:left-auto mt-2 sm:w-60 bg-zinc-900 border border-zinc-800 rounded-2xl p-4 shadow-2xl z-50 text-xs space-y-3">
+                    <div className="fixed sm:absolute right-2 sm:right-0 left-2 sm:left-auto mt-2 sm:w-60 bg-zinc-900 border border-zinc-800 rounded-2xl p-4 shadow-2xl z-50 text-xs space-y-3">
                       <div className="flex justify-between items-center border-b border-zinc-800/80 pb-2">
                         <span className="text-zinc-400 font-medium">
                           Saldo:
@@ -762,7 +765,7 @@ export default function Header() {
                   )}
                 </div>
 
-                {/* CAMPANA DE NOTIFICACIONES */}
+                {/* BANDEJA / CAMPANA DE NOTIFICACIONES */}
                 <div className="relative shrink-0">
                   <button
                     type="button"
@@ -772,12 +775,12 @@ export default function Header() {
                     }}
                     title="Notificaciones"
                     aria-label="Notificaciones"
-                    className="relative w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-800 rounded-xl transition-all active:scale-95"
+                    className="relative w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-800 rounded-xl transition-all active:scale-95"
                   >
                     <svg
                       xmlns="http://www.w3.org/2000/svg"
-                      width="17"
-                      height="17"
+                      width="16"
+                      height="16"
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"
@@ -791,14 +794,14 @@ export default function Header() {
                     </svg>
 
                     {unreadCount > 0 && (
-                      <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 bg-emerald-500 text-black text-[10px] font-black rounded-full flex items-center justify-center shadow">
+                      <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 bg-emerald-500 text-black text-[9px] font-black rounded-full flex items-center justify-center shadow">
                         {unreadCount > 9 ? "9+" : unreadCount}
                       </span>
                     )}
                   </button>
 
                   {isNotifOpen && (
-                    <div className="fixed sm:absolute right-3 sm:right-0 left-3 sm:left-auto mt-2 sm:w-80 md:w-96 bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl z-50 overflow-hidden">
+                    <div className="fixed sm:absolute right-2 sm:right-0 left-2 sm:left-auto mt-2 sm:w-80 md:w-96 bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl z-50 overflow-hidden">
                       <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
                         <span className="text-xs font-black uppercase tracking-wider text-emerald-400">
                           Mensajes ({unreadCount})
@@ -870,12 +873,12 @@ export default function Header() {
                   onClick={closeAllPopups}
                   title="Mi perfil"
                   aria-label="Mi perfil"
-                  className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-800 rounded-xl transition-all active:scale-95 shrink-0"
+                  className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-800 rounded-xl transition-all active:scale-95 shrink-0"
                 >
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
-                    width="17"
-                    height="17"
+                    width="16"
+                    height="16"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
