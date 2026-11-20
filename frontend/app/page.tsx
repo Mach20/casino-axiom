@@ -85,7 +85,7 @@ export default function Home() {
                   </span>
 
                   <span className="text-xs text-zinc-500 font-mono">
-                    Min: $0.10
+                    Min: $0.25
                   </span>
 
                 </div>
