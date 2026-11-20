@@ -20,6 +20,7 @@ export default function Header() {
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [firstName, setFirstName] = useState("");
+  const [docNumber, setDocNumber] = useState("");
 
   const [playBalance, setPlayBalance] = useState(0);
   const [withdrawBalance, setWithdrawBalance] = useState(0);
@@ -76,7 +77,9 @@ export default function Header() {
     try {
       const { data: profile, error } = await supabase
         .from("profiles")
-        .select("first_name, last_name, balance, withdraw_balance, bonus_balance")
+        .select(
+          "first_name, last_name, doc_number, balance, withdraw_balance, bonus_balance"
+        )
         .eq("id", userId)
         .maybeSingle();
 
@@ -86,6 +89,7 @@ export default function Header() {
         setFirstName(
           `${profile.first_name || ""} ${profile.last_name || ""}`.trim()
         );
+        setDocNumber(profile.doc_number || "");
         setPlayBalance(Number(profile.balance) || 0);
         setWithdrawBalance(Number(profile.withdraw_balance) || 0);
         setBonusBalance(Number(profile.bonus_balance) || 0);
@@ -163,6 +167,7 @@ export default function Header() {
 
         setIsLoggedIn(false);
         setFirstName("");
+        setDocNumber("");
         setPlayBalance(0);
         setWithdrawBalance(0);
         setBonusBalance(0);
@@ -223,6 +228,7 @@ export default function Header() {
             setFirstName(
               `${profile.first_name || ""} ${profile.last_name || ""}`.trim()
             );
+            setDocNumber(profile.doc_number || "");
             setPlayBalance(Number(profile.balance) || 0);
             setWithdrawBalance(Number(profile.withdraw_balance) || 0);
             setBonusBalance(Number(profile.bonus_balance) || 0);
@@ -523,21 +529,48 @@ export default function Header() {
         />
       )}
 
+      {/* BARRA LATERAL */}
       <aside
         className={`fixed top-0 left-0 h-full w-72 bg-zinc-950 border-r border-zinc-800 z-50 p-6 flex flex-col justify-between transform transition-transform duration-300 ${
           isMenuOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        <div>
-          <div className="flex items-center justify-end mb-8 pb-4 border-b border-zinc-900">
+        <div className="space-y-6">
+          {/* ARRIBA: USUARIO + ID (CÉDULA) + CERRAR */}
+          <div className="flex items-start justify-between gap-2 pb-4 border-b border-zinc-900">
+            <div className="min-w-0">
+              {isLoggedIn ? (
+                <>
+                  <p className="text-sm font-black text-white truncate">
+                    {firstName || "Usuario AXIOM"}
+                  </p>
+                  <p className="mt-1 text-xs font-semibold text-emerald-400">
+                    ID:{" "}
+                    <span className="font-mono text-zinc-200">
+                      {docNumber || "No registrado"}
+                    </span>
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-black text-white">Invitado</p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    ID: Sin sesión activa
+                  </p>
+                </>
+              )}
+            </div>
+
             <button
+              type="button"
               onClick={() => setIsMenuOpen(false)}
-              className="text-zinc-500 hover:text-white text-xl font-bold"
+              className="text-zinc-500 hover:text-white text-xl font-bold shrink-0"
             >
               ✕
             </button>
           </div>
 
+          {/* NAVEGACIÓN PRINCIPAL */}
           <nav className="space-y-2">
             <a
               href="/"
@@ -548,12 +581,55 @@ export default function Header() {
             </a>
           </nav>
         </div>
+
+        {/* ABAJO: APARTADO DE ENLACES CON NOMBRE Y RUTA */}
+        <div className="pt-4 border-t border-zinc-900 space-y-2">
+          <p className="text-[10px] font-black uppercase tracking-wider text-zinc-500 px-1">
+            Políticas y Legal
+          </p>
+
+          <a
+            href="/legal?tab=terminos"
+            onClick={() => setIsMenuOpen(false)}
+            className="block rounded-xl border border-zinc-800/80 bg-zinc-900/60 px-3.5 py-2.5 transition hover:border-emerald-500/40 hover:bg-zinc-900"
+          >
+            <p className="text-xs font-bold text-white">
+              Términos y Condiciones
+            </p>
+            <p className="text-[11px] text-emerald-400 font-mono truncate">
+              /legal?tab=terminos
+            </p>
+          </a>
+
+          <a
+            href="/legal?tab=juego"
+            onClick={() => setIsMenuOpen(false)}
+            className="block rounded-xl border border-zinc-800/80 bg-zinc-900/60 px-3.5 py-2.5 transition hover:border-emerald-500/40 hover:bg-zinc-900"
+          >
+            <p className="text-xs font-bold text-white">Políticas de Juego</p>
+            <p className="text-[11px] text-emerald-400 font-mono truncate">
+              /legal?tab=juego
+            </p>
+          </a>
+
+          <a
+            href="/legal?tab=kyc"
+            onClick={() => setIsMenuOpen(false)}
+            className="block rounded-xl border border-zinc-800/80 bg-zinc-900/60 px-3.5 py-2.5 transition hover:border-emerald-500/40 hover:bg-zinc-900"
+          >
+            <p className="text-xs font-bold text-white">Política KYC y AML</p>
+            <p className="text-[11px] text-emerald-400 font-mono truncate">
+              /legal?tab=kyc
+            </p>
+          </a>
+        </div>
       </aside>
 
       <header className="w-full bg-zinc-950/90 border-b border-zinc-900 sticky top-0 z-30 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 py-3.5 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button
+              type="button"
               onClick={() => setIsMenuOpen(true)}
               className="p-2.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded-xl border border-zinc-800 transition-all active:scale-95"
             >
@@ -569,6 +645,7 @@ export default function Header() {
             {!isLoggedIn ? (
               <div className="flex items-center gap-2">
                 <button
+                  type="button"
                   onClick={() => setAuthView("login")}
                   className="px-3.5 py-2 text-xs font-bold text-zinc-300 hover:text-white uppercase transition-all"
                 >
@@ -576,6 +653,7 @@ export default function Header() {
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => setAuthView("register")}
                   className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg active:scale-95"
                 >
@@ -600,6 +678,7 @@ export default function Header() {
                 {/* DROPDOWN DE SALDO */}
                 <div className="relative">
                   <button
+                    type="button"
                     onClick={() => {
                       setIsBalanceOpen(!isBalanceOpen);
                       setIsNotifOpen(false);
@@ -1068,13 +1147,35 @@ export default function Header() {
 
                       <span className="text-xs text-zinc-300 leading-relaxed">
                         Declaro que soy mayor de 18 años y acepto los{" "}
-                        <span className="text-emerald-400 font-bold">
+                        <a
+                          href="/legal?tab=terminos"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-emerald-400 font-bold underline hover:text-emerald-300"
+                        >
                           Términos y Condiciones
-                        </span>{" "}
-                        y las{" "}
-                        <span className="text-emerald-400 font-bold">
+                        </a>
+                        , las{" "}
+                        <a
+                          href="/legal?tab=juego"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-emerald-400 font-bold underline hover:text-emerald-300"
+                        >
                           Políticas de Juego
-                        </span>{" "}
+                        </a>{" "}
+                        y la{" "}
+                        <a
+                          href="/legal?tab=kyc"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-emerald-400 font-bold underline hover:text-emerald-300"
+                        >
+                          Política KYC
+                        </a>{" "}
                         de AXIOM.
                       </span>
                     </label>
@@ -1092,6 +1193,7 @@ export default function Header() {
 
             <div className="text-center pt-2">
               <button
+                type="button"
                 onClick={() => setAuthView("none")}
                 className="text-xs text-zinc-500 hover:text-white underline"
               >
