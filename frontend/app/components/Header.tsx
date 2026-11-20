@@ -602,7 +602,7 @@ export default function Header() {
             onClick={() => setIsMenuOpen(false)}
             className="hover:text-emerald-400 transition"
           >
-            Lea los Términos y Condiciones
+            Términos y Condiciones
           </a>
           <a
             href="/legal?tab=juego"
