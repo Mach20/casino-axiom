@@ -414,11 +414,11 @@ export default function DepositosPage() {
     };
 
     return (
-        <main className="min-h-screen bg-[#080b0a] text-white">
+        <main className="min-h-screen bg-[#080b0a] text-left text-white">
             <Header />
 
-            <div className="mx-auto max-w-2xl px-4 py-6 sm:px-5 sm:py-8">
-                <div className="mb-6 flex justify-start">
+            <div className="mx-0 max-w-2xl px-4 py-6 text-left sm:px-5 sm:py-8">
+                <div className="mb-6 flex w-full justify-start">
                     <button
                         type="button"
                         onClick={() => {
@@ -428,35 +428,35 @@ export default function DepositosPage() {
                                 window.history.back();
                             }
                         }}
-                        className="flex w-fit items-center gap-2 rounded-lg border border-white/10 bg-[#111714] px-3 py-2 text-xs font-semibold text-zinc-400 transition hover:border-emerald-500/40 hover:text-white"
+                        className="flex w-fit items-center justify-start gap-2 rounded-lg border border-white/10 bg-[#111714] px-3 py-2 text-left text-xs font-semibold text-zinc-400 transition hover:border-emerald-500/40 hover:text-white"
                     >
                         <ArrowLeft className="h-4 w-4" />
                         Volver
                     </button>
                 </div>
 
-                <h1 className="mb-5 text-xl font-bold">
+                <h1 className="mb-5 text-left text-xl font-bold">
                     Depósitos
                 </h1>
 
                 {view === "method" && (
-                    <div className="rounded-xl border border-white/10 bg-[#111714] p-4 sm:p-5">
+                    <div className="flex w-fit flex-col items-start rounded-xl border border-white/10 bg-[#111714] p-4 text-left sm:p-5">
                         <button
                             type="button"
                             onClick={createCryptoDeposit}
                             disabled={loading || sessionLoading || !token}
-                            className="flex w-full items-center gap-3 rounded-xl border border-emerald-500/40 bg-[#111c16] p-4 text-left transition hover:border-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="flex w-fit items-center justify-start gap-3 rounded-xl border border-emerald-500/40 bg-[#111c16] p-4 text-left transition hover:border-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-emerald-500/20 bg-emerald-500/10">
                                 <UsdtCoinIcon className="h-7 w-7" />
                             </div>
 
-                            <div className="min-w-0">
-                                <p className="text-sm font-bold">
+                            <div className="min-w-0 text-left">
+                                <p className="text-left text-sm font-bold">
                                     USDT TRC20
                                 </p>
 
-                                <p className="mt-1 text-xs text-emerald-400">
+                                <p className="mt-1 text-left text-xs text-emerald-400">
                                     {loading
                                         ? "Generando dirección..."
                                         : sessionLoading
@@ -466,14 +466,14 @@ export default function DepositosPage() {
                             </div>
 
                             {loading || sessionLoading ? (
-                                <Loader2 className="ml-auto h-4 w-4 shrink-0 animate-spin text-emerald-400" />
+                                <Loader2 className="ml-2 h-4 w-4 shrink-0 animate-spin text-emerald-400" />
                             ) : (
-                                <ArrowRight className="ml-auto h-4 w-4 shrink-0 text-emerald-400" />
+                                <ArrowRight className="ml-2 h-4 w-4 shrink-0 text-emerald-400" />
                             )}
                         </button>
 
                         {error && (
-                            <p className="mt-3 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-400">
+                            <p className="mt-3 w-fit rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-left text-xs text-red-400">
                                 {error}
                             </p>
                         )}
@@ -481,34 +481,34 @@ export default function DepositosPage() {
                 )}
 
                 {view === "details" && deposit && (
-                    <div className="min-w-0 rounded-xl border border-white/10 bg-[#111714] p-4 sm:p-5">
-                        <div className="mb-5 flex items-center gap-3">
+                    <div className="flex w-fit max-w-full min-w-0 flex-col items-start rounded-xl border border-white/10 bg-[#111714] p-4 text-left sm:p-5">
+                        <div className="mb-5 flex w-fit items-center justify-start gap-3 text-left">
                             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500/10">
                                 <UsdtCoinIcon className="h-6 w-6" />
                             </div>
 
-                            <div>
-                                <h2 className="text-base font-bold">
+                            <div className="text-left">
+                                <h2 className="text-left text-base font-bold">
                                     Enviar USDT
                                 </h2>
 
-                                <p className="text-xs text-zinc-500">
+                                <p className="text-left text-xs text-zinc-500">
                                     TRON (TRC20) · {deposit.order_id}
                                 </p>
                             </div>
                         </div>
 
-                        <div className="rounded-lg border border-white/10 bg-black/20 p-4">
-                            <p className="text-xs text-zinc-500">
+                        <div className="flex w-fit max-w-full flex-col items-start rounded-lg border border-white/10 bg-black/20 p-4 text-left">
+                            <p className="text-left text-xs text-zinc-500">
                                 Mínimo del depósito
                             </p>
 
-                            <p className="mt-1 text-2xl font-bold text-emerald-400">
+                            <p className="mt-1 text-left text-2xl font-bold text-emerald-400">
                                 ${deposit.amount_usd.toFixed(2)} USD
                             </p>
 
-                            <div className="mt-2 flex items-center justify-between gap-2">
-                                <p className="text-sm text-zinc-300">
+                            <div className="mt-2 flex w-fit flex-wrap items-center justify-start gap-3 text-left">
+                                <p className="text-left text-sm text-zinc-300">
                                     Envía{" "}
                                     <span className="font-mono font-bold text-white">
                                         {deposit.pay_amount} USDT
@@ -519,20 +519,20 @@ export default function DepositosPage() {
                                 <button
                                     type="button"
                                     onClick={copyAmount}
-                                    className="rounded-md border border-white/10 px-2.5 py-1 text-xs text-zinc-300 transition hover:border-emerald-500/40 hover:text-emerald-400"
+                                    className="w-fit rounded-md border border-white/10 px-2.5 py-1 text-left text-xs text-zinc-300 transition hover:border-emerald-500/40 hover:text-emerald-400"
                                 >
                                     {copiedAmount ? "Monto copiado" : "Copiar monto"}
                                 </button>
                             </div>
                         </div>
 
-                        <div className="mt-4">
-                            <p className="mb-2 text-xs font-semibold text-zinc-300">
+                        <div className="mt-4 flex w-fit max-w-full flex-col items-start text-left">
+                            <p className="mb-2 text-left text-xs font-semibold text-zinc-300">
                                 Dirección de recepción
                             </p>
 
-                            <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/30 p-3">
-                                <p className="min-w-0 flex-1 break-all font-mono text-xs text-zinc-200">
+                            <div className="flex w-fit max-w-full items-center justify-start gap-2 rounded-lg border border-white/10 bg-black/30 p-3 text-left">
+                                <p className="min-w-0 break-all font-mono text-left text-xs text-zinc-200">
                                     {deposit.pay_address}
                                 </p>
 
@@ -551,14 +551,14 @@ export default function DepositosPage() {
                             </div>
 
                             {copiedAddress && (
-                                <p className="mt-2 text-xs text-emerald-400">
+                                <p className="mt-2 text-left text-xs text-emerald-400">
                                     Dirección copiada.
                                 </p>
                             )}
                         </div>
 
                         <div
-                            className={`mt-4 rounded-lg border p-3 ${
+                            className={`mt-4 flex w-fit max-w-full items-center justify-start gap-3 rounded-lg border p-3 text-left ${
                                 isFinished
                                     ? "border-emerald-500/30 bg-emerald-500/10"
                                     : isFailed
@@ -566,61 +566,61 @@ export default function DepositosPage() {
                                         : "border-white/10 bg-black/20"
                             }`}
                         >
-                            <div className="flex items-center justify-between gap-3">
-                                <div className="flex items-center gap-2">
-                                    {isFinished ? (
-                                        <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
-                                    ) : isFailed ? (
-                                        <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
-                                    ) : (
-                                        <Clock3 className="h-4 w-4 shrink-0 text-amber-400" />
-                                    )}
-
-                                    <div>
-                                        <p className="text-xs font-semibold">
-                                            {statusInfo.title}
-                                        </p>
-
-                                        <p className="mt-1 text-xs text-zinc-400">
-                                            {statusInfo.subtitle}
-                                        </p>
-                                    </div>
-                                </div>
-
-                                {!isFinished && !isFailed && (
-                                    <button
-                                        type="button"
-                                        onClick={refreshDepositStatus}
-                                        disabled={statusLoading}
-                                        className="rounded-lg border border-white/10 p-2 text-zinc-300 hover:border-emerald-500/40 hover:text-emerald-400 disabled:opacity-50"
-                                        aria-label="Actualizar estado"
-                                    >
-                                        {statusLoading ? (
-                                            <Loader2 className="h-4 w-4 animate-spin" />
-                                        ) : (
-                                            <RefreshCw className="h-4 w-4" />
-                                        )}
-                                    </button>
+                            <div className="flex items-center justify-start gap-2 text-left">
+                                {isFinished ? (
+                                    <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                                ) : isFailed ? (
+                                    <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
+                                ) : (
+                                    <Clock3 className="h-4 w-4 shrink-0 text-amber-400" />
                                 )}
+
+                                <div className="text-left">
+                                    <p className="text-left text-xs font-semibold">
+                                        {statusInfo.title}
+                                    </p>
+
+                                    <p className="mt-1 text-left text-xs text-zinc-400">
+                                        {statusInfo.subtitle}
+                                    </p>
+                                </div>
                             </div>
+
+                            {!isFinished && !isFailed && (
+                                <button
+                                    type="button"
+                                    onClick={refreshDepositStatus}
+                                    disabled={statusLoading}
+                                    className="shrink-0 rounded-lg border border-white/10 p-2 text-zinc-300 hover:border-emerald-500/40 hover:text-emerald-400 disabled:opacity-50"
+                                    aria-label="Actualizar estado"
+                                >
+                                    {statusLoading ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                        <RefreshCw className="h-4 w-4" />
+                                    )}
+                                </button>
+                            )}
                         </div>
 
-                        <div className="mt-4 flex gap-2 rounded-lg border border-amber-500/20 bg-amber-500/[0.05] p-3">
-                            <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
+                        <div className="mt-4 flex w-fit max-w-full items-start justify-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/[0.05] p-3 text-left">
+                            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
 
-                            <p className="text-xs leading-relaxed text-zinc-400">
+                            <p className="text-left text-xs leading-relaxed text-zinc-400">
                                 Envía únicamente USDT por la red TRON (TRC20) y utiliza el monto indicado.
                             </p>
                         </div>
 
-                        <button
-                            type="button"
-                            onClick={goBack}
-                            className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg border border-white/10 px-4 py-3 text-sm font-semibold text-zinc-300 transition hover:border-emerald-500/40 hover:text-white"
-                        >
-                            <ArrowLeft className="h-4 w-4" />
-                            Volver
-                        </button>
+                        <div className="mt-4 flex w-full justify-start">
+                            <button
+                                type="button"
+                                onClick={goBack}
+                                className="flex w-fit items-center justify-start gap-2 rounded-lg border border-white/10 px-4 py-3 text-left text-sm font-semibold text-zinc-300 transition hover:border-emerald-500/40 hover:text-white"
+                            >
+                                <ArrowLeft className="h-4 w-4" />
+                                Volver
+                            </button>
+                        </div>
                     </div>
                 )}
             </div>
