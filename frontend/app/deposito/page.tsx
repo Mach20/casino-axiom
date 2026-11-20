@@ -441,38 +441,36 @@ export default function DepositosPage() {
 
                 {view === "method" && (
                     <div className="rounded-xl border border-white/10 bg-[#111714] p-4 sm:p-5">
-                        <div className="flex justify-start">
-                            <button
-                                type="button"
-                                onClick={createCryptoDeposit}
-                                disabled={loading || sessionLoading || !token}
-                                className="flex w-fit items-center gap-3 rounded-xl border border-emerald-500/40 bg-[#111c16] p-4 text-left transition hover:border-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-emerald-500/20 bg-emerald-500/10">
-                                    <UsdtCoinIcon className="h-7 w-7" />
-                                </div>
+                        <button
+                            type="button"
+                            onClick={createCryptoDeposit}
+                            disabled={loading || sessionLoading || !token}
+                            className="flex w-full items-center gap-3 rounded-xl border border-emerald-500/40 bg-[#111c16] p-4 text-left transition hover:border-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-emerald-500/20 bg-emerald-500/10">
+                                <UsdtCoinIcon className="h-7 w-7" />
+                            </div>
 
-                                <div className="min-w-0">
-                                    <p className="text-sm font-bold">
-                                        USDT TRC20
-                                    </p>
+                            <div className="min-w-0">
+                                <p className="text-sm font-bold">
+                                    USDT TRC20
+                                </p>
 
-                                    <p className="mt-1 text-xs text-emerald-400">
-                                        {loading
-                                            ? "Generando dirección..."
-                                            : sessionLoading
-                                                ? "Verificando sesión..."
-                                                : "Mínimo $20"}
-                                    </p>
-                                </div>
+                                <p className="mt-1 text-xs text-emerald-400">
+                                    {loading
+                                        ? "Generando dirección..."
+                                        : sessionLoading
+                                            ? "Verificando sesión..."
+                                            : "Mínimo $20"}
+                                </p>
+                            </div>
 
-                                {loading || sessionLoading ? (
-                                    <Loader2 className="ml-2 h-4 w-4 shrink-0 animate-spin text-emerald-400" />
-                                ) : (
-                                    <ArrowRight className="ml-2 h-4 w-4 shrink-0 text-emerald-400" />
-                                )}
-                            </button>
-                        </div>
+                            {loading || sessionLoading ? (
+                                <Loader2 className="ml-auto h-4 w-4 shrink-0 animate-spin text-emerald-400" />
+                            ) : (
+                                <ArrowRight className="ml-auto h-4 w-4 shrink-0 text-emerald-400" />
+                            )}
+                        </button>
 
                         {error && (
                             <p className="mt-3 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-400">
@@ -615,16 +613,14 @@ export default function DepositosPage() {
                             </p>
                         </div>
 
-                        <div className="mt-4 flex justify-start">
-                            <button
-                                type="button"
-                                onClick={goBack}
-                                className="flex w-fit items-center justify-center gap-2 rounded-lg border border-white/10 px-4 py-3 text-sm font-semibold text-zinc-300 transition hover:border-emerald-500/40 hover:text-white"
-                            >
-                                <ArrowLeft className="h-4 w-4" />
-                                Volver
-                            </button>
-                        </div>
+                        <button
+                            type="button"
+                            onClick={goBack}
+                            className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg border border-white/10 px-4 py-3 text-sm font-semibold text-zinc-300 transition hover:border-emerald-500/40 hover:text-white"
+                        >
+                            <ArrowLeft className="h-4 w-4" />
+                            Volver
+                        </button>
                     </div>
                 )}
             </div>
