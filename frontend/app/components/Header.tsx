@@ -5,9 +5,19 @@ import { supabase } from "../lib/supabase";
 
 type AuthView = "none" | "login" | "register";
 
+type NotificationItem = {
+  id: string;
+  user_id: string | null;
+  title: string;
+  message: string;
+  is_read: boolean;
+  created_at: string;
+};
+
 export default function Header() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isBalanceOpen, setIsBalanceOpen] = useState(false);
+  const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [firstName, setFirstName] = useState("");
   const [docNumber, setDocNumber] = useState("");
@@ -15,6 +25,9 @@ export default function Header() {
   const [playBalance, setPlayBalance] = useState(0);
   const [withdrawBalance, setWithdrawBalance] = useState(0);
   const [bonusBalance, setBonusBalance] = useState(0);
+
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [readGlobalIds, setReadGlobalIds] = useState<string[]>([]);
 
   const [authView, setAuthView] = useState<AuthView>("none");
 
@@ -47,6 +60,7 @@ export default function Header() {
   });
 
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const notifChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const sessionVersionRef = useRef(0);
   const currentUserIdRef = useRef<string | null>(null);
   const mountedRef = useRef(false);
@@ -85,22 +99,60 @@ export default function Header() {
     }
   };
 
-  // SESIÓN Y ACTUALIZACIÓN AUTOMÁTICA DE SALDOS
+  const fetchNotifications = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("notifications")
+        .select("id, user_id, title, message, is_read, created_at")
+        .or(`user_id.eq.${userId},user_id.is.null`)
+        .order("created_at", { ascending: false })
+        .limit(20);
+
+      if (error) throw error;
+
+      if (data && currentUserIdRef.current === userId && mountedRef.current) {
+        setNotifications(data as NotificationItem[]);
+      }
+    } catch (err) {
+      console.error("Error cargando notificaciones:", err);
+    }
+  };
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("axiom_read_global_notifs");
+      if (saved) {
+        setReadGlobalIds(JSON.parse(saved));
+      }
+    } catch {
+      // Ignorar si localStorage no está disponible
+    }
+  }, []);
+
+  // SESIÓN, SALDOS Y NOTIFICACIONES EN TIEMPO REAL
 
   useEffect(() => {
     mountedRef.current = true;
-
     let disposed = false;
 
-    const removeProfileChannel = async () => {
-      const channel = channelRef.current;
+    const removeChannels = async () => {
+      const profileCh = channelRef.current;
       channelRef.current = null;
-
-      if (channel) {
+      if (profileCh) {
         try {
-          await supabase.removeChannel(channel);
+          await supabase.removeChannel(profileCh);
         } catch (err) {
           console.error("Error cerrando canal de saldos:", err);
+        }
+      }
+
+      const notifCh = notifChannelRef.current;
+      notifChannelRef.current = null;
+      if (notifCh) {
+        try {
+          await supabase.removeChannel(notifCh);
+        } catch (err) {
+          console.error("Error cerrando canal de notificaciones:", err);
         }
       }
     };
@@ -119,8 +171,10 @@ export default function Header() {
         setPlayBalance(0);
         setWithdrawBalance(0);
         setBonusBalance(0);
+        setNotifications([]);
+        setIsNotifOpen(false);
 
-        await removeProfileChannel();
+        await removeChannels();
         return;
       }
 
@@ -129,7 +183,7 @@ export default function Header() {
 
       setIsLoggedIn(true);
 
-      await removeProfileChannel();
+      await removeChannels();
 
       if (
         disposed ||
@@ -140,7 +194,10 @@ export default function Header() {
         return;
       }
 
-      await fetchUserBalances(userId);
+      await Promise.all([
+        fetchUserBalances(userId),
+        fetchNotifications(userId),
+      ]);
 
       if (
         disposed ||
@@ -151,7 +208,7 @@ export default function Header() {
         return;
       }
 
-      const channel = supabase
+      const profileChannel = supabase
         .channel(`profile-balances-${userId}`)
         .on(
           "postgres_changes",
@@ -193,16 +250,44 @@ export default function Header() {
           }
         });
 
+      const notifChannel = supabase
+        .channel(`user-notifications-${userId}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "notifications",
+          },
+          (payload) => {
+            const newNotif = payload.new as NotificationItem;
+
+            if (!mountedRef.current || currentUserIdRef.current !== userId) {
+              return;
+            }
+
+            if (newNotif.user_id === userId || newNotif.user_id === null) {
+              setNotifications((prev) => {
+                if (prev.some((n) => n.id === newNotif.id)) return prev;
+                return [newNotif, ...prev].slice(0, 20);
+              });
+            }
+          }
+        )
+        .subscribe();
+
       if (
         disposed ||
         version !== sessionVersionRef.current ||
         currentUserIdRef.current !== userId
       ) {
-        await supabase.removeChannel(channel);
+        await supabase.removeChannel(profileChannel);
+        await supabase.removeChannel(notifChannel);
         return;
       }
 
-      channelRef.current = channel;
+      channelRef.current = profileChannel;
+      notifChannelRef.current = notifChannel;
     };
 
     const checkSession = async () => {
@@ -227,7 +312,7 @@ export default function Header() {
       void handleSession(session);
     });
 
-    const refreshBalances = () => {
+    const refreshData = () => {
       const userId = currentUserIdRef.current;
 
       if (
@@ -236,11 +321,12 @@ export default function Header() {
         mountedRef.current
       ) {
         void fetchUserBalances(userId);
+        void fetchNotifications(userId);
       }
     };
 
-    window.addEventListener("focus", refreshBalances);
-    document.addEventListener("visibilitychange", refreshBalances);
+    window.addEventListener("focus", refreshData);
+    document.addEventListener("visibilitychange", refreshData);
 
     return () => {
       disposed = true;
@@ -250,17 +336,74 @@ export default function Header() {
 
       subscription.unsubscribe();
 
-      window.removeEventListener("focus", refreshBalances);
-      document.removeEventListener("visibilitychange", refreshBalances);
+      window.removeEventListener("focus", refreshData);
+      document.removeEventListener("visibilitychange", refreshData);
 
-      const channel = channelRef.current;
-      channelRef.current = null;
-
-      if (channel) {
-        void supabase.removeChannel(channel);
-      }
+      void removeChannels();
     };
   }, []);
+
+  // MARCAR NOTIFICACIONES COMO LEÍDAS
+
+  const isNotificationRead = (notif: NotificationItem) => {
+    if (notif.user_id === null) {
+      return readGlobalIds.includes(notif.id);
+    }
+    return notif.is_read;
+  };
+
+  const unreadCount = notifications.filter((n) => !isNotificationRead(n)).length;
+
+  const markAsRead = async (notif: NotificationItem) => {
+    if (isNotificationRead(notif)) return;
+
+    if (notif.user_id === null) {
+      const updated = [...readGlobalIds, notif.id];
+      setReadGlobalIds(updated);
+      try {
+        localStorage.setItem("axiom_read_global_notifs", JSON.stringify(updated));
+      } catch {
+        // Ignorar
+      }
+      return;
+    }
+
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === notif.id ? { ...n, is_read: true } : n))
+    );
+
+    await supabase
+      .from("notifications")
+      .update({ is_read: true })
+      .eq("id", notif.id);
+  };
+
+  const markAllAsRead = async () => {
+    const userId = currentUserIdRef.current;
+    if (!userId) return;
+
+    const globalIds = notifications
+      .filter((n) => n.user_id === null)
+      .map((n) => n.id);
+
+    if (globalIds.length > 0) {
+      const merged = Array.from(new Set([...readGlobalIds, ...globalIds]));
+      setReadGlobalIds(merged);
+      try {
+        localStorage.setItem("axiom_read_global_notifs", JSON.stringify(merged));
+      } catch {
+        // Ignorar
+      }
+    }
+
+    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+
+    await supabase
+      .from("notifications")
+      .update({ is_read: true })
+      .eq("user_id", userId)
+      .eq("is_read", false);
+  };
 
   // REGISTRO
 
@@ -525,9 +668,13 @@ export default function Header() {
                   </span>
                 </a>
 
+                {/* DROPDOWN DE SALDO */}
                 <div className="relative">
                   <button
-                    onClick={() => setIsBalanceOpen(!isBalanceOpen)}
+                    onClick={() => {
+                      setIsBalanceOpen(!isBalanceOpen);
+                      setIsNotifOpen(false);
+                    }}
                     className="flex items-center gap-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 px-3.5 py-2 rounded-xl transition-all"
                   >
                     <span className="text-[10px] text-zinc-400 font-bold uppercase">
@@ -571,6 +718,109 @@ export default function Header() {
                   )}
                 </div>
 
+                {/* CAMPANA DE NOTIFICACIONES */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsNotifOpen(!isNotifOpen);
+                      setIsBalanceOpen(false);
+                    }}
+                    title="Notificaciones"
+                    aria-label="Notificaciones"
+                    className="relative flex items-center justify-center p-2.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-800 rounded-xl transition-all active:scale-95"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="17"
+                      height="17"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+                      <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+                    </svg>
+
+                    {unreadCount > 0 && (
+                      <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 bg-emerald-500 text-black text-[10px] font-black rounded-full flex items-center justify-center shadow">
+                        {unreadCount > 9 ? "9+" : unreadCount}
+                      </span>
+                    )}
+                  </button>
+
+                  {isNotifOpen && (
+                    <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl z-50 overflow-hidden">
+                      <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+                        <span className="text-xs font-black uppercase tracking-wider text-emerald-400">
+                          Mensajes ({unreadCount})
+                        </span>
+
+                        {unreadCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={markAllAsRead}
+                            className="text-[11px] font-bold text-zinc-400 hover:text-white transition"
+                          >
+                            Marcar leídos
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="max-h-80 overflow-y-auto divide-y divide-zinc-800/80">
+                        {notifications.length === 0 ? (
+                          <div className="p-6 text-center text-xs text-zinc-500">
+                            No tienes mensajes nuevos.
+                          </div>
+                        ) : (
+                          notifications.map((notif) => {
+                            const read = isNotificationRead(notif);
+                            return (
+                              <div
+                                key={notif.id}
+                                onClick={() => markAsRead(notif)}
+                                className={`p-3.5 cursor-pointer transition hover:bg-zinc-800/60 ${
+                                  read ? "opacity-65" : "bg-emerald-500/[0.04]"
+                                }`}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <p className="text-xs font-bold text-white">
+                                    {notif.title}
+                                  </p>
+                                  {!read && (
+                                    <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
+                                  )}
+                                </div>
+
+                                <p className="mt-1 text-xs text-zinc-300 leading-relaxed">
+                                  {notif.message}
+                                </p>
+
+                                <p className="mt-1.5 text-[10px] text-zinc-500">
+                                  {new Date(notif.created_at).toLocaleString(
+                                    "es-EC",
+                                    {
+                                      day: "2-digit",
+                                      month: "short",
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    }
+                                  )}
+                                </p>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* BOTÓN PERFIL */}
                 <a
                   href="/perfil"
                   title="Mi perfil"
