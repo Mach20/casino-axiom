@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import Header from "../components/Header";
 import {
@@ -8,16 +8,15 @@ import {
     ArrowRight,
     Check,
     CheckCircle2,
+    Coins,
     Copy,
     Loader2,
-    Wallet,
     Clock3,
     AlertTriangle,
     RefreshCw,
 } from "lucide-react";
 
 const API_URL = "https://casino-axiom.ethiodeploy.app";
-
 const MIN_AMOUNT = 20;
 
 type CryptoDeposit = {
@@ -77,6 +76,8 @@ export default function DepositosPage() {
     const [error, setError] = useState("");
     const [copiedAddress, setCopiedAddress] = useState(false);
     const [copiedAmount, setCopiedAmount] = useState(false);
+
+    const statusRequestInFlight = useRef(false);
 
     const getFreshAccessToken = useCallback(async (): Promise<string> => {
         const { data, error } = await supabase.auth.getSession();
@@ -263,8 +264,9 @@ export default function DepositosPage() {
     };
 
     const refreshDepositStatus = useCallback(async () => {
-        if (!deposit?.order_id || statusLoading) return;
+        if (!deposit?.order_id || statusRequestInFlight.current) return;
 
+        statusRequestInFlight.current = true;
         setStatusLoading(true);
 
         try {
@@ -322,6 +324,7 @@ export default function DepositosPage() {
                 err
             );
         } finally {
+            statusRequestInFlight.current = false;
             setStatusLoading(false);
         }
     }, [
@@ -329,7 +332,6 @@ export default function DepositosPage() {
         deposit?.order_id,
         deposit?.payment_status,
         getFreshAccessToken,
-        statusLoading,
     ]);
 
     useEffect(() => {
@@ -397,7 +399,6 @@ export default function DepositosPage() {
             <Header />
 
             <div className="mx-auto max-w-5xl px-4 py-6 sm:px-5 sm:py-8">
-
                 <button
                     type="button"
                     onClick={() => {
@@ -418,9 +419,7 @@ export default function DepositosPage() {
                 </h1>
 
                 <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-[220px_1fr]">
-
                     {/* OPCIÓN USDT */}
-
                     <button
                         type="button"
                         onClick={() => {
@@ -436,7 +435,7 @@ export default function DepositosPage() {
                         }`}
                     >
                         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-emerald-500/20 bg-emerald-500/10">
-                            <Wallet className="h-5 w-5 text-emerald-400" />
+                            <Coins className="h-5 w-5 text-emerald-400" />
                         </div>
 
                         <div className="min-w-0">
@@ -453,14 +452,12 @@ export default function DepositosPage() {
                     </button>
 
                     {/* PANEL DERECHO */}
-
                     <div className="min-w-0 rounded-xl border border-white/10 bg-[#111714] p-4 sm:p-5">
-
                         {view === "form" && (
                             <>
                                 <div className="mb-5 flex items-center gap-3">
                                     <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/10">
-                                        <Wallet className="h-5 w-5 text-emerald-400" />
+                                        <Coins className="h-5 w-5 text-emerald-400" />
                                     </div>
 
                                     <div>
@@ -528,7 +525,7 @@ export default function DepositosPage() {
                             <>
                                 <div className="mb-5 flex items-center gap-3">
                                     <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/10">
-                                        <Wallet className="h-5 w-5 text-emerald-400" />
+                                        <Coins className="h-5 w-5 text-emerald-400" />
                                     </div>
 
                                     <div>

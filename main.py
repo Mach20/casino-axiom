@@ -895,7 +895,6 @@ async def create_crypto_deposit(
             status_code=500,
             detail="No se pudo crear el depósito cripto."
         )
-from fastapi import Request
 
 
 def _credit_crypto_deposit_to_user(
