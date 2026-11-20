@@ -173,6 +173,7 @@ export default function Header() {
         setBonusBalance(0);
         setNotifications([]);
         setIsNotifOpen(false);
+        setIsBalanceOpen(false);
 
         await removeChannels();
         return;
@@ -535,24 +536,33 @@ export default function Header() {
     }
   };
 
-  // INTERFAZ
+  // INTERFAZ RESPONSIVE
 
   return (
     <>
-      {isMenuOpen && (
+      {(isMenuOpen || isBalanceOpen || isNotifOpen) && (
         <div
-          onClick={() => setIsMenuOpen(false)}
-          className="fixed inset-0 bg-black/80 backdrop-blur-sm z-40 transition-opacity"
+          onClick={() => {
+            setIsMenuOpen(false);
+            setIsBalanceOpen(false);
+            setIsNotifOpen(false);
+          }}
+          className={`fixed inset-0 transition-opacity ${
+            isMenuOpen
+              ? "bg-black/80 backdrop-blur-sm z-40"
+              : "bg-transparent z-20"
+          }`}
         />
       )}
 
+      {/* MENÚ LATERAL RESPONSIVE */}
       <aside
-        className={`fixed top-0 left-0 h-full w-72 bg-zinc-950 border-r border-zinc-800 z-50 p-6 flex flex-col justify-between transform transition-transform duration-300 ${
+        className={`fixed top-0 left-0 h-dvh w-[82vw] max-w-xs sm:w-72 bg-zinc-950 border-r border-zinc-800 z-50 p-4 sm:p-6 flex flex-col justify-between overflow-y-auto transform transition-transform duration-300 ${
           isMenuOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
         <div>
-          <div className="flex items-start justify-between gap-2 mb-8 pb-4 border-b border-zinc-900">
+          <div className="flex items-start justify-between gap-2 mb-6 sm:mb-8 pb-4 border-b border-zinc-900">
             <div className="min-w-0">
               {isLoggedIn ? (
                 <>
@@ -561,7 +571,7 @@ export default function Header() {
                   </p>
                   <p className="mt-1 text-xs font-semibold text-emerald-400">
                     ID:{" "}
-                    <span className="font-mono text-zinc-200">
+                    <span className="font-mono text-zinc-200 break-all">
                       {docNumber || "No registrado"}
                     </span>
                   </p>
@@ -579,7 +589,8 @@ export default function Header() {
             <button
               type="button"
               onClick={() => setIsMenuOpen(false)}
-              className="text-zinc-500 hover:text-white text-xl font-bold shrink-0"
+              aria-label="Cerrar menú"
+              className="p-1.5 text-zinc-400 hover:text-white text-lg font-bold shrink-0 rounded-lg hover:bg-zinc-900 transition"
             >
               ✕
             </button>
@@ -589,79 +600,90 @@ export default function Header() {
             <a
               href="/"
               onClick={() => setIsMenuOpen(false)}
-              className="flex items-center gap-3 px-4 py-3 bg-zinc-900 text-emerald-400 font-bold text-xs uppercase tracking-wider rounded-xl border border-zinc-800"
+              className="flex items-center gap-3 px-4 py-3 bg-zinc-900 text-emerald-400 font-bold text-xs uppercase tracking-wider rounded-xl border border-zinc-800 hover:border-emerald-500/40 transition"
             >
               Casino Online
             </a>
           </nav>
         </div>
 
-        <div className="pt-4 border-t border-zinc-900 flex flex-col space-y-2.5 text-xs font-semibold text-zinc-400">
+        <div className="pt-4 mt-6 border-t border-zinc-900 flex flex-col space-y-2.5 text-xs font-semibold text-zinc-400">
           <a
             href="/legal?tab=terminos"
             onClick={() => setIsMenuOpen(false)}
-            className="hover:text-emerald-400 transition"
+            className="hover:text-emerald-400 transition py-0.5"
           >
             Términos y Condiciones
           </a>
           <a
             href="/legal?tab=juego"
             onClick={() => setIsMenuOpen(false)}
-            className="hover:text-emerald-400 transition"
+            className="hover:text-emerald-400 transition py-0.5"
           >
             Políticas de Juego
           </a>
           <a
             href="/legal?tab=kyc"
             onClick={() => setIsMenuOpen(false)}
-            className="hover:text-emerald-400 transition"
+            className="hover:text-emerald-400 transition py-0.5"
           >
             KYC y AML
           </a>
         </div>
       </aside>
 
+      {/* BARRA SUPERIOR RESPONSIVE */}
       <header className="w-full bg-zinc-950/90 border-b border-zinc-900 sticky top-0 z-30 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-4 py-3.5 flex items-center justify-between">
-          <div className="flex items-center gap-4">
+        <div className="max-w-7xl mx-auto px-2.5 sm:px-4 md:px-6 py-2.5 sm:py-3.5 flex items-center justify-between gap-2">
+          {/* IZQUIERDA: HAMBURGUESA + LOGO */}
+          <div className="flex items-center gap-2 sm:gap-3 md:gap-4 shrink-0">
             <button
-              onClick={() => setIsMenuOpen(true)}
-              className="p-2.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded-xl border border-zinc-800 transition-all active:scale-95"
+              type="button"
+              onClick={() => {
+                setIsMenuOpen(true);
+                setIsBalanceOpen(false);
+                setIsNotifOpen(false);
+              }}
+              aria-label="Abrir menú"
+              className="p-2 sm:p-2.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded-xl border border-zinc-800 transition-all active:scale-95 shrink-0"
             >
-              <span className="text-lg leading-none">☰</span>
+              <span className="text-base sm:text-lg leading-none block">☰</span>
             </button>
 
-            <h1 className="text-xl font-black text-emerald-400 tracking-widest uppercase">
+            <h1 className="text-base sm:text-xl md:text-2xl font-black text-emerald-400 tracking-wider sm:tracking-widest uppercase whitespace-nowrap">
               AXIOM
             </h1>
           </div>
 
-          <div className="flex items-center gap-3">
+          {/* DERECHA: AUTH O CONTROLES DE USUARIO */}
+          <div className="flex items-center gap-1.5 sm:gap-2.5 md:gap-3 min-w-0">
             {!isLoggedIn ? (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                 <button
+                  type="button"
                   onClick={() => setAuthView("login")}
-                  className="px-3.5 py-2 text-xs font-bold text-zinc-300 hover:text-white uppercase transition-all"
+                  className="px-2.5 sm:px-3.5 py-2 text-[11px] sm:text-xs font-bold text-zinc-300 hover:text-white uppercase whitespace-nowrap transition-all"
                 >
                   Iniciar Sesión
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => setAuthView("register")}
-                  className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg active:scale-95"
+                  className="px-3 sm:px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-[11px] sm:text-xs uppercase tracking-wider rounded-xl whitespace-nowrap transition-all shadow-lg active:scale-95"
                 >
                   Registrarse
                 </button>
               </div>
             ) : (
-              <div className="flex items-center gap-2 sm:gap-3">
-                <span className="text-xs sm:text-sm font-bold text-white max-w-[100px] sm:max-w-none truncate">
+              <div className="flex items-center gap-1.5 sm:gap-2.5 md:gap-3 min-w-0">
+                <span className="hidden lg:inline-block text-xs xl:text-sm font-bold text-white max-w-[160px] truncate">
                   {firstName}
                 </span>
 
                 <a
                   href="/deposito"
-                  className="flex items-center gap-2 px-3 py-2 bg-emerald-500 hover:bg-emerald-400 text-black border border-emerald-400 rounded-xl transition-all shadow-lg shadow-emerald-500/10 active:scale-95"
+                  className="flex items-center justify-center px-2.5 sm:px-3 py-2 bg-emerald-500 hover:bg-emerald-400 text-black border border-emerald-400 rounded-xl whitespace-nowrap transition-all shadow-lg shadow-emerald-500/10 active:scale-95 shrink-0"
                 >
                   <span className="text-[10px] sm:text-xs font-black uppercase tracking-wide">
                     + Depositar
@@ -669,30 +691,33 @@ export default function Header() {
                 </a>
 
                 {/* DROPDOWN DE SALDO */}
-                <div className="relative">
+                <div className="relative shrink-0">
                   <button
+                    type="button"
                     onClick={() => {
-                      setIsBalanceOpen(!isBalanceOpen);
+                      setIsBalanceOpen((prev) => !prev);
                       setIsNotifOpen(false);
                     }}
-                    className="flex items-center gap-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 px-3.5 py-2 rounded-xl transition-all"
+                    className="flex items-center gap-1 sm:gap-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 px-2.5 sm:px-3.5 py-2 rounded-xl whitespace-nowrap transition-all"
                   >
-                    <span className="text-[10px] text-zinc-400 font-bold uppercase">
+                    <span className="hidden sm:inline text-[10px] text-zinc-400 font-bold uppercase">
                       Saldo:
                     </span>
-                    <span className="text-xs font-black text-emerald-400">
+                    <span className="text-[11px] sm:text-xs font-black text-emerald-400 tabular-nums">
                       ${playBalance.toFixed(2)}
                     </span>
-                    <span className="text-[10px] text-zinc-500">▼</span>
+                    <span className="text-[9px] sm:text-[10px] text-zinc-500">
+                      ▼
+                    </span>
                   </button>
 
                   {isBalanceOpen && (
-                    <div className="absolute right-0 mt-2 w-56 bg-zinc-900 border border-zinc-800 rounded-2xl p-4 shadow-2xl z-50 text-xs space-y-3">
+                    <div className="fixed sm:absolute right-2.5 sm:right-0 left-2.5 sm:left-auto mt-2 sm:w-60 bg-zinc-900 border border-zinc-800 rounded-2xl p-4 shadow-2xl z-50 text-xs space-y-3">
                       <div className="flex justify-between items-center border-b border-zinc-800/80 pb-2">
                         <span className="text-zinc-400 font-medium">
                           Saldo:
                         </span>
-                        <span className="font-black text-emerald-400">
+                        <span className="font-black text-emerald-400 tabular-nums">
                           ${playBalance.toFixed(2)}
                         </span>
                       </div>
@@ -701,7 +726,7 @@ export default function Header() {
                         <span className="text-zinc-400 font-medium">
                           Saldo para Retirar:
                         </span>
-                        <span className="font-black text-white">
+                        <span className="font-black text-white tabular-nums">
                           ${withdrawBalance.toFixed(2)}
                         </span>
                       </div>
@@ -710,7 +735,7 @@ export default function Header() {
                         <span className="text-zinc-400 font-medium">
                           Saldo Bono:
                         </span>
-                        <span className="font-black text-yellow-400">
+                        <span className="font-black text-yellow-400 tabular-nums">
                           ${bonusBalance.toFixed(2)}
                         </span>
                       </div>
@@ -719,16 +744,16 @@ export default function Header() {
                 </div>
 
                 {/* CAMPANA DE NOTIFICACIONES */}
-                <div className="relative">
+                <div className="relative shrink-0">
                   <button
                     type="button"
                     onClick={() => {
-                      setIsNotifOpen(!isNotifOpen);
+                      setIsNotifOpen((prev) => !prev);
                       setIsBalanceOpen(false);
                     }}
                     title="Notificaciones"
                     aria-label="Notificaciones"
-                    className="relative flex items-center justify-center p-2.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-800 rounded-xl transition-all active:scale-95"
+                    className="relative flex items-center justify-center p-2 sm:p-2.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-800 rounded-xl transition-all active:scale-95"
                   >
                     <svg
                       xmlns="http://www.w3.org/2000/svg"
@@ -754,7 +779,7 @@ export default function Header() {
                   </button>
 
                   {isNotifOpen && (
-                    <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl z-50 overflow-hidden">
+                    <div className="fixed sm:absolute right-2.5 sm:right-0 left-2.5 sm:left-auto mt-2 sm:w-80 md:w-96 bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl z-50 overflow-hidden">
                       <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
                         <span className="text-xs font-black uppercase tracking-wider text-emerald-400">
                           Mensajes ({unreadCount})
@@ -771,7 +796,7 @@ export default function Header() {
                         )}
                       </div>
 
-                      <div className="max-h-80 overflow-y-auto divide-y divide-zinc-800/80">
+                      <div className="max-h-[65dvh] sm:max-h-80 overflow-y-auto divide-y divide-zinc-800/80">
                         {notifications.length === 0 ? (
                           <div className="p-6 text-center text-xs text-zinc-500">
                             No tienes mensajes nuevos.
@@ -796,7 +821,7 @@ export default function Header() {
                                   )}
                                 </div>
 
-                                <p className="mt-1 text-xs text-zinc-300 leading-relaxed">
+                                <p className="mt-1 text-xs text-zinc-300 leading-relaxed break-words">
                                   {notif.message}
                                 </p>
 
@@ -825,7 +850,7 @@ export default function Header() {
                   href="/perfil"
                   title="Mi perfil"
                   aria-label="Mi perfil"
-                  className="flex items-center justify-center p-2.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-800 rounded-xl transition-all active:scale-95"
+                  className="flex items-center justify-center p-2 sm:p-2.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-800 rounded-xl transition-all active:scale-95 shrink-0"
                 >
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
@@ -849,19 +874,18 @@ export default function Header() {
         </div>
       </header>
 
-      {/* MODAL DE AUTENTICACIÓN */}
-
+      {/* MODAL DE AUTENTICACIÓN RESPONSIVE */}
       {authView !== "none" && (
-        <div className="fixed inset-0 z-[60] bg-black/90 backdrop-blur-md flex items-start justify-center overflow-y-auto p-4">
+        <div className="fixed inset-0 z-[60] bg-black/90 backdrop-blur-md flex items-center justify-center overflow-y-auto p-3 sm:p-4 md:p-6">
           <div
             className={`w-full ${
               authView === "register" ? "max-w-2xl" : "max-w-md"
-            } bg-zinc-950 border border-zinc-800 rounded-3xl p-8 shadow-2xl space-y-6 my-auto`}
+            } max-h-[92dvh] overflow-y-auto bg-zinc-950 border border-zinc-800 rounded-2xl sm:rounded-3xl p-5 sm:p-7 md:p-8 shadow-2xl space-y-5 sm:space-y-6 my-auto`}
           >
             {authView === "login" ? (
               <>
                 <div className="text-center">
-                  <h2 className="text-2xl font-black uppercase text-emerald-400 tracking-wider">
+                  <h2 className="text-xl sm:text-2xl font-black uppercase text-emerald-400 tracking-wider">
                     Iniciar Sesión
                   </h2>
                   <p className="text-xs text-zinc-500 mt-1">
@@ -882,7 +906,7 @@ export default function Header() {
                         setLoginData({ ...loginData, email: e.target.value })
                       }
                       placeholder="tucorreo@dominio.com"
-                      className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-3 text-xs text-white outline-none focus:border-emerald-500"
+                      className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-3 text-sm sm:text-xs text-white outline-none focus:border-emerald-500"
                     />
                   </div>
 
@@ -898,7 +922,7 @@ export default function Header() {
                         setLoginData({ ...loginData, password: e.target.value })
                       }
                       placeholder="••••••••"
-                      className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-3 text-xs text-white outline-none focus:border-emerald-500"
+                      className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-3 text-sm sm:text-xs text-white outline-none focus:border-emerald-500"
                     />
                   </div>
 
@@ -913,7 +937,7 @@ export default function Header() {
             ) : (
               <>
                 <div className="text-center">
-                  <h2 className="text-2xl font-black uppercase text-emerald-400 tracking-wider">
+                  <h2 className="text-xl sm:text-2xl font-black uppercase text-emerald-400 tracking-wider">
                     Crear Cuenta
                   </h2>
                   <p className="text-xs text-zinc-500 mt-1">
@@ -923,7 +947,7 @@ export default function Header() {
 
                 <form
                   onSubmit={handleRegisterSubmit}
-                  className="grid grid-cols-1 sm:grid-cols-2 gap-4"
+                  className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 sm:gap-4"
                 >
                   <div>
                     <label className="text-[10px] uppercase font-bold text-zinc-400 block mb-1">
@@ -937,7 +961,7 @@ export default function Header() {
                         setRegData({ ...regData, firstName: e.target.value })
                       }
                       placeholder="Ingrese su primer nombre"
-                      className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
+                      className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm sm:text-xs text-white outline-none focus:border-emerald-500"
                     />
                   </div>
 
@@ -952,7 +976,7 @@ export default function Header() {
                         setRegData({ ...regData, middleName: e.target.value })
                       }
                       placeholder="Ingrese su segundo nombre"
-                      className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
+                      className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm sm:text-xs text-white outline-none focus:border-emerald-500"
                     />
                   </div>
 
@@ -968,7 +992,7 @@ export default function Header() {
                         setRegData({ ...regData, lastName: e.target.value })
                       }
                       placeholder="Ingrese su primer apellido"
-                      className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
+                      className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm sm:text-xs text-white outline-none focus:border-emerald-500"
                     />
                   </div>
 
@@ -986,11 +1010,11 @@ export default function Header() {
                         })
                       }
                       placeholder="Ingrese su segundo apellido"
-                      className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
+                      className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm sm:text-xs text-white outline-none focus:border-emerald-500"
                     />
                   </div>
 
-                  <div className="sm:col-span-2 grid grid-cols-3 gap-2">
+                  <div className="sm:col-span-2 grid grid-cols-1 xs:grid-cols-3 sm:grid-cols-3 gap-2.5">
                     <div>
                       <label className="text-[10px] uppercase font-bold text-zinc-400 block mb-1">
                         Tipo Doc.
@@ -1000,14 +1024,14 @@ export default function Header() {
                         onChange={(e) =>
                           setRegData({ ...regData, docType: e.target.value })
                         }
-                        className="w-full bg-black border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
+                        className="w-full bg-black border border-zinc-800 rounded-xl px-3 py-2.5 text-sm sm:text-xs text-white outline-none focus:border-emerald-500"
                       >
                         <option value="Cédula">Cédula</option>
                         <option value="Pasaporte">Pasaporte</option>
                       </select>
                     </div>
 
-                    <div className="col-span-2">
+                    <div className="xs:col-span-2 sm:col-span-2">
                       <label className="text-[10px] uppercase font-bold text-zinc-400 block mb-1">
                         Número de Documento
                       </label>
@@ -1022,7 +1046,7 @@ export default function Header() {
                           })
                         }
                         placeholder="Número de cédula o pasaporte"
-                        className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
+                        className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm sm:text-xs text-white outline-none focus:border-emerald-500"
                       />
                     </div>
                   </div>
@@ -1039,7 +1063,7 @@ export default function Header() {
                         setRegData({ ...regData, phone: e.target.value })
                       }
                       placeholder="09xxxxxxxx"
-                      className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
+                      className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm sm:text-xs text-white outline-none focus:border-emerald-500"
                     />
                   </div>
 
@@ -1054,7 +1078,7 @@ export default function Header() {
                       onChange={(e) =>
                         setRegData({ ...regData, birthDate: e.target.value })
                       }
-                      className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
+                      className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm sm:text-xs text-white outline-none focus:border-emerald-500"
                     />
                   </div>
 
@@ -1070,7 +1094,7 @@ export default function Header() {
                         setRegData({ ...regData, email: e.target.value })
                       }
                       placeholder="tucorreo@dominio.com"
-                      className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
+                      className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm sm:text-xs text-white outline-none focus:border-emerald-500"
                     />
                   </div>
 
@@ -1086,7 +1110,7 @@ export default function Header() {
                         setRegData({ ...regData, password: e.target.value })
                       }
                       placeholder="••••••••"
-                      className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
+                      className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm sm:text-xs text-white outline-none focus:border-emerald-500"
                     />
                   </div>
 
@@ -1101,7 +1125,7 @@ export default function Header() {
                         setRegData({ ...regData, bonusCode: e.target.value })
                       }
                       placeholder="BONUS10"
-                      className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
+                      className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm sm:text-xs text-white outline-none focus:border-emerald-500"
                     />
                   </div>
 
@@ -1119,7 +1143,7 @@ export default function Header() {
                         })
                       }
                       placeholder="AX12AB34CD"
-                      className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
+                      className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm sm:text-xs text-white outline-none focus:border-emerald-500"
                     />
                   </div>
 
@@ -1174,7 +1198,7 @@ export default function Header() {
               </>
             )}
 
-            <div className="text-center pt-2">
+            <div className="text-center pt-1">
               <button
                 type="button"
                 onClick={() => setAuthView("none")}
@@ -1187,16 +1211,15 @@ export default function Header() {
         </div>
       )}
 
-      {/* MODAL DE ALERTAS */}
-
+      {/* MODAL DE ALERTAS RESPONSIVE */}
       {modal.isOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-4">
-          <div className="bg-zinc-950 border border-zinc-800 w-full max-w-sm rounded-2xl p-6 shadow-2xl text-center space-y-4">
-            <h3 className="text-lg font-black uppercase text-emerald-400 tracking-wider">
+          <div className="bg-zinc-950 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 sm:p-6 shadow-2xl text-center space-y-4">
+            <h3 className="text-base sm:text-lg font-black uppercase text-emerald-400 tracking-wider">
               {modal.title}
             </h3>
 
-            <p className="text-xs text-zinc-300 leading-relaxed">
+            <p className="text-xs text-zinc-300 leading-relaxed break-words">
               {modal.message}
             </p>
 

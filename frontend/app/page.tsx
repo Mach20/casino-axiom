@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useEffect } from "react";
@@ -22,144 +21,124 @@ export default function Home() {
   }, [slides.length]);
 
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col justify-between select-none font-sans">
-
+    <div className="min-h-dvh bg-black text-white flex flex-col justify-between select-none font-sans overflow-x-clip">
       <Header />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-8 space-y-8 flex flex-col justify-center">
-
-        <section className="relative overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-950 h-[320px] sm:h-[420px]">
-
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-5 md:px-6 py-5 sm:py-8 space-y-6 sm:space-y-8 flex flex-col justify-center">
+        {/* CARRUSEL / BANNER PRINCIPAL */}
+        <section className="relative overflow-hidden rounded-2xl sm:rounded-3xl border border-zinc-800 bg-zinc-950 h-52 xs:h-60 sm:h-72 md:h-[380px] lg:h-[440px]">
           {slides.map((imgUrl, index) => (
             <div
               key={index}
               className={`absolute inset-0 w-full h-full transition-opacity duration-500 ${
                 index === currentSlide
-                  ? "opacity-100 z-10"
-                  : "opacity-0 z-0"
+                  ? "opacity-100 z-10 pointer-events-auto"
+                  : "opacity-0 z-0 pointer-events-none"
               }`}
             >
               <img
                 src={imgUrl}
                 alt={`Anuncio ${index + 1}`}
-                className="w-full h-full object-cover"
+                className="w-full h-full object-cover object-center"
               />
             </div>
           ))}
 
-          <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex gap-2 z-20">
+          <div className="absolute bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 z-20 px-2.5 py-1.5 rounded-full bg-black/40 backdrop-blur-sm">
             {slides.map((_, index) => (
               <button
                 key={index}
+                type="button"
+                aria-label={`Ir al anuncio ${index + 1}`}
                 onClick={() => setCurrentSlide(index)}
-                className={`w-3 h-3 rounded-full transition-all ${
+                className={`h-2.5 sm:h-3 rounded-full transition-all cursor-pointer ${
                   index === currentSlide
-                    ? "bg-emerald-500"
-                    : "bg-zinc-700"
+                    ? "w-6 sm:w-7 bg-emerald-500"
+                    : "w-2.5 sm:w-3 bg-zinc-600 hover:bg-zinc-400"
                 }`}
               />
             ))}
           </div>
-
         </section>
 
-        <section>
-
-          <h3 className="text-sm font-black text-zinc-300 uppercase tracking-wider mb-4 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-            Juegos Online
+        {/* SECCIÓN DE JUEGOS */}
+        <section className="min-w-0">
+          <h3 className="text-xs sm:text-sm font-black text-zinc-300 uppercase tracking-wider mb-3.5 sm:mb-4 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+            <span>Juegos Online</span>
           </h3>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-5">
             {/* TARJETA 1: X vs O */}
-
-            <div className="bg-zinc-950 border border-zinc-800/80 rounded-2xl p-5 hover:border-emerald-500/50 transition-all flex flex-col justify-between">
-
+            <div className="min-w-0 bg-zinc-950 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 hover:border-emerald-500/50 transition-all flex flex-col justify-between">
               <div>
-
-                <div className="flex justify-between items-start mb-3">
-
-                  <span className="text-[10px] bg-emerald-950 text-emerald-400 font-bold px-2.5 py-1 rounded-lg border border-emerald-800/60 uppercase">
+                <div className="flex justify-between items-center gap-2 mb-3">
+                  <span className="text-[10px] bg-emerald-950 text-emerald-400 font-bold px-2.5 py-1 rounded-lg border border-emerald-800/60 uppercase shrink-0">
                     online
                   </span>
 
-                  <span className="text-xs text-zinc-500 font-mono">
+                  <span className="text-[11px] sm:text-xs text-zinc-400 sm:text-zinc-500 font-mono whitespace-nowrap">
                     Min: $0.25
                   </span>
-
                 </div>
 
-                <h4 className="text-2xl font-black text-white uppercase tracking-wider mb-2">
+                <h4 className="text-xl sm:text-2xl font-black text-white uppercase tracking-wider mb-2 break-words">
                   X vs O
                 </h4>
 
-                <p className="text-xs text-zinc-400 leading-relaxed mb-6">
+                <p className="text-xs sm:text-[13px] text-zinc-400 leading-relaxed mb-5 sm:mb-6">
                   3 en raya multijugador en tiempo real con apuestas y salas privadas.
                 </p>
-
               </div>
 
               <Link
                 href="/game"
-                className="w-full py-3 bg-zinc-900 hover:bg-emerald-500 hover:text-black text-zinc-300 font-black text-xs uppercase tracking-wider rounded-xl transition-all text-center border border-zinc-800 block cursor-pointer"
+                className="w-full py-3 px-4 bg-zinc-900 hover:bg-emerald-500 hover:text-black text-zinc-200 font-black text-xs uppercase tracking-wider rounded-xl transition-all text-center border border-zinc-800 hover:border-emerald-400 block cursor-pointer active:scale-[0.99]"
               >
                 Jugar Ahora
               </Link>
-
             </div>
 
             {/* TARJETA 2: Snake Arena */}
-
-            <div className="bg-zinc-950 border border-zinc-800/80 rounded-2xl p-5 hover:border-emerald-500/50 transition-all flex flex-col justify-between">
-
+            <div className="min-w-0 bg-zinc-950 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 hover:border-emerald-500/50 transition-all flex flex-col justify-between">
               <div>
-
-                <div className="flex justify-between items-start mb-3">
-
-                  <span className="text-[10px] bg-emerald-950 text-emerald-400 font-bold px-2.5 py-1 rounded-lg border border-emerald-800/60 uppercase">
+                <div className="flex justify-between items-center gap-2 mb-3">
+                  <span className="text-[10px] bg-emerald-950 text-emerald-400 font-bold px-2.5 py-1 rounded-lg border border-emerald-800/60 uppercase shrink-0">
                     Online
                   </span>
 
-                  <span className="text-xs text-zinc-500 font-mono">
+                  <span className="text-[11px] sm:text-xs text-zinc-400 sm:text-zinc-500 font-mono whitespace-nowrap">
                     Min: $1
                   </span>
-
                 </div>
 
-                <h4 className="text-2xl font-black text-white uppercase tracking-wider mb-2">
+                <h4 className="text-xl sm:text-2xl font-black text-white uppercase tracking-wider mb-2 break-words">
                   Snake
                 </h4>
 
-                <p className="text-xs text-zinc-400 leading-relaxed mb-6">
+                <p className="text-xs sm:text-[13px] text-zinc-400 leading-relaxed mb-5 sm:mb-6">
                   Controla tu serpiente, come bolitas para crecer, sobrevive a otros jugadores y retírate cuando quieras.
                 </p>
-
               </div>
 
               <Link
                 href="/snake"
-                className="w-full py-3 bg-zinc-900 hover:bg-yellow-400 hover:text-black text-zinc-300 font-black text-xs uppercase tracking-wider rounded-xl transition-all text-center border border-zinc-800 block cursor-pointer"
+                className="w-full py-3 px-4 bg-zinc-900 hover:bg-yellow-400 hover:text-black text-zinc-200 font-black text-xs uppercase tracking-wider rounded-xl transition-all text-center border border-zinc-800 hover:border-yellow-400 block cursor-pointer active:scale-[0.99]"
               >
                 Jugar Ahora
               </Link>
-
             </div>
 
-            {/* TARJETA 3: Billar */}
-
+            {/* TARJETA 3: Billar (lista para completar) */}
           </div>
-
         </section>
-
       </main>
 
-      <footer className="w-full border-t border-zinc-900 bg-zinc-950 py-6 text-center text-xs text-zinc-600">
+      <footer className="w-full border-t border-zinc-900 bg-zinc-950 py-5 sm:py-6 px-4 text-center text-xs text-zinc-600">
         <p className="font-bold text-zinc-500 uppercase tracking-widest text-[10px]">
           AXIOM
         </p>
       </footer>
-
     </div>
   );
 }
