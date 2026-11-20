@@ -43,9 +43,9 @@ const sections = [
 
 function Heading({ title, subtitle }: { title: string; subtitle: string }) {
     return (
-        <div className="mb-6">
-            <h2 className="text-xl font-bold text-white sm:text-2xl">{title}</h2>
-            <p className="mt-1 text-sm text-zinc-400">{subtitle}</p>
+        <div className="mb-5 sm:mb-6">
+            <h2 className="text-lg font-bold text-white sm:text-2xl">{title}</h2>
+            <p className="mt-1 text-xs text-zinc-400 sm:text-sm">{subtitle}</p>
         </div>
     );
 }
@@ -66,15 +66,15 @@ function Input({
     onChange?: (val: string) => void;
 }) {
     return (
-        <label className="block space-y-2">
-            <span className="text-sm font-medium text-zinc-300">{label}</span>
+        <label className="block min-w-0 space-y-1.5 sm:space-y-2">
+            <span className="text-xs font-medium text-zinc-300 sm:text-sm">{label}</span>
             <input
                 type={type}
                 placeholder={placeholder}
                 value={value}
                 readOnly={readOnly}
                 onChange={onChange ? (e) => onChange(e.target.value) : undefined}
-                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-white outline-none placeholder:text-zinc-600 focus:border-emerald-500 read-only:opacity-60"
+                className="w-full min-w-0 rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-sm text-white outline-none placeholder:text-zinc-600 focus:border-emerald-500 read-only:opacity-60 sm:px-4 sm:py-3"
             />
         </label>
     );
@@ -820,31 +820,37 @@ export default function PerfilPage() {
         <>
             <Header />
 
-            <main className="min-h-screen bg-[#090b0a] px-4 pb-12 pt-8 text-white sm:px-6 lg:px-8">
+            <main className="min-h-dvh overflow-x-clip bg-[#090b0a] px-3 pb-10 pt-5 text-white sm:px-6 sm:pb-12 sm:pt-8 lg:px-8">
                 <div className="mx-auto max-w-7xl">
-                    <header className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                        <div>
-                            <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.25em] text-emerald-400"></div>
-                            <h1 className="text-3xl font-black sm:text-4xl">Mi perfil</h1>
-                            <p className="mt-2 text-sm text-zinc-400">Administra tu cuenta.</p>
+                    <header className="mb-6 flex flex-col gap-3 sm:mb-8 sm:flex-row sm:items-end sm:justify-between">
+                        <div className="min-w-0">
+                            <h1 className="text-2xl font-black sm:text-4xl">Mi perfil</h1>
+                            <p className="mt-1 text-xs text-zinc-400 sm:mt-2 sm:text-sm">Administra tu cuenta.</p>
                         </div>
 
-                        <Link href="/" className="inline-flex w-fit items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-zinc-300 hover:text-white">
+                        <Link
+                            href="/"
+                            className="inline-flex w-fit items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900 px-3.5 py-2 text-xs font-semibold text-zinc-300 hover:text-white sm:px-4 sm:py-2.5 sm:text-sm"
+                        >
                             Volver <ChevronRight className="h-4 w-4" />
                         </Link>
                     </header>
 
-                    <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
-                        <aside className="h-fit rounded-2xl border border-zinc-800 bg-[#101311] p-3">
-                            <button onClick={() => setMobileOpen(v => !v)} className="flex w-full items-center justify-between rounded-xl px-3 py-3 text-left lg:hidden">
-                                <span className="flex items-center gap-3">
-                                    <active.icon className="h-5 w-5 text-emerald-400" />
-                                    {active.title}
+                    <div className="grid gap-4 sm:gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
+                        <aside className="h-fit min-w-0 rounded-2xl border border-zinc-800 bg-[#101311] p-2.5 sm:p-3">
+                            <button
+                                type="button"
+                                onClick={() => setMobileOpen(v => !v)}
+                                className="flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2.5 text-left lg:hidden"
+                            >
+                                <span className="flex min-w-0 items-center gap-2.5">
+                                    <active.icon className="h-5 w-5 shrink-0 text-emerald-400" />
+                                    <span className="truncate text-sm font-semibold text-white">{active.title}</span>
                                 </span>
-                                <Menu className="h-5 w-5" />
+                                <Menu className="h-5 w-5 shrink-0 text-zinc-300" />
                             </button>
 
-                            <nav className={`${mobileOpen ? "block" : "hidden"} space-y-1 lg:block`}>
+                            <nav className={`${mobileOpen ? "mt-2 block" : "hidden"} space-y-1 lg:mt-0 lg:block`}>
                                 {sections.map(item => {
                                     const Icon = item.icon;
                                     const selected = section === item.id;
@@ -852,13 +858,14 @@ export default function PerfilPage() {
                                     return (
                                         <button
                                             key={item.id}
+                                            type="button"
                                             onClick={() => selectSection(item.id)}
                                             className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition ${selected ? "border border-emerald-500/20 bg-emerald-500/10 text-white" : "text-zinc-400 hover:bg-zinc-900 hover:text-white"}`}
                                         >
                                             <Icon className={`h-5 w-5 shrink-0 ${selected ? "text-emerald-400" : ""}`} />
                                             <span className="min-w-0 flex-1">
-                                                <span className="block text-sm font-semibold">{item.title}</span>
-                                                <span className="mt-0.5 block text-xs text-zinc-500">{item.detail}</span>
+                                                <span className="block truncate text-sm font-semibold">{item.title}</span>
+                                                <span className="mt-0.5 block truncate text-xs text-zinc-500">{item.detail}</span>
                                             </span>
                                             <ChevronRight className="h-4 w-4 shrink-0" />
                                         </button>
@@ -874,10 +881,10 @@ export default function PerfilPage() {
                                 >
                                     <LogOut className="h-5 w-5 shrink-0" />
                                     <span className="min-w-0 flex-1">
-                                        <span className="block text-sm font-semibold">
+                                        <span className="block truncate text-sm font-semibold">
                                             {signOutBusy ? "Cerrando sesión..." : "Cerrar sesión"}
                                         </span>
-                                        <span className="mt-0.5 block text-xs text-zinc-500">
+                                        <span className="mt-0.5 block truncate text-xs text-zinc-500">
                                             Salir de AXIOM
                                         </span>
                                     </span>
@@ -891,24 +898,24 @@ export default function PerfilPage() {
                             {section === "datos" && <>
                                 <Heading title="Datos del usuario" subtitle="Consulta tu información." />
 
-                                {profileError && <div className="mb-5 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 text-sm text-amber-200">{profileError}</div>}
+                                {profileError && <div className="mb-5 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3.5 text-xs text-amber-200 sm:p-4 sm:text-sm">{profileError}</div>}
 
-                                <div className="mb-6 grid gap-3 sm:grid-cols-3">
-                                    <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+                                <div className="mb-5 grid grid-cols-1 gap-3 sm:mb-6 sm:grid-cols-3">
+                                    <div className="min-w-0 rounded-xl border border-zinc-800 bg-zinc-950 p-3.5 sm:p-4">
                                         <p className="text-xs text-zinc-500">Saldo</p>
-                                        <p className="mt-2 text-2xl font-black text-emerald-400">${money(profile?.balance)}</p>
+                                        <p className="mt-1.5 text-xl font-black text-emerald-400 tabular-nums sm:mt-2 sm:text-2xl">${money(profile?.balance)}</p>
                                     </div>
-                                    <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+                                    <div className="min-w-0 rounded-xl border border-zinc-800 bg-zinc-950 p-3.5 sm:p-4">
                                         <p className="text-xs text-zinc-500">Saldo para retirar</p>
-                                        <p className="mt-2 text-2xl font-black">${money(profile?.withdraw_balance)}</p>
+                                        <p className="mt-1.5 text-xl font-black tabular-nums sm:mt-2 sm:text-2xl">${money(profile?.withdraw_balance)}</p>
                                     </div>
-                                    <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+                                    <div className="min-w-0 rounded-xl border border-zinc-800 bg-zinc-950 p-3.5 sm:p-4">
                                         <p className="text-xs text-zinc-500">Saldo bono</p>
-                                        <p className="mt-2 text-2xl font-black text-yellow-400">${money(profile?.bonus_balance)}</p>
+                                        <p className="mt-1.5 text-xl font-black text-yellow-400 tabular-nums sm:mt-2 sm:text-2xl">${money(profile?.bonus_balance)}</p>
                                     </div>
                                 </div>
 
-                                <div className="grid gap-4 sm:grid-cols-2">
+                                <div className="grid gap-3.5 sm:grid-cols-2 sm:gap-4">
                                     <Input label="Primer nombre" value={profile?.first_name || ""} placeholder={profileLoading ? "Cargando..." : "—"} readOnly />
                                     <Input label="Segundo nombre" value={profile?.middle_name || ""} placeholder="—" readOnly />
                                     <Input label="Primer apellido" value={profile?.last_name || ""} placeholder="—" readOnly />
@@ -920,16 +927,16 @@ export default function PerfilPage() {
                                     <Input label="Fecha de nacimiento" value={displayDate(profile?.birth_date)} placeholder="—" readOnly />
                                 </div>
 
-                                <div className="my-8 border-t border-zinc-800" />
+                                <div className="my-6 border-t border-zinc-800 sm:my-8" />
 
-                                <div className="mb-5 flex items-center gap-2">
-                                    <LockKeyhole className="h-5 w-5 text-emerald-400" />
+                                <div className="mb-4 flex items-center gap-2 sm:mb-5">
+                                    <LockKeyhole className="h-5 w-5 shrink-0 text-emerald-400" />
                                     <h3 className="font-bold">Cambiar contraseña</h3>
                                 </div>
 
-                                <div className="grid gap-4 sm:grid-cols-2">
-                                    <label className="block space-y-2 sm:col-span-2">
-                                        <span className="text-sm font-medium text-zinc-300">Contraseña actual</span>
+                                <div className="grid gap-3.5 sm:grid-cols-2 sm:gap-4">
+                                    <label className="block min-w-0 space-y-1.5 sm:col-span-2 sm:space-y-2">
+                                        <span className="text-xs font-medium text-zinc-300 sm:text-sm">Contraseña actual</span>
                                         <div className="relative">
                                             <input
                                                 type={showPassword ? "text" : "password"}
@@ -939,10 +946,15 @@ export default function PerfilPage() {
                                                     setPasswordMessage("");
                                                 }}
                                                 placeholder="Contraseña actual"
-                                                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 pr-12 text-sm text-white outline-none focus:border-emerald-500"
+                                                className="w-full min-w-0 rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 pr-11 text-sm text-white outline-none focus:border-emerald-500 sm:px-4 sm:py-3 sm:pr-12"
                                             />
-                                            <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500">
-                                                {showPassword ? <EyeOff /> : <Eye />}
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowPassword(v => !v)}
+                                                aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                                                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+                                            >
+                                                {showPassword ? <EyeOff className="h-4 w-4 sm:h-5 sm:w-5" /> : <Eye className="h-4 w-4 sm:h-5 sm:w-5" />}
                                             </button>
                                         </div>
                                     </label>
@@ -969,7 +981,7 @@ export default function PerfilPage() {
                                 </div>
 
                                 {passwordMessage && (
-                                    <div className={`mt-4 rounded-xl border p-4 text-sm ${passwordMessageType === "success"
+                                    <div className={`mt-4 rounded-xl border p-3.5 text-xs sm:p-4 sm:text-sm ${passwordMessageType === "success"
                                         ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-300"
                                         : "border-red-500/20 bg-red-500/5 text-red-300"
                                         }`}>
@@ -981,7 +993,7 @@ export default function PerfilPage() {
                                     type="button"
                                     onClick={handleChangePassword}
                                     disabled={passwordBusy}
-                                    className="mt-5 rounded-xl bg-emerald-500 px-5 py-3 text-sm font-bold text-black hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="mt-5 w-full rounded-xl bg-emerald-500 px-5 py-3 text-sm font-bold text-black hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
                                 >
                                     {passwordBusy ? "Actualizando..." : "Actualizar contraseña"}
                                 </button>
@@ -994,12 +1006,12 @@ export default function PerfilPage() {
                             {section === "referidos" && <>
                                 <Heading title="Programa de referidos" subtitle="Invita a tus amigos y recibe el 2% de sus apuestas." />
 
-                                <div className="rounded-2xl border border-emerald-500/20 bg-gradient-to-br from-emerald-500/10 to-transparent p-5">
+                                <div className="rounded-2xl border border-emerald-500/20 bg-gradient-to-br from-emerald-500/10 to-transparent p-4 sm:p-5">
                                     <p className="text-xs font-bold uppercase tracking-wider text-emerald-300">Código único</p>
 
                                     <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                        <div>
-                                            <p className="text-xl font-black text-white">
+                                        <div className="min-w-0">
+                                            <p className="break-all text-lg font-black text-white sm:text-xl">
                                                 {referralLoading ? "Cargando..." : referralDashboard?.referral_code || "Código no disponible"}
                                             </p>
                                             <p className="mt-1 text-xs text-zinc-400">
@@ -1008,9 +1020,10 @@ export default function PerfilPage() {
                                         </div>
 
                                         <button
+                                            type="button"
                                             onClick={copyReferralCode}
                                             disabled={!referralDashboard?.referral_code || referralLoading}
-                                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm font-semibold text-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
+                                            className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-xs font-semibold text-emerald-300 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:py-3 sm:text-sm"
                                         >
                                             <Copy className="h-4 w-4" />
                                             {referralCopied ? "¡Copiado!" : "Copiar código"}
@@ -1019,29 +1032,29 @@ export default function PerfilPage() {
                                 </div>
 
                                 {referralError && (
-                                    <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 text-sm text-amber-200">
+                                    <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3.5 text-xs text-amber-200 sm:p-4 sm:text-sm">
                                         {referralError}
                                     </div>
                                 )}
 
-                                <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                                    <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+                                <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                    <div className="min-w-0 rounded-xl border border-zinc-800 bg-zinc-950 p-3.5 sm:p-4">
                                         <p className="text-xs text-zinc-500">Referidos</p>
-                                        <p className="mt-2 text-2xl font-black">
+                                        <p className="mt-1.5 text-xl font-black tabular-nums sm:mt-2 sm:text-2xl">
                                             {referralLoading ? "..." : referralDashboard?.referrals ?? 0}
                                         </p>
                                     </div>
 
-                                    <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+                                    <div className="min-w-0 rounded-xl border border-zinc-800 bg-zinc-950 p-3.5 sm:p-4">
                                         <p className="text-xs text-zinc-500">Ganancias por referidos</p>
-                                        <p className="mt-2 text-2xl font-black text-emerald-400">
+                                        <p className="mt-1.5 text-xl font-black text-emerald-400 tabular-nums sm:mt-2 sm:text-2xl">
                                             ${money(referralDashboard?.earnings)}
                                         </p>
                                     </div>
 
-                                    <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+                                    <div className="min-w-0 rounded-xl border border-zinc-800 bg-zinc-950 p-3.5 sm:p-4">
                                         <p className="text-xs text-zinc-500">Saldo total para retirar</p>
-                                        <p className="mt-2 text-2xl font-black">
+                                        <p className="mt-1.5 text-xl font-black tabular-nums sm:mt-2 sm:text-2xl">
                                             ${money(referralDashboard?.withdraw_balance)}
                                         </p>
                                     </div>
@@ -1055,12 +1068,12 @@ export default function PerfilPage() {
                                     <h3 className="mb-3 font-bold">Tus referidos</h3>
 
                                     {referralLoading ? (
-                                        <div className="rounded-xl border border-dashed border-zinc-700 p-8 text-center">
-                                            <p className="text-sm text-zinc-400">Cargando tus referidos...</p>
+                                        <div className="rounded-xl border border-dashed border-zinc-700 p-6 text-center sm:p-8">
+                                            <p className="text-xs text-zinc-400 sm:text-sm">Cargando tus referidos...</p>
                                         </div>
                                     ) : referralList.length > 0 ? (
                                         <div className="overflow-hidden rounded-xl border border-zinc-800">
-                                            <div className="grid grid-cols-[1fr_auto] gap-3 border-b border-zinc-800 bg-zinc-950 px-4 py-3 text-xs font-semibold text-zinc-500">
+                                            <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-xs font-semibold text-zinc-500 sm:px-4 sm:py-3">
                                                 <span>Usuario referido</span>
                                                 <span>Fecha de registro</span>
                                             </div>
@@ -1068,30 +1081,30 @@ export default function PerfilPage() {
                                             {referralList.map((person: any, index: number) => (
                                                 <div
                                                     key={`${person.created_at || "referido"}-${index}`}
-                                                    className="grid grid-cols-[1fr_auto] items-center gap-3 border-b border-zinc-800/70 px-4 py-4 last:border-b-0"
+                                                    className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-zinc-800/70 px-3.5 py-3.5 last:border-b-0 sm:px-4 sm:py-4"
                                                 >
-                                                    <div className="flex min-w-0 items-center gap-3">
-                                                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-400">
+                                                    <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+                                                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-400 sm:h-9 sm:w-9">
                                                             <Users className="h-4 w-4" />
                                                         </div>
                                                         <div className="min-w-0">
-                                                            <p className="truncate text-sm font-semibold text-white">
+                                                            <p className="truncate text-xs font-semibold text-white sm:text-sm">
                                                                 {[person.first_name, person.last_name].filter(Boolean).join(" ") || "Usuario AXIOM"}
                                                             </p>
-                                                            <p className="text-xs text-zinc-500">Referido</p>
+                                                            <p className="text-[11px] text-zinc-500 sm:text-xs">Referido</p>
                                                         </div>
                                                     </div>
 
-                                                    <span className="text-right text-xs text-zinc-400">
+                                                    <span className="shrink-0 text-right text-[11px] text-zinc-400 sm:text-xs">
                                                         {displayDate(person.created_at)}
                                                     </span>
                                                 </div>
                                             ))}
                                         </div>
                                     ) : (
-                                        <div className="rounded-xl border border-dashed border-zinc-700 p-8 text-center">
-                                            <Users className="mx-auto h-8 w-8 text-zinc-600" />
-                                            <p className="mt-3 text-sm font-semibold text-zinc-300">Todavía no hay actividad</p>
+                                        <div className="rounded-xl border border-dashed border-zinc-700 p-6 text-center sm:p-8">
+                                            <Users className="mx-auto h-7 w-7 text-zinc-600 sm:h-8 sm:w-8" />
+                                            <p className="mt-3 text-xs font-semibold text-zinc-300 sm:text-sm">Todavía no hay actividad</p>
                                             <p className="mt-1 text-xs text-zinc-500">
                                                 Aquí aparecerán las personas que se registren con tu código.
                                             </p>
@@ -1103,19 +1116,19 @@ export default function PerfilPage() {
                             {section === "retiros" && <>
                                 <Heading title="Retiros y transferencias" subtitle="Solicita tu transferencia o convierte tu saldo en saldo para seguir jugando." />
 
-                                <div className="mb-5 grid gap-3 sm:grid-cols-2">
-                                    <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+                                <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                    <div className="min-w-0 rounded-xl border border-zinc-800 bg-zinc-950 p-3.5 sm:p-4">
                                         <p className="text-xs text-zinc-500">Saldo para retirar</p>
-                                        <p className="mt-2 text-3xl font-black">${money(profile?.withdraw_balance)}</p>
+                                        <p className="mt-1.5 text-2xl font-black tabular-nums sm:mt-2 sm:text-3xl">${money(profile?.withdraw_balance)}</p>
                                     </div>
-                                    <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+                                    <div className="min-w-0 rounded-xl border border-zinc-800 bg-zinc-950 p-3.5 sm:p-4">
                                         <p className="text-xs text-zinc-500">Saldo para jugar</p>
-                                        <p className="mt-2 text-3xl font-black">${money(profile?.balance)}</p>
+                                        <p className="mt-1.5 text-2xl font-black tabular-nums sm:mt-2 sm:text-3xl">${money(profile?.balance)}</p>
                                     </div>
                                 </div>
 
                                 {bankMessage && (
-                                    <div className={`mb-5 rounded-xl border p-4 text-sm ${bankMessageType === "success"
+                                    <div className={`mb-5 rounded-xl border p-3.5 text-xs sm:p-4 sm:text-sm ${bankMessageType === "success"
                                         ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-300"
                                         : bankMessageType === "error"
                                             ? "border-red-500/20 bg-red-500/5 text-red-300"
@@ -1126,35 +1139,43 @@ export default function PerfilPage() {
                                 )}
 
                                 <div className="mb-5 flex rounded-xl bg-zinc-950 p-1">
-                                    <button onClick={() => { setWithdrawTab("retirar"); setBankMessage(""); }} className={`flex-1 rounded-lg px-3 py-3 text-sm font-semibold ${withdrawTab === "retirar" ? "bg-emerald-500 text-black" : "text-zinc-400"}`}>
+                                    <button
+                                        type="button"
+                                        onClick={() => { setWithdrawTab("retirar"); setBankMessage(""); }}
+                                        className={`flex-1 rounded-lg px-3 py-2.5 text-xs font-semibold sm:py-3 sm:text-sm ${withdrawTab === "retirar" ? "bg-emerald-500 text-black" : "text-zinc-400"}`}
+                                    >
                                         Solicitar retiro
                                     </button>
-                                    <button onClick={() => { setWithdrawTab("convertir"); setBankMessage(""); }} className={`flex-1 rounded-lg px-3 py-3 text-sm font-semibold ${withdrawTab === "convertir" ? "bg-emerald-500 text-black" : "text-zinc-400"}`}>
+                                    <button
+                                        type="button"
+                                        onClick={() => { setWithdrawTab("convertir"); setBankMessage(""); }}
+                                        className={`flex-1 rounded-lg px-3 py-2.5 text-xs font-semibold sm:py-3 sm:text-sm ${withdrawTab === "convertir" ? "bg-emerald-500 text-black" : "text-zinc-400"}`}
+                                    >
                                         Convertir
                                     </button>
                                 </div>
 
                                 {withdrawTab === "retirar" ? (
-                                    <div className="space-y-4 rounded-xl border border-zinc-800 p-4 sm:p-5">
+                                    <div className="space-y-4 rounded-xl border border-zinc-800 p-3.5 sm:p-5">
                                         <h3 className="font-bold">Transferencia bancaria</h3>
 
-                                        <label className="block space-y-2">
-                                            <span className="text-sm font-medium text-zinc-300">Monto que deseas retirar</span>
+                                        <label className="block space-y-1.5 sm:space-y-2">
+                                            <span className="text-xs font-medium text-zinc-300 sm:text-sm">Monto que deseas retirar</span>
                                             <input
                                                 value={withdrawAmount}
                                                 onChange={e => setWithdrawAmount(e.target.value)}
                                                 inputMode="decimal"
                                                 placeholder="Mínimo $10.00"
-                                                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-500"
+                                                className="w-full min-w-0 rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-sm text-white outline-none focus:border-emerald-500 sm:px-4 sm:py-3"
                                             />
                                         </label>
 
-                                        <label className="block space-y-2">
-                                            <span className="text-sm font-medium text-zinc-300">Elige tu cuenta bancaria</span>
+                                        <label className="block space-y-1.5 sm:space-y-2">
+                                            <span className="text-xs font-medium text-zinc-300 sm:text-sm">Elige tu cuenta bancaria</span>
                                             <select
                                                 value={selectedBank}
                                                 onChange={e => setSelectedBank(e.target.value)}
-                                                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-white"
+                                                className="w-full min-w-0 rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-xs text-white sm:px-4 sm:py-3 sm:text-sm"
                                             >
                                                 <option value="">
                                                     {bankLoading ? "Cargando cuentas..." : "Selecciona una cuenta"}
@@ -1167,24 +1188,25 @@ export default function PerfilPage() {
                                             </select>
                                         </label>
 
-                                        <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-sm text-zinc-400">
-                                            <div className="flex justify-between">
+                                        <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-3.5 text-xs text-zinc-400 sm:p-4 sm:text-sm">
+                                            <div className="flex justify-between gap-2">
                                                 <span>Comisión bancaria</span>
-                                                <span>$0.50</span>
+                                                <span className="tabular-nums">$0.50</span>
                                             </div>
-                                            <div className="mt-2 flex justify-between font-semibold text-white">
+                                            <div className="mt-2 flex justify-between gap-2 font-semibold text-white">
                                                 <span>Recibirás</span>
-                                                <span>${Math.max(0, Number(withdrawAmount || 0) - 0.50).toFixed(2)}</span>
+                                                <span className="tabular-nums">${Math.max(0, Number(withdrawAmount || 0) - 0.50).toFixed(2)}</span>
                                             </div>
-                                            <p className="mt-2 text-xs text-zinc-500">
+                                            <p className="mt-2 text-[11px] text-zinc-500 sm:text-xs">
                                                 Mínimo de retiro: $10. La comisión está incluida en el monto solicitado.
                                             </p>
                                         </div>
 
                                         <button
+                                            type="button"
                                             onClick={submitWithdrawal}
                                             disabled={withdrawBusy || bankLoading || !bankAccounts.length}
-                                            className="w-full rounded-xl bg-emerald-500 px-5 py-3 font-bold text-black disabled:cursor-not-allowed disabled:opacity-50"
+                                            className="w-full rounded-xl bg-emerald-500 px-5 py-3 text-sm font-bold text-black disabled:cursor-not-allowed disabled:opacity-50"
                                         >
                                             {withdrawBusy ? "Procesando..." : "Solicitar retiro"}
                                         </button>
@@ -1196,31 +1218,32 @@ export default function PerfilPage() {
                                         )}
                                     </div>
                                 ) : (
-                                    <div className="space-y-4 rounded-xl border border-zinc-800 p-4 sm:p-5">
+                                    <div className="space-y-4 rounded-xl border border-zinc-800 p-3.5 sm:p-5">
                                         <div className="flex items-center gap-2">
-                                            <ArrowLeftRight className="h-5 w-5 text-emerald-400" />
-                                            <h3 className="font-bold">Convertir saldo para retirar en saldo para jugar</h3>
+                                            <ArrowLeftRight className="h-5 w-5 shrink-0 text-emerald-400" />
+                                            <h3 className="text-sm font-bold sm:text-base">Convertir saldo para retirar en saldo para jugar</h3>
                                         </div>
 
-                                        <p className="text-sm text-zinc-400">
+                                        <p className="text-xs text-zinc-400 sm:text-sm">
                                             Puedes convertir cualquier monto disponible, sin comisión.
                                         </p>
 
-                                        <label className="block space-y-2">
-                                            <span className="text-sm font-medium text-zinc-300">Monto a convertir</span>
+                                        <label className="block space-y-1.5 sm:space-y-2">
+                                            <span className="text-xs font-medium text-zinc-300 sm:text-sm">Monto a convertir</span>
                                             <input
                                                 value={convertAmount}
                                                 onChange={e => setConvertAmount(e.target.value)}
                                                 inputMode="decimal"
                                                 placeholder="0.00"
-                                                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm outline-none focus:border-emerald-500"
+                                                className="w-full min-w-0 rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-sm outline-none focus:border-emerald-500 sm:px-4 sm:py-3"
                                             />
                                         </label>
 
                                         <button
+                                            type="button"
                                             onClick={submitConversion}
                                             disabled={convertBusy}
-                                            className="w-full rounded-xl bg-emerald-500 px-5 py-3 font-bold text-black disabled:cursor-not-allowed disabled:opacity-50"
+                                            className="w-full rounded-xl bg-emerald-500 px-5 py-3 text-sm font-bold text-black disabled:cursor-not-allowed disabled:opacity-50"
                                         >
                                             {convertBusy ? "Convirtiendo..." : "Convertir saldo"}
                                         </button>
@@ -1231,29 +1254,29 @@ export default function PerfilPage() {
                                     <h3 className="mb-3 font-bold">Historial de movimientos</h3>
 
                                     {movementsLoading ? (
-                                        <div className="rounded-xl border border-dashed border-zinc-700 p-6 text-center text-sm text-zinc-500">
+                                        <div className="rounded-xl border border-dashed border-zinc-700 p-6 text-center text-xs text-zinc-500 sm:text-sm">
                                             Cargando movimientos...
                                         </div>
                                     ) : movements.length ? (
                                         <div className="overflow-hidden rounded-xl border border-zinc-800">
                                             {movements.map(movement => (
-                                                <div key={`${movement.kind}-${movement.id}`} className="flex flex-col gap-2 border-b border-zinc-800 p-4 last:border-b-0 sm:flex-row sm:items-center sm:justify-between">
-                                                    <div>
-                                                        <p className="text-sm font-semibold text-white">
+                                                <div key={`${movement.kind}-${movement.id}`} className="flex flex-col gap-2 border-b border-zinc-800 p-3.5 last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:p-4">
+                                                    <div className="min-w-0">
+                                                        <p className="text-xs font-semibold text-white sm:text-sm">
                                                             {movement.kind === "retiro" ? "Retiro bancario" : "Conversión a saldo para jugar"}
                                                         </p>
-                                                        <p className="mt-1 text-xs text-zinc-500">
+                                                        <p className="mt-1 text-[11px] text-zinc-500 sm:text-xs">
                                                             {new Date(movement.created_at).toLocaleString("es-EC")}
                                                         </p>
                                                         {movement.kind === "retiro" && (
-                                                            <p className="mt-1 text-xs text-zinc-500">
+                                                            <p className="mt-1 text-[11px] text-zinc-500 sm:text-xs">
                                                                 Comisión: ${money(movement.bank_fee)} · Neto: ${money(movement.net_amount)}
                                                             </p>
                                                         )}
                                                     </div>
 
                                                     <div className="sm:text-right">
-                                                        <p className="font-bold">${money(movement.amount)}</p>
+                                                        <p className="text-sm font-bold tabular-nums">${money(movement.amount)}</p>
                                                         <p className={`mt-1 text-xs font-semibold ${movement.status === "realizado" ? "text-emerald-400" :
                                                             movement.status === "rechazado" ? "text-red-400" : "text-amber-400"
                                                             }`}>
@@ -1264,7 +1287,7 @@ export default function PerfilPage() {
                                             ))}
                                         </div>
                                     ) : (
-                                        <div className="rounded-xl border border-dashed border-zinc-700 p-6 text-center text-sm text-zinc-500">
+                                        <div className="rounded-xl border border-dashed border-zinc-700 p-6 text-center text-xs text-zinc-500 sm:text-sm">
                                             Todavía no tienes movimientos.
                                         </div>
                                     )}
@@ -1321,7 +1344,7 @@ export default function PerfilPage() {
                                 <Heading title="Cuentas bancarias" subtitle="Guarda las cuentas que utilizarás para recibir tus retiros." />
 
                                 {bankMessage && (
-                                    <div className={`mb-5 rounded-xl border p-4 text-sm ${bankMessageType === "success"
+                                    <div className={`mb-5 rounded-xl border p-3.5 text-xs sm:p-4 sm:text-sm ${bankMessageType === "success"
                                         ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-300"
                                         : bankMessageType === "error"
                                             ? "border-red-500/20 bg-red-500/5 text-red-300"
@@ -1331,15 +1354,16 @@ export default function PerfilPage() {
                                     </div>
                                 )}
 
-                                <div className="mb-5 flex flex-col justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-4 sm:flex-row sm:items-center">
-                                    <div>
-                                        <p className="font-semibold">Tus cuentas registradas</p>
+                                <div className="mb-5 flex flex-col justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-3.5 sm:flex-row sm:items-center sm:p-4">
+                                    <div className="min-w-0">
+                                        <p className="text-sm font-semibold">Tus cuentas registradas</p>
                                         <p className="mt-1 text-xs text-zinc-500">
                                             {bankLoading ? "Cargando cuentas..." : `${bankAccounts.length} cuenta(s) registrada(s).`}
                                         </p>
                                     </div>
 
                                     <button
+                                        type="button"
                                         onClick={() => {
                                             if (bankForm) {
                                                 resetBankForm();
@@ -1350,7 +1374,7 @@ export default function PerfilPage() {
                                             }
                                             setBankMessage("");
                                         }}
-                                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-bold text-black"
+                                        className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-xs font-bold text-black sm:w-auto sm:py-3 sm:text-sm"
                                     >
                                         {bankForm ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
                                         {bankForm ? "Cancelar" : "Agregar cuenta"}
@@ -1360,19 +1384,19 @@ export default function PerfilPage() {
                                 {bankAccounts.length > 0 && (
                                     <div className="mb-5 space-y-3">
                                         {bankAccounts.map(account => (
-                                            <div key={account.id} className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
-                                                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                                                    <div className="flex items-start gap-3">
-                                                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10">
-                                                            <Landmark className="h-5 w-5 text-emerald-400" />
+                                            <div key={account.id} className="rounded-xl border border-zinc-800 bg-zinc-950 p-3.5 sm:p-4">
+                                                <div className="flex flex-col gap-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                                                    <div className="flex min-w-0 items-start gap-3">
+                                                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 sm:h-10 sm:w-10">
+                                                            <Landmark className="h-4 w-4 text-emerald-400 sm:h-5 sm:w-5" />
                                                         </div>
 
                                                         <div className="min-w-0">
-                                                            <p className="font-semibold text-white">{account.bank_name}</p>
+                                                            <p className="truncate text-sm font-semibold text-white">{account.bank_name}</p>
                                                             <p className="mt-1 text-xs text-zinc-400">
                                                                 {account.account_type} · ****{account.account_number.slice(-4)}
                                                             </p>
-                                                            <p className="mt-1 text-xs text-zinc-500">{account.account_holder}</p>
+                                                            <p className="mt-1 truncate text-xs text-zinc-500">{account.account_holder}</p>
                                                         </div>
                                                     </div>
 
@@ -1381,9 +1405,9 @@ export default function PerfilPage() {
                                                             type="button"
                                                             onClick={() => editBankAccount(account)}
                                                             disabled={bankActionBusy || withdrawBusy}
-                                                            className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 sm:flex-none"
+                                                            className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 sm:flex-none"
                                                         >
-                                                            <Pencil className="h-4 w-4" />
+                                                            <Pencil className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                                                             Editar
                                                         </button>
 
@@ -1391,9 +1415,9 @@ export default function PerfilPage() {
                                                             type="button"
                                                             onClick={() => deleteBankAccount(account)}
                                                             disabled={bankActionBusy || withdrawBusy}
-                                                            className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/20 disabled:opacity-50 sm:flex-none"
+                                                            className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/20 disabled:opacity-50 sm:flex-none"
                                                         >
-                                                            <Trash2 className="h-4 w-4" />
+                                                            <Trash2 className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                                                             {bankActionBusy ? "Procesando..." : "Eliminar"}
                                                         </button>
                                                     </div>
@@ -1404,18 +1428,18 @@ export default function PerfilPage() {
                                 )}
 
                                 {bankForm && (
-                                    <div className="space-y-4 rounded-xl border border-zinc-800 p-4 sm:p-5">
+                                    <div className="space-y-4 rounded-xl border border-zinc-800 p-3.5 sm:p-5">
                                         <h3 className="font-bold">
                                             {editingBankId ? "Editar cuenta bancaria" : "Registrar cuenta bancaria"}
                                         </h3>
 
-                                        <div className="grid gap-4 sm:grid-cols-2">
-                                            <label className="block space-y-2">
-                                                <span className="text-sm font-medium text-zinc-300">Nombre del banco</span>
+                                        <div className="grid gap-3.5 sm:grid-cols-2 sm:gap-4">
+                                            <label className="block min-w-0 space-y-1.5 sm:space-y-2">
+                                                <span className="text-xs font-medium text-zinc-300 sm:text-sm">Nombre del banco</span>
                                                 <select
                                                     value={bankName}
                                                     onChange={e => setBankName(e.target.value)}
-                                                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-white"
+                                                    className="w-full min-w-0 rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-sm text-white sm:px-4 sm:py-3"
                                                 >
                                                     <option value="">Selecciona tu banco</option>
                                                     <option value="Banco Pichincha">Banco Pichincha</option>
@@ -1433,12 +1457,12 @@ export default function PerfilPage() {
                                                 </select>
                                             </label>
 
-                                            <label className="block space-y-2">
-                                                <span className="text-sm font-medium text-zinc-300">Tipo de cuenta</span>
+                                            <label className="block min-w-0 space-y-1.5 sm:space-y-2">
+                                                <span className="text-xs font-medium text-zinc-300 sm:text-sm">Tipo de cuenta</span>
                                                 <select
                                                     value={bankType}
                                                     onChange={e => setBankType(e.target.value)}
-                                                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-white"
+                                                    className="w-full min-w-0 rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-sm text-white sm:px-4 sm:py-3"
                                                 >
                                                     <option value="">Selecciona</option>
                                                     <option value="Ahorros">Ahorros</option>
@@ -1446,44 +1470,45 @@ export default function PerfilPage() {
                                                 </select>
                                             </label>
 
-                                            <label className="block space-y-2">
-                                                <span className="text-sm font-medium text-zinc-300">Número de cuenta</span>
+                                            <label className="block min-w-0 space-y-1.5 sm:space-y-2">
+                                                <span className="text-xs font-medium text-zinc-300 sm:text-sm">Número de cuenta</span>
                                                 <input
                                                     value={bankNumber}
                                                     onChange={e => setBankNumber(e.target.value)}
                                                     inputMode="numeric"
                                                     placeholder="Número de cuenta bancaria"
-                                                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-500"
+                                                    className="w-full min-w-0 rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-sm text-white outline-none focus:border-emerald-500 sm:px-4 sm:py-3"
                                                 />
                                             </label>
 
-                                            <label className="block space-y-2">
-                                                <span className="text-sm font-medium text-zinc-300">Titular de la cuenta</span>
+                                            <label className="block min-w-0 space-y-1.5 sm:space-y-2">
+                                                <span className="text-xs font-medium text-zinc-300 sm:text-sm">Titular de la cuenta</span>
                                                 <input
                                                     value={bankHolder}
                                                     onChange={e => setBankHolder(e.target.value)}
                                                     placeholder="Nombre completo"
-                                                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-500"
+                                                    className="w-full min-w-0 rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-sm text-white outline-none focus:border-emerald-500 sm:px-4 sm:py-3"
                                                 />
                                             </label>
 
-                                            <label className="block space-y-2 sm:col-span-2">
-                                                <span className="text-sm font-medium text-zinc-300">Cédula del titular</span>
+                                            <label className="block min-w-0 space-y-1.5 sm:col-span-2 sm:space-y-2">
+                                                <span className="text-xs font-medium text-zinc-300 sm:text-sm">Cédula del titular</span>
                                                 <input
                                                     value={bankDocument}
                                                     onChange={e => setBankDocument(e.target.value)}
                                                     inputMode="numeric"
                                                     placeholder="Número de identificación"
-                                                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-500"
+                                                    className="w-full min-w-0 rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-sm text-white outline-none focus:border-emerald-500 sm:px-4 sm:py-3"
                                                 />
                                             </label>
                                         </div>
 
                                         <div className="flex flex-col gap-2 sm:flex-row">
                                             <button
+                                                type="button"
                                                 onClick={saveBankAccount}
                                                 disabled={withdrawBusy}
-                                                className="w-full rounded-xl bg-emerald-500 px-5 py-3 font-bold text-black disabled:opacity-50"
+                                                className="w-full rounded-xl bg-emerald-500 px-5 py-3 text-sm font-bold text-black disabled:opacity-50"
                                             >
                                                 {withdrawBusy
                                                     ? (editingBankId ? "Actualizando..." : "Guardando...")
@@ -1499,7 +1524,7 @@ export default function PerfilPage() {
                                                         setBankMessage("");
                                                     }}
                                                     disabled={withdrawBusy}
-                                                    className="w-full rounded-xl border border-zinc-700 px-5 py-3 font-semibold text-zinc-300 hover:bg-zinc-900 sm:w-auto"
+                                                    className="w-full rounded-xl border border-zinc-700 px-5 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-900 sm:w-auto"
                                                 >
                                                     Cancelar edición
                                                 </button>
@@ -1515,20 +1540,20 @@ export default function PerfilPage() {
                                     subtitle="Introduce un código promocional y recibe tu beneficio."
                                 />
 
-                                <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-5 sm:p-7">
-                                    <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/10">
-                                        <Gift className="h-7 w-7 text-emerald-400" />
+                                <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4 sm:p-7">
+                                    <div className="mx-auto mb-3.5 flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500/10 sm:mb-4 sm:h-14 sm:w-14">
+                                        <Gift className="h-6 w-6 text-emerald-400 sm:h-7 sm:w-7" />
                                     </div>
 
-                                    <h3 className="text-center text-lg font-bold text-white">
+                                    <h3 className="text-center text-base font-bold text-white sm:text-lg">
                                         Canjea tu código
                                     </h3>
 
-                                    <p className="mx-auto mt-2 max-w-md text-center text-sm text-zinc-500">
+                                    <p className="mx-auto mt-1.5 max-w-md text-center text-xs text-zinc-500 sm:mt-2 sm:text-sm">
                                         Introduce tu cupon.
                                     </p>
 
-                                    <div className="mx-auto mt-6 flex max-w-lg flex-col gap-3 sm:flex-row">
+                                    <div className="mx-auto mt-5 flex max-w-lg flex-col gap-3 sm:mt-6 sm:flex-row">
                                         <input
                                             value={bonusCode}
                                             onChange={e => {
@@ -1544,21 +1569,21 @@ export default function PerfilPage() {
                                             placeholder="ESCRIBE TU CÓDIGO"
                                             maxLength={40}
                                             disabled={bonusBusy}
-                                            className="min-w-0 flex-1 rounded-xl border border-zinc-800 bg-[#090b0a] px-4 py-3 text-center text-sm font-bold tracking-widest text-white outline-none placeholder:text-zinc-600 focus:border-emerald-500 disabled:opacity-50"
+                                            className="w-full min-w-0 flex-1 rounded-xl border border-zinc-800 bg-[#090b0a] px-3.5 py-2.5 text-center text-xs font-bold tracking-widest text-white outline-none placeholder:text-zinc-600 focus:border-emerald-500 disabled:opacity-50 sm:px-4 sm:py-3 sm:text-sm"
                                         />
 
                                         <button
                                             type="button"
                                             onClick={prepareBonusRedemption}
                                             disabled={bonusBusy || !bonusCode.trim()}
-                                            className="rounded-xl bg-emerald-500 px-6 py-3 text-sm font-bold text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+                                            className="w-full rounded-xl bg-emerald-500 px-6 py-2.5 text-xs font-bold text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:py-3 sm:text-sm"
                                         >
                                             {bonusBusy ? "Canjeando..." : "Canjear"}
                                         </button>
                                     </div>
 
                                     {bonusMessage && (
-                                        <div className={`mx-auto mt-4 max-w-lg rounded-xl border p-4 text-center text-sm font-semibold ${bonusMessageType === "success"
+                                        <div className={`mx-auto mt-4 max-w-lg rounded-xl border p-3.5 text-center text-xs font-semibold sm:p-4 sm:text-sm ${bonusMessageType === "success"
                                             ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-300"
                                             : "border-red-500/20 bg-red-500/5 text-red-300"
                                             }`}>
@@ -1567,15 +1592,15 @@ export default function PerfilPage() {
                                     )}
                                 </div>
 
-                                <div className="mt-7">
+                                <div className="mt-6 sm:mt-7">
                                     <div className="mb-3 flex items-center justify-between">
-                                        <h3 className="font-bold text-white">Mis bonos</h3>
+                                        <h3 className="text-sm font-bold text-white sm:text-base">Mis bonos</h3>
                                         <span className="text-xs text-zinc-500">Historial</span>
                                     </div>
 
-                                    <div className="rounded-xl border border-dashed border-zinc-700 bg-zinc-950/50 p-8 text-center">
-                                        <Gift className="mx-auto h-8 w-8 text-zinc-600" />
-                                        <p className="mt-3 text-sm font-semibold text-zinc-300">
+                                    <div className="rounded-xl border border-dashed border-zinc-700 bg-zinc-950/50 p-6 text-center sm:p-8">
+                                        <Gift className="mx-auto h-7 w-7 text-zinc-600 sm:h-8 sm:w-8" />
+                                        <p className="mt-3 text-xs font-semibold text-zinc-300 sm:text-sm">
                                             Historial de bonos
                                         </p>
                                         <p className="mt-1 text-xs text-zinc-500">
