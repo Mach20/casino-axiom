@@ -418,20 +418,22 @@ export default function DepositosPage() {
             <Header />
 
             <div className="mx-auto max-w-2xl px-4 py-6 sm:px-5 sm:py-8">
-                <button
-                    type="button"
-                    onClick={() => {
-                        if (view === "details") {
-                            goBack();
-                        } else {
-                            window.history.back();
-                        }
-                    }}
-                    className="mb-6 flex items-center gap-2 rounded-lg border border-white/10 bg-[#111714] px-3 py-2 text-xs font-semibold text-zinc-400 transition hover:border-emerald-500/40 hover:text-white"
-                >
-                    <ArrowLeft className="h-4 w-4" />
-                    Volver
-                </button>
+                <div className="mb-6 flex justify-start">
+                    <button
+                        type="button"
+                        onClick={() => {
+                            if (view === "details") {
+                                goBack();
+                            } else {
+                                window.history.back();
+                            }
+                        }}
+                        className="flex w-fit items-center gap-2 rounded-lg border border-white/10 bg-[#111714] px-3 py-2 text-xs font-semibold text-zinc-400 transition hover:border-emerald-500/40 hover:text-white"
+                    >
+                        <ArrowLeft className="h-4 w-4" />
+                        Volver
+                    </button>
+                </div>
 
                 <h1 className="mb-5 text-xl font-bold">
                     Depósitos
