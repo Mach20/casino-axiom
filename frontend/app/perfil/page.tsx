@@ -55,13 +55,15 @@ function Input({
     placeholder,
     type = "text",
     readOnly = false,
-    value
+    value,
+    onChange,
 }: {
     label: string;
     placeholder?: string;
     type?: string;
     readOnly?: boolean;
     value?: string;
+    onChange?: (val: string) => void;
 }) {
     return (
         <label className="block space-y-2">
@@ -71,6 +73,7 @@ function Input({
                 placeholder={placeholder}
                 value={value}
                 readOnly={readOnly}
+                onChange={onChange ? (e) => onChange(e.target.value) : undefined}
                 className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-white outline-none placeholder:text-zinc-600 focus:border-emerald-500 read-only:opacity-60"
             />
         </label>
@@ -81,6 +84,15 @@ export default function PerfilPage() {
     const [section, setSection] = useState<Section>("datos");
     const [mobileOpen, setMobileOpen] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
+
+    // Cambio de contraseña
+    const [currentPassword, setCurrentPassword] = useState("");
+    const [newPassword, setNewPassword] = useState("");
+    const [confirmPassword, setConfirmPassword] = useState("");
+    const [passwordBusy, setPasswordBusy] = useState(false);
+    const [passwordMessage, setPasswordMessage] = useState("");
+    const [passwordMessageType, setPasswordMessageType] = useState<"success" | "error">("error");
+
     const [withdrawTab, setWithdrawTab] = useState<"retirar" | "convertir">("retirar");
     const [convertAmount, setConvertAmount] = useState("");
     const [bonusCode, setBonusCode] = useState("");
@@ -207,6 +219,82 @@ export default function PerfilPage() {
             if (profileChannel) void supabase.removeChannel(profileChannel);
         };
     }, []);
+
+    // ============================================================
+    // CAMBIAR CONTRASEÑA
+    // ============================================================
+
+    const handleChangePassword = async () => {
+        if (passwordBusy) return;
+
+        setPasswordMessage("");
+
+        if (!userEmail) {
+            setPasswordMessageType("error");
+            setPasswordMessage("Debes iniciar sesión para cambiar tu contraseña.");
+            return;
+        }
+
+        if (!currentPassword.trim()) {
+            setPasswordMessageType("error");
+            setPasswordMessage("Ingresa tu contraseña actual.");
+            return;
+        }
+
+        if (newPassword.length < 8) {
+            setPasswordMessageType("error");
+            setPasswordMessage("La nueva contraseña debe tener al menos 8 caracteres.");
+            return;
+        }
+
+        if (newPassword !== confirmPassword) {
+            setPasswordMessageType("error");
+            setPasswordMessage("La nueva contraseña y su confirmación no coinciden.");
+            return;
+        }
+
+        if (currentPassword === newPassword) {
+            setPasswordMessageType("error");
+            setPasswordMessage("La nueva contraseña debe ser diferente a la actual.");
+            return;
+        }
+
+        setPasswordBusy(true);
+
+        try {
+            const { error: signInError } = await supabase.auth.signInWithPassword({
+                email: userEmail,
+                password: currentPassword,
+            });
+
+            if (signInError) {
+                setPasswordMessageType("error");
+                setPasswordMessage("La contraseña actual es incorrecta.");
+                return;
+            }
+
+            const { error: updateError } = await supabase.auth.updateUser({
+                password: newPassword,
+            });
+
+            if (updateError) {
+                setPasswordMessageType("error");
+                setPasswordMessage(updateError.message || "No se pudo actualizar la contraseña.");
+                return;
+            }
+
+            setCurrentPassword("");
+            setNewPassword("");
+            setConfirmPassword("");
+            setPasswordMessageType("success");
+            setPasswordMessage("Tu contraseña se actualizó correctamente.");
+        } catch {
+            setPasswordMessageType("error");
+            setPasswordMessage("Ocurrió un error al cambiar la contraseña. Inténtalo nuevamente.");
+        } finally {
+            setPasswordBusy(false);
+        }
+    };
 
     // ============================================================
     // CARGAR INFORMACIÓN DEL PROGRAMA DE REFERIDOS
@@ -620,7 +708,7 @@ export default function PerfilPage() {
     };
 
     const comingSoon = (feature: string) =>
-        alert(`${feature}: lo conectaremos con Supabase en la siguiente etapa.`);
+        alert(`${feature}: estará disponible próximamente.`);
 
     const prepareBonusRedemption = async () => {
         const code = bonusCode.trim().toUpperCase();
@@ -843,23 +931,64 @@ export default function PerfilPage() {
                                     <label className="block space-y-2 sm:col-span-2">
                                         <span className="text-sm font-medium text-zinc-300">Contraseña actual</span>
                                         <div className="relative">
-                                            <input type={showPassword ? "text" : "password"} placeholder="Contraseña actual" className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 pr-12 text-sm outline-none focus:border-emerald-500" />
+                                            <input
+                                                type={showPassword ? "text" : "password"}
+                                                value={currentPassword}
+                                                onChange={(e) => {
+                                                    setCurrentPassword(e.target.value);
+                                                    setPasswordMessage("");
+                                                }}
+                                                placeholder="Contraseña actual"
+                                                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 pr-12 text-sm text-white outline-none focus:border-emerald-500"
+                                            />
                                             <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500">
                                                 {showPassword ? <EyeOff /> : <Eye />}
                                             </button>
                                         </div>
                                     </label>
-                                    <Input label="Nueva contraseña" type="password" placeholder="Mínimo 8 caracteres" />
-                                    <Input label="Confirmar contraseña" type="password" placeholder="Repite la contraseña" />
+                                    <Input
+                                        label="Nueva contraseña"
+                                        type="password"
+                                        placeholder="Mínimo 8 caracteres"
+                                        value={newPassword}
+                                        onChange={(val) => {
+                                            setNewPassword(val);
+                                            setPasswordMessage("");
+                                        }}
+                                    />
+                                    <Input
+                                        label="Confirmar contraseña"
+                                        type="password"
+                                        placeholder="Repite la contraseña"
+                                        value={confirmPassword}
+                                        onChange={(val) => {
+                                            setConfirmPassword(val);
+                                            setPasswordMessage("");
+                                        }}
+                                    />
                                 </div>
 
-                                <button onClick={() => comingSoon("Cambio de contraseña")} className="mt-5 rounded-xl bg-emerald-500 px-5 py-3 text-sm font-bold text-black hover:bg-emerald-400">
-                                    Actualizar contraseña
+                                {passwordMessage && (
+                                    <div className={`mt-4 rounded-xl border p-4 text-sm ${passwordMessageType === "success"
+                                        ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-300"
+                                        : "border-red-500/20 bg-red-500/5 text-red-300"
+                                        }`}>
+                                        {passwordMessage}
+                                    </div>
+                                )}
+
+                                <button
+                                    type="button"
+                                    onClick={handleChangePassword}
+                                    disabled={passwordBusy}
+                                    className="mt-5 rounded-xl bg-emerald-500 px-5 py-3 text-sm font-bold text-black hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                    {passwordBusy ? "Actualizando..." : "Actualizar contraseña"}
                                 </button>
                             </>}
 
                             {/* ================================================== */}
-                            {/* REFERIDOS CONECTADOS A SUPABASE */}
+                            {/* REFERIDOS */}
                             {/* ================================================== */}
 
                             {section === "referidos" && <>
@@ -1385,8 +1514,6 @@ export default function PerfilPage() {
                                     title="Canjear bono"
                                     subtitle="Introduce un código promocional y recibe tu beneficio."
                                 />
-
-
 
                                 <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-5 sm:p-7">
                                     <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/10">
