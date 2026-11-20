@@ -70,7 +70,7 @@ export default function Header() {
   };
 
   const closeModal = () => {
-    setModal({ isOpen: false, title: "", message: "" });
+    setModal({ isOpen: false, title, message: "" });
   };
 
   const fetchUserBalances = async (userId: string) => {
@@ -582,45 +582,28 @@ export default function Header() {
           </nav>
         </div>
 
-        {/* ABAJO: APARTADO DE ENLACES CON NOMBRE Y RUTA */}
-        <div className="pt-4 border-t border-zinc-900 space-y-2">
-          <p className="text-[10px] font-black uppercase tracking-wider text-zinc-500 px-1">
-            Políticas y Legal
-          </p>
-
+        {/* HASTA ABAJO: SOLO NOMBRES COMO ENLACES */}
+        <div className="pt-4 border-t border-zinc-900 flex flex-col space-y-2.5 text-xs font-semibold text-zinc-400">
           <a
             href="/legal?tab=terminos"
             onClick={() => setIsMenuOpen(false)}
-            className="block rounded-xl border border-zinc-800/80 bg-zinc-900/60 px-3.5 py-2.5 transition hover:border-emerald-500/40 hover:bg-zinc-900"
+            className="hover:text-emerald-400 transition"
           >
-            <p className="text-xs font-bold text-white">
-              Términos y Condiciones
-            </p>
-            <p className="text-[11px] text-emerald-400 font-mono truncate">
-              /legal?tab=terminos
-            </p>
+            Términos y Condiciones
           </a>
-
           <a
             href="/legal?tab=juego"
             onClick={() => setIsMenuOpen(false)}
-            className="block rounded-xl border border-zinc-800/80 bg-zinc-900/60 px-3.5 py-2.5 transition hover:border-emerald-500/40 hover:bg-zinc-900"
+            className="hover:text-emerald-400 transition"
           >
-            <p className="text-xs font-bold text-white">Políticas de Juego</p>
-            <p className="text-[11px] text-emerald-400 font-mono truncate">
-              /legal?tab=juego
-            </p>
+            Políticas de Juego
           </a>
-
           <a
             href="/legal?tab=kyc"
             onClick={() => setIsMenuOpen(false)}
-            className="block rounded-xl border border-zinc-800/80 bg-zinc-900/60 px-3.5 py-2.5 transition hover:border-emerald-500/40 hover:bg-zinc-900"
+            className="hover:text-emerald-400 transition"
           >
-            <p className="text-xs font-bold text-white">Política KYC y AML</p>
-            <p className="text-[11px] text-emerald-400 font-mono truncate">
-              /legal?tab=kyc
-            </p>
+            Política KYC y AML
           </a>
         </div>
       </aside>
