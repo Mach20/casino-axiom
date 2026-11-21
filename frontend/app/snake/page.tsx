@@ -83,6 +83,7 @@ const SKIN_PRESETS: SkinPreset[] = [
 
 const WORLD_WIDTH = 20000;
 const WORLD_HEIGHT = 20000;
+const MIN_VISIBLE_SEGMENTS = 5;
 
 const SNAKE_BETS: Record<SnakeBet, { amount: number; room: string }> = {
     "0.20": { amount: 0.2, room: "snake_020" },
@@ -117,6 +118,7 @@ function drawSnakeVisual(
         scale?: number;
         time?: number;
         sizeFactor?: number;
+        trimTailFactor?: number;
     }
 ) {
     const {
@@ -133,50 +135,63 @@ function drawSnakeVisual(
         scale = 1,
         time = 0,
         sizeFactor = 1,
+        trimTailFactor = 1,
     } = options;
 
     if (!Array.isArray(body) || body.length === 0) return;
 
-    const clampedSize = Math.max(0.55, Math.min(1.35, sizeFactor));
+    const clampedSize = Math.max(0.45, Math.min(1.4, sizeFactor));
+    const clampedTrim = Math.max(0.35, Math.min(1, trimTailFactor));
+
+    // Recorta segmentos desde la cola sin alterar la separación entre nodos
+    const visibleCount =
+        body.length > MIN_VISIBLE_SEGMENTS
+            ? Math.max(
+                  MIN_VISIBLE_SEGMENTS,
+                  Math.round(body.length * clampedTrim)
+              )
+            : body.length;
+    const drawBody = body.slice(0, visibleCount);
+
     const effectiveBodyRadius = baseBodyRadius * clampedSize;
 
-    if (bodyStyle === "trail" && body.length > 1) {
+    if (bodyStyle === "trail" && drawBody.length > 1) {
         ctx.save();
         ctx.beginPath();
-        ctx.moveTo(body[0].x, body[0].y);
-        for (let i = 1; i < body.length; i++) {
-            ctx.lineTo(body[i].x, body[i].y);
+        ctx.moveTo(drawBody[0].x, drawBody[0].y);
+        for (let i = 1; i < drawBody.length; i++) {
+            ctx.lineTo(drawBody[i].x, drawBody[i].y);
         }
         ctx.strokeStyle = glowColor;
         ctx.globalAlpha = 0.22;
-        ctx.lineWidth = Math.max(6, effectiveBodyRadius * 1.7);
+        ctx.lineWidth = Math.max(5, effectiveBodyRadius * 1.7);
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
         ctx.stroke();
         ctx.restore();
     }
 
-    if (bodyStyle === "connected" && body.length > 1) {
+    if (bodyStyle === "connected" && drawBody.length > 1) {
         ctx.save();
         ctx.beginPath();
-        ctx.moveTo(body[0].x, body[0].y);
-        for (let i = 1; i < body.length; i++) {
-            ctx.lineTo(body[i].x, body[i].y);
+        ctx.moveTo(drawBody[0].x, drawBody[0].y);
+        for (let i = 1; i < drawBody.length; i++) {
+            ctx.lineTo(drawBody[i].x, drawBody[i].y);
         }
         ctx.strokeStyle = secondaryColor;
-        ctx.lineWidth = Math.max(7, effectiveBodyRadius * 1.85);
+        ctx.lineWidth = Math.max(6, effectiveBodyRadius * 1.85);
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
         ctx.stroke();
         ctx.restore();
     }
 
-    for (let i = body.length - 1; i >= 1; i--) {
-        const seg = body[i];
-        const ratio = i / Math.max(body.length, 1);
+    for (let i = drawBody.length - 1; i >= 1; i--) {
+        const seg = drawBody[i];
+        const ratio = i / Math.max(drawBody.length, 1);
         const taper = Math.max(0.45, 1 - ratio * 0.45);
         const radius = Math.max(
-            3.5,
+            3,
             Number(seg.radius ?? baseBodyRadius) * clampedSize * taper
         );
         const fill = i % 2 === 0 ? primaryColor : secondaryColor;
@@ -217,9 +232,9 @@ function drawSnakeVisual(
         ctx.restore();
     }
 
-    const head = body[0];
+    const head = drawBody[0];
     const headRadius = Math.max(
-        8.5,
+        7.5,
         Number(head.radius ?? baseHeadRadius) * clampedSize
     );
 
@@ -448,6 +463,7 @@ function SnakeStudioPreview({
                 scale: 1,
                 time,
                 sizeFactor: 1,
+                trimTailFactor: 1,
             });
 
             frameId = requestAnimationFrame(render);
@@ -1252,20 +1268,44 @@ export default function SnakeGamePage() {
                 : Boolean(value.boosting);
 
             if (isOwnSnake && initialBodyLengthRef.current === 0) {
-                initialBodyLengthRef.current = value.body.length;
+                initialBodyLengthRef.current = Math.max(
+                    MIN_VISIBLE_SEGMENTS + 1,
+                    value.body.length
+                );
             }
+
+            const balance = Number(
+                value.balance ??
+                    (typeof value.balance_micros === "number"
+                        ? value.balance_micros / 1000000
+                        : selectedBetRef.current)
+            );
+
+            const balanceRatio =
+                selectedBetRef.current > 0
+                    ? Math.max(0.55, Math.min(1.35, balance / selectedBetRef.current))
+                    : 1;
 
             const lengthRatio =
                 isOwnSnake && initialBodyLengthRef.current > 0
                     ? Math.max(
-                          0.68,
-                          Math.min(1.15, value.body.length / initialBodyLengthRef.current)
+                          0.55,
+                          Math.min(1.25, value.body.length / initialBodyLengthRef.current)
                       )
                     : 1;
 
-            const sizeFactor = snakeBoosting
-                ? Math.max(0.68, lengthRatio * 0.88)
+            const baseScale = isOwnSnake
+                ? Math.min(lengthRatio, balanceRatio)
                 : lengthRatio;
+
+            // Encogimiento claro al acelerar o soltar monedas/masa
+            const sizeFactor = snakeBoosting
+                ? Math.max(0.52, baseScale * 0.72)
+                : Math.max(0.58, baseScale);
+
+            const trimTailFactor = snakeBoosting
+                ? Math.max(0.55, baseScale * 0.75)
+                : Math.max(0.65, baseScale);
 
             const primaryColor = isOwnSnake
                 ? customColorRef.current
@@ -1313,16 +1353,10 @@ export default function SnakeGamePage() {
                 scale,
                 time: now,
                 sizeFactor,
+                trimTailFactor,
             });
 
             if (head) {
-                const balance = Number(
-                    value.balance ??
-                        (typeof value.balance_micros === "number"
-                            ? value.balance_micros / 1000000
-                            : selectedBetRef.current)
-                );
-
                 ctx.textAlign = "center";
                 ctx.textBaseline = "middle";
                 ctx.fillStyle = "#ffffff";
