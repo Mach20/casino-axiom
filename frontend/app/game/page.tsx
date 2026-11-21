@@ -8,6 +8,7 @@ import Header from "../components/Header";
 interface Room {
   room_id: string;
   creator: string;
+  creator_doc?: string;
   bet: number;
   is_public: boolean;
   players_count: number;
@@ -19,6 +20,7 @@ export default function P2PLobby() {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [username, setUsername] = useState("");
+  const [userDocNumber, setUserDocNumber] = useState("");
 
   const [playBalance, setPlayBalance] = useState(0);
   const [bonusBalance, setBonusBalance] = useState(0);
@@ -58,6 +60,7 @@ export default function P2PLobby() {
 
   const userIdRef = useRef<string | null>(null);
   const usernameRef = useRef("");
+  const userDocRef = useRef("");
   const selectedWalletRef = useRef<Wallet>("play");
   const betAmountRef = useRef("0.25");
   const symbolRef = useRef<string | null>(null);
@@ -87,6 +90,10 @@ export default function P2PLobby() {
   }, [username]);
 
   useEffect(() => {
+    userDocRef.current = userDocNumber;
+  }, [userDocNumber]);
+
+  useEffect(() => {
     selectedWalletRef.current = selectedWallet;
   }, [selectedWallet]);
 
@@ -102,7 +109,6 @@ export default function P2PLobby() {
     setModal({ isOpen: false, title: "", message: "" });
   };
 
-  // El frontend local y el desplegado usan el mismo backend.
   const getWebSocketUrl = (endpoint: string) => {
     return `wss://casino-axiom.ethiodeploy.app${endpoint}`;
   };
@@ -148,6 +154,7 @@ export default function P2PLobby() {
       setPlayBalance(0);
       setBonusBalance(0);
       setUsername("");
+      setUserDocNumber("");
       return;
     }
 
@@ -155,7 +162,7 @@ export default function P2PLobby() {
 
     const { data: profile, error } = await supabase
       .from("profiles")
-      .select("first_name, balance, withdraw_balance, bonus_balance")
+      .select("first_name, doc_number, balance, withdraw_balance, bonus_balance")
       .eq("id", currentUserId)
       .maybeSingle();
 
@@ -166,6 +173,7 @@ export default function P2PLobby() {
 
     if (!profile) {
       setUsername(sessionToUse.user.email?.split("@")[0] || "Usuario");
+      setUserDocNumber("");
       setPlayBalance(0);
       setBonusBalance(0);
       return;
@@ -176,6 +184,7 @@ export default function P2PLobby() {
       sessionToUse.user.email?.split("@")[0] ||
       "Usuario"
     );
+    setUserDocNumber(String(profile.doc_number || "").trim());
 
     setPlayBalance(Number(profile.balance ?? 0));
     setBonusBalance(Number(profile.bonus_balance ?? 0));
@@ -223,6 +232,7 @@ export default function P2PLobby() {
       } else {
         setUserId(null);
         setUsername("");
+        setUserDocNumber("");
         setPlayBalance(0);
         setBonusBalance(0);
       }
@@ -233,11 +243,6 @@ export default function P2PLobby() {
       subscription.unsubscribe();
     };
   }, []);
-
-  // ==========================================================
-  // COMISIÓN (SOLO CUANDO ALGUIEN GANA)
-  // Se registra una sola vez por usuario y sala al haber victoria.
-  // ==========================================================
 
   const registrarComision = async (roomId: string, monto: number) => {
     const currentUserId = userIdRef.current;
@@ -273,10 +278,6 @@ export default function P2PLobby() {
     }
   };
 
-  // ==========================================================
-  // DEVOLUCIÓN DE APUESTA EN EMPATE (SIN COMISIÓN)
-  // ==========================================================
-
   const devolverApuestaEmpate = async (
     roomId: string,
     monto: number,
@@ -308,10 +309,6 @@ export default function P2PLobby() {
       await loadUserBalances();
     }
   };
-
-  // ==========================================================
-  // LOBBY WEBSOCKET
-  // ==========================================================
 
   useEffect(() => {
     if (!userId || activeRoomId) return;
@@ -404,25 +401,28 @@ export default function P2PLobby() {
     };
   }, [userId, activeRoomId]);
 
-  // ==========================================================
-  // CONECTAR A UNA PARTIDA
-  // ==========================================================
-
   const connectToGame = async (
     roomId: string,
     roomPassword = "",
     walletType: Wallet = selectedWalletRef.current,
     roomBet?: number,
     checkClientBalance = true,
-    creatorName?: string
+    creatorName?: string,
+    creatorDoc?: string
   ) => {
     if (connectingRef.current) return;
 
-    if (
+    const sameCreatorName =
       creatorName &&
       creatorName.trim().toLowerCase() ===
-      usernameRef.current.trim().toLowerCase()
-    ) {
+        usernameRef.current.trim().toLowerCase();
+
+    const sameCreatorDoc =
+      creatorDoc &&
+      userDocRef.current &&
+      creatorDoc.trim() === userDocRef.current.trim();
+
+    if (sameCreatorName || sameCreatorDoc) {
       showAlert(
         "Acción no permitida",
         "No puedes unirte a una sala creada por tu misma cuenta."
@@ -530,10 +530,6 @@ export default function P2PLobby() {
           return;
         }
 
-        // ----------------------------------------------------
-        // INIT
-        // ----------------------------------------------------
-
         if (data.type === "INIT") {
           initialized = true;
 
@@ -573,19 +569,11 @@ export default function P2PLobby() {
           return;
         }
 
-        // ----------------------------------------------------
-        // START
-        // ----------------------------------------------------
-
         if (data.type === "START") {
           setStatus("En juego. Turno: " + data.turn);
           setTurn(data.turn);
           return;
         }
-
-        // ----------------------------------------------------
-        // MOVE_MADE
-        // ----------------------------------------------------
 
         if (data.type === "MOVE_MADE") {
           if (Array.isArray(data.board)) {
@@ -600,12 +588,6 @@ export default function P2PLobby() {
 
           return;
         }
-
-        // ----------------------------------------------------
-        // GAME_FINISHED
-        // Cubre empate (devuelve apuesta, sin comisión),
-        // victoria normal y victoria por abandono del rival.
-        // ----------------------------------------------------
 
         if (data.type === "GAME_FINISHED") {
           if (finished) return;
@@ -634,7 +616,9 @@ export default function P2PLobby() {
             const isWinner = String(data.winner_id) === String(currentUserId);
             const isForfeitWin =
               isWinner &&
-              (data.reason === "forfeit" || data.reason === "opponent_left");
+              (data.reason === "forfeit" ||
+                data.reason === "opponent_left" ||
+                data.reason === "abandonment");
 
             if (isWinner) {
               setWinner(symbolRef.current || "X");
@@ -691,7 +675,9 @@ export default function P2PLobby() {
             } else {
               setWinner("OPPONENT");
               setStatus(
-                data.reason === "forfeit" || data.reason === "player_left"
+                data.reason === "forfeit" ||
+                  data.reason === "player_left" ||
+                  data.reason === "abandonment"
                   ? "ABANDONASTE LA SALA"
                   : "GAME OVER"
               );
@@ -711,11 +697,6 @@ export default function P2PLobby() {
           return;
         }
 
-        // ----------------------------------------------------
-        // ROOM_CLOSED_BY_HOST
-        // Si nadie más había entrado aún, devuelve la apuesta.
-        // ----------------------------------------------------
-
         if (data.type === "ROOM_CLOSED_BY_HOST") {
           if (!isHost && effectiveBet > 0) {
             await devolverApuestaEmpate(roomId, effectiveBet, walletType);
@@ -729,10 +710,6 @@ export default function P2PLobby() {
           await leaveGame(false);
           return;
         }
-
-        // ----------------------------------------------------
-        // ERROR
-        // ----------------------------------------------------
 
         if (data.type === "ERROR") {
           showAlert(
@@ -753,7 +730,7 @@ export default function P2PLobby() {
             try {
               ws.close();
             } catch {
-              // No hay nada más que cerrar.
+              // No action needed
             }
           } else {
             await leaveGame(false);
@@ -796,12 +773,6 @@ export default function P2PLobby() {
       }
     }
   };
-
-  // ==========================================================
-  // SALIR / ABANDONAR SALA
-  // Si abandona una partida en curso, notifica LEAVE_GAME para
-  // perder lo apostado y que el rival gane.
-  // ==========================================================
 
   const leaveGame = async (notifyServer = true) => {
     if (leavingRef.current) return;
@@ -846,7 +817,7 @@ export default function P2PLobby() {
       try {
         ws.close();
       } catch {
-        // La conexión ya puede estar cerrada.
+        // No action needed
       }
     }
 
@@ -870,10 +841,6 @@ export default function P2PLobby() {
 
     leavingRef.current = false;
   };
-
-  // ==========================================================
-  // CREAR SALA
-  // ==========================================================
 
   const createRoom = async () => {
     if (isProcessing || pendingCreateRef.current) return;
@@ -963,6 +930,7 @@ export default function P2PLobby() {
           is_public: isPublic,
           password: isPublic ? "" : password.trim(),
           creator: usernameRef.current || "Jugador",
+          creator_doc: userDocRef.current || "",
           wallet: selectedWallet,
           user_id: currentUserId,
         })
@@ -982,10 +950,6 @@ export default function P2PLobby() {
       }
     }
   };
-
-  // ==========================================================
-  // MOVIMIENTOS
-  // ==========================================================
 
   const handleClick = (index: number) => {
     const ws = gameSocketRef.current;
@@ -1019,19 +983,18 @@ export default function P2PLobby() {
     }
   };
 
-  // ==========================================================
-  // FILTRADO DE SALAS
-  // ==========================================================
+  const normalizedSearch = searchQuery.trim().toLowerCase();
 
-  const filteredRooms = rooms.filter((room) =>
-    String(room.creator || "")
+  const filteredRooms = rooms.filter((room) => {
+    if (!normalizedSearch) return true;
+    const creatorMatch = String(room.creator || "")
       .toLowerCase()
-      .includes(searchQuery.toLowerCase())
-  );
-
-  // ==========================================================
-  // LIMPIEZA
-  // ==========================================================
+      .includes(normalizedSearch);
+    const docMatch = String(room.creator_doc || "")
+      .toLowerCase()
+      .includes(normalizedSearch);
+    return creatorMatch || docMatch;
+  });
 
   useEffect(() => {
     return () => {
@@ -1045,7 +1008,7 @@ export default function P2PLobby() {
         try {
           gameSocketRef.current.close();
         } catch {
-          // Limpieza al desmontar.
+          // No action needed
         }
       }
 
@@ -1053,22 +1016,18 @@ export default function P2PLobby() {
         try {
           lobbySocketRef.current.close();
         } catch {
-          // Limpieza al desmontar.
+          // No action needed
         }
       }
     };
   }, []);
-
-  // ==========================================================
-  // CARGA
-  // ==========================================================
 
   if (isAuthLoading) {
     return (
       <div className="min-h-screen bg-black text-white flex flex-col font-sans">
         <Header />
 
-        <div className="flex-1 flex items-center justify-center">
+        <div className="flex-1 flex items-center justify-center p-4">
           <p className="text-xs uppercase tracking-widest text-emerald-400 font-bold animate-pulse">
             Verificando credenciales...
           </p>
@@ -1083,7 +1042,7 @@ export default function P2PLobby() {
         <Header />
 
         <main className="flex-1 flex items-center justify-center p-4">
-          <div className="max-w-md w-full bg-zinc-950 border border-zinc-800 rounded-3xl p-8 text-center space-y-6 shadow-2xl">
+          <div className="max-w-md w-full bg-zinc-950/90 border border-zinc-800/90 rounded-3xl p-6 sm:p-8 text-center space-y-6 shadow-2xl">
             <div>
               <h2 className="text-xl font-black uppercase text-white tracking-wider">
                 Acceso Restringido
@@ -1097,23 +1056,19 @@ export default function P2PLobby() {
 
             <Link
               href="/"
-              className="block w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg active:scale-95"
+              className="block w-full py-3.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase tracking-wider rounded-2xl transition-all shadow-lg shadow-emerald-500/10 active:scale-95"
             >
               Iniciar Sesión / Registrarse
             </Link>
           </div>
         </main>
 
-        <footer className="py-6 text-center text-[10px] text-zinc-600 font-bold uppercase tracking-widest">
+        <footer className="py-5 text-center text-[10px] text-zinc-600 font-bold uppercase tracking-widest">
           AXIOM
         </footer>
       </div>
     );
   }
-
-  // ==========================================================
-  // INTERFAZ ORIGINAL
-  // ==========================================================
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col justify-between select-none font-sans">
@@ -1121,7 +1076,7 @@ export default function P2PLobby() {
 
       {modal.isOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-zinc-950 border border-zinc-800 w-full max-w-sm rounded-2xl p-6 shadow-2xl text-center space-y-4 animate-in fade-in zoom-in-95">
+          <div className="bg-zinc-950 border border-zinc-800 w-full max-w-sm rounded-3xl p-6 shadow-2xl text-center space-y-4">
             <h3 className="text-lg font-black uppercase text-emerald-400 tracking-wider">
               {modal.title}
             </h3>
@@ -1132,7 +1087,7 @@ export default function P2PLobby() {
 
             <button
               onClick={closeModal}
-              className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg active:scale-95"
+              className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase tracking-wider rounded-2xl transition-all shadow-lg active:scale-95"
             >
               Entendido
             </button>
@@ -1140,296 +1095,331 @@ export default function P2PLobby() {
         </div>
       )}
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-8 flex flex-col items-center justify-center">
+      <main className="flex-1 max-w-5xl w-full mx-auto px-3 sm:px-6 py-5 sm:py-8 flex flex-col items-center justify-center">
         {!activeRoomId ? (
-          <div className="w-full max-w-3xl flex flex-col gap-3">
-            <div className="bg-black border border-zinc-800 rounded-2xl p-4 shadow-2xl">
+          <div className="w-full bg-zinc-950/90 border border-zinc-800/90 rounded-3xl p-4 sm:p-6 md:p-7 shadow-2xl">
+            <div className="flex items-center justify-between gap-3 mb-5 pb-4 border-b border-zinc-900">
               <Link
                 href="/"
-                className="flex items-center gap-2 w-fit mb-4 text-zinc-500 hover:text-emerald-400 text-xs font-black uppercase tracking-widest transition-colors"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-emerald-400 text-xs font-black uppercase tracking-wider transition-colors"
               >
-                <span className="text-xl leading-none">‹</span>
+                <span className="text-base leading-none">‹</span>
                 <span>Volver</span>
               </Link>
 
-              <div className="text-center mb-6 border-b border-zinc-900 pb-4">
-                <h2 className="text-2xl font-black tracking-wider text-emerald-400 uppercase">
-                  X vs O
-                </h2>
-
-                <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold mt-1">
-                  Arena P2P
-                </p>
+              <div className="text-right">
+                <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-400 bg-zinc-900/80 border border-zinc-800 px-2.5 py-1 rounded-full">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  {status}
+                </span>
               </div>
+            </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="flex flex-col gap-4">
+            <div className="text-center mb-6">
+              <h2 className="text-2xl sm:text-3xl font-black tracking-wider text-emerald-400 uppercase">
+                X vs O
+              </h2>
+              <p className="text-[11px] text-zinc-500 uppercase tracking-widest font-bold mt-1">
+                Arena P2P
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+              <div className="lg:col-span-6 flex flex-col gap-4">
+                <div className="bg-zinc-900/50 border border-zinc-800/80 rounded-2xl p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                   <div>
-                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-wider block mb-1">
+                    <p className="text-[10px] font-black text-zinc-500 uppercase tracking-wider">
                       Tu Jugador
-                    </label>
-
-                    <input
-                      type="text"
-                      value={username}
-                      readOnly
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none font-bold cursor-not-allowed"
-                    />
+                    </p>
+                    <p className="text-sm font-black text-white mt-0.5">
+                      {username || "Jugador"}
+                    </p>
                   </div>
 
-                  <div className="bg-zinc-900/40 p-4 rounded-xl border border-zinc-800">
-                    <h3 className="text-[11px] font-black text-zinc-300 uppercase tracking-wider mb-3">
-                      Crear Partida
-                    </h3>
-
-                    <div className="mb-3">
-                      <label className="text-[10px] text-zinc-400 block mb-1">
-                        ¿De dónde deseas apostar?
-                      </label>
-
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedWallet("play")}
-                          className={`py-2 rounded-xl text-[11px] font-black uppercase tracking-wide transition-all border ${selectedWallet === "play"
-                              ? "bg-emerald-500 text-black border-emerald-400"
-                              : "bg-black text-zinc-400 border-zinc-800"
-                            }`}
-                        >
-                          Saldo Jugar (${playBalance.toFixed(2)})
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => setSelectedWallet("bonus")}
-                          className={`py-2 rounded-xl text-[11px] font-black uppercase tracking-wide transition-all border ${selectedWallet === "bonus"
-                              ? "bg-yellow-400 text-black border-yellow-300"
-                              : "bg-black text-zinc-400 border-zinc-800"
-                            }`}
-                        >
-                          Saldo Bono (${bonusBalance.toFixed(2)})
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="mb-3">
-                      <label className="text-[10px] text-zinc-400 block mb-1">
-                        Apuesta ($ Min: $0.25)
-                      </label>
-
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0.25"
-                        value={betAmount}
-                        onChange={(e) => setBetAmount(e.target.value)}
-                        autoComplete="off"
-                        className="w-full bg-black border border-zinc-700 rounded-xl px-3.5 py-2.5 text-xs text-emerald-400 font-bold outline-none focus:border-emerald-500 transition-all"
-                      />
-
-                      <p className="text-[10px] text-zinc-500 mt-1">
-                        Comisión del 6% solo al ganar. En empate se devuelve tu apuesta.
+                  {userDocNumber && (
+                    <div className="sm:text-right">
+                      <p className="text-[10px] font-black text-zinc-500 uppercase tracking-wider">
+                        Tu Cédula
+                      </p>
+                      <p className="text-xs font-mono font-bold text-emerald-400 mt-0.5">
+                        {userDocNumber}
                       </p>
                     </div>
-
-                    <div className="mb-3">
-                      <label className="text-[10px] text-zinc-400 block mb-1">
-                        Privacidad
-                      </label>
-
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setIsPublic(true)}
-                          className={`py-2 rounded-xl text-[11px] font-black uppercase tracking-wide transition-all border ${isPublic
-                              ? "bg-emerald-500 text-black border-emerald-400"
-                              : "bg-black text-zinc-400 border-zinc-800"
-                            }`}
-                        >
-                          Pública
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => setIsPublic(false)}
-                          className={`py-2 rounded-xl text-[11px] font-black uppercase tracking-wide transition-all border ${!isPublic
-                              ? "bg-emerald-500 text-black border-emerald-400"
-                              : "bg-black text-zinc-400 border-zinc-800"
-                            }`}
-                        >
-                          Privada
-                        </button>
-                      </div>
-                    </div>
-
-                    {!isPublic && (
-                      <div className="mb-3">
-                        <label className="text-[10px] text-zinc-400 block mb-1">
-                          Contraseña de la Sala
-                        </label>
-
-                        <input
-                          type="text"
-                          value={password}
-                          onChange={(e) => setPassword(e.target.value)}
-                          placeholder="Escribe la clave..."
-                          autoComplete="off"
-                          spellCheck="false"
-                          className="w-full bg-black border border-zinc-700 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-500 transition-all"
-                        />
-                      </div>
-                    )}
-
-                    <button
-                      onClick={createRoom}
-                      disabled={isProcessing}
-                      className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed text-black font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg active:scale-95 mt-2"
-                    >
-                      {isProcessing ? "Procesando..." : "Crear Partida"}
-                    </button>
-                  </div>
+                  )}
                 </div>
 
-                <div className="flex flex-col gap-3">
-                  <div className="flex justify-between items-center">
-                    <h3 className="text-[11px] font-black text-zinc-300 uppercase tracking-wider">
-                      Salas Disponibles
+                <div className="bg-zinc-900/40 p-4 sm:p-5 rounded-2xl border border-zinc-800/90 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-black text-zinc-200 uppercase tracking-wider">
+                      Crear Partida
                     </h3>
-
-                    <span className="text-emerald-400 font-mono text-[10px] bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">
-                      {filteredRooms.length} activas
+                    <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-full">
+                      Mín. $0.25
                     </span>
                   </div>
 
                   <div>
-                    <input
-                      type="text"
-                      placeholder="Buscar jugador..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      autoComplete="off"
-                      spellCheck="false"
-                      className="w-full bg-zinc-900/80 border border-zinc-800 rounded-xl px-3.5 py-2 text-xs text-zinc-200 placeholder-zinc-500 outline-none focus:border-emerald-500 transition-all"
-                    />
+                    <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block mb-1.5">
+                      Billetera de apuesta
+                    </label>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedWallet("play")}
+                        className={`py-2.5 px-3 rounded-xl text-[11px] font-black uppercase tracking-wide transition-all border text-center ${
+                          selectedWallet === "play"
+                            ? "bg-emerald-500 text-black border-emerald-400 shadow-md shadow-emerald-500/10"
+                            : "bg-black/80 text-zinc-400 hover:text-white border-zinc-800"
+                        }`}
+                      >
+                        Jugar (${playBalance.toFixed(2)})
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedWallet("bonus")}
+                        className={`py-2.5 px-3 rounded-xl text-[11px] font-black uppercase tracking-wide transition-all border text-center ${
+                          selectedWallet === "bonus"
+                            ? "bg-yellow-400 text-black border-yellow-300 shadow-md shadow-yellow-400/10"
+                            : "bg-black/80 text-zinc-400 hover:text-white border-zinc-800"
+                        }`}
+                      >
+                        Bono (${bonusBalance.toFixed(2)})
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="space-y-2.5 max-h-[340px] overflow-y-auto pr-1">
-                    {filteredRooms.length === 0 ? (
-                      <p className="text-xs text-zinc-500 text-center py-10 bg-zinc-900/30 rounded-xl border border-zinc-900">
-                        {searchQuery
-                          ? "No se encontraron salas para ese apodo."
-                          : "No hay salas activas en este momento."}
-                      </p>
-                    ) : (
-                      filteredRooms.map((r) => (
-                        <div
-                          key={r.room_id}
-                          className="bg-zinc-900 p-3.5 rounded-xl border border-zinc-800 flex flex-col gap-2"
-                        >
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <div className="flex items-center gap-1.5">
-                                <p className="text-xs font-bold text-zinc-200">
-                                  {r.creator}
-                                </p>
+                  <div>
+                    <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block mb-1.5">
+                      Monto de apuesta ($)
+                    </label>
 
-                                {!r.is_public && (
-                                  <span className="text-[10px] text-yellow-400 font-bold">
-                                    [Privada]
-                                  </span>
-                                )}
-                              </div>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.25"
+                      value={betAmount}
+                      onChange={(e) => setBetAmount(e.target.value)}
+                      autoComplete="off"
+                      className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm sm:text-xs text-emerald-400 font-bold outline-none focus:border-emerald-500 transition-all"
+                    />
 
-                              <p className="text-[11px] text-emerald-400 font-semibold">
-                                ${Number(r.bet).toFixed(2)}
+                    <p className="text-[10px] text-zinc-500 mt-1.5 leading-relaxed">
+                      Comisión del 6% solo al ganar. En empate se devuelve tu apuesta íntegra.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block mb-1.5">
+                      Tipo de sala
+                    </label>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsPublic(true)}
+                        className={`py-2.5 rounded-xl text-[11px] font-black uppercase tracking-wide transition-all border ${
+                          isPublic
+                            ? "bg-emerald-500 text-black border-emerald-400"
+                            : "bg-black/80 text-zinc-400 hover:text-white border-zinc-800"
+                        }`}
+                      >
+                        Pública
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setIsPublic(false)}
+                        className={`py-2.5 rounded-xl text-[11px] font-black uppercase tracking-wide transition-all border ${
+                          !isPublic
+                            ? "bg-emerald-500 text-black border-emerald-400"
+                            : "bg-black/80 text-zinc-400 hover:text-white border-zinc-800"
+                        }`}
+                      >
+                        Privada
+                      </button>
+                    </div>
+                  </div>
+
+                  {!isPublic && (
+                    <div>
+                      <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block mb-1.5">
+                        Contraseña de la sala
+                      </label>
+
+                      <input
+                        type="text"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="Escribe la clave..."
+                        autoComplete="off"
+                        spellCheck="false"
+                        className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm sm:text-xs text-white outline-none focus:border-emerald-500 transition-all"
+                      />
+                    </div>
+                  )}
+
+                  <button
+                    onClick={createRoom}
+                    disabled={isProcessing}
+                    className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed text-black font-black text-xs uppercase tracking-wider rounded-2xl transition-all shadow-lg shadow-emerald-500/10 active:scale-95"
+                  >
+                    {isProcessing ? "Procesando..." : "Crear Partida"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="lg:col-span-6 bg-zinc-900/40 p-4 sm:p-5 rounded-2xl border border-zinc-800/90 flex flex-col gap-3.5">
+                <div className="flex justify-between items-center gap-2">
+                  <h3 className="text-xs font-black text-zinc-200 uppercase tracking-wider">
+                    Salas Disponibles
+                  </h3>
+
+                  <span className="text-emerald-400 font-mono text-[10px] font-bold bg-zinc-900 px-2.5 py-1 rounded-full border border-zinc-800">
+                    {filteredRooms.length} activas
+                  </span>
+                </div>
+
+                <div>
+                  <input
+                    type="text"
+                    placeholder="Buscar por jugador o cédula..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    autoComplete="off"
+                    spellCheck="false"
+                    className="w-full bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm sm:text-xs text-zinc-200 placeholder-zinc-500 outline-none focus:border-emerald-500 transition-all"
+                  />
+                </div>
+
+                <div className="space-y-2.5 max-h-[390px] overflow-y-auto pr-1">
+                  {filteredRooms.length === 0 ? (
+                    <div className="text-xs text-zinc-500 text-center py-12 px-4 bg-black/50 rounded-2xl border border-zinc-800/70">
+                      {searchQuery
+                        ? "No se encontraron salas para ese jugador o cédula."
+                        : "No hay salas activas en este momento."}
+                    </div>
+                  ) : (
+                    filteredRooms.map((r) => (
+                      <div
+                        key={r.room_id}
+                        className="bg-zinc-900/90 hover:bg-zinc-900 p-3.5 sm:p-4 rounded-2xl border border-zinc-800 flex flex-col gap-2.5 transition-colors"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-xs sm:text-sm font-bold text-zinc-100 truncate">
+                                {r.creator}
                               </p>
+
+                              {!r.is_public && (
+                                <span className="text-[10px] text-yellow-400 bg-yellow-400/10 border border-yellow-400/20 px-2 py-0.5 rounded-full font-bold">
+                                  Privada
+                                </span>
+                              )}
                             </div>
 
-                            {r.is_public && (
-                              <button
-                                disabled={isProcessing}
-                                onClick={() =>
-                                  connectToGame(
-                                    r.room_id,
-                                    "",
-                                    selectedWallet,
-                                    Number(r.bet),
-                                    true,
-                                    r.creator
-                                  )
-                                }
-                                className="px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black text-[11px] font-black uppercase tracking-wider rounded-lg transition-all active:scale-95"
-                              >
-                                Unirse
-                              </button>
-                            )}
+                            <div className="flex items-center gap-2 mt-1 flex-wrap">
+                              <span className="text-xs text-emerald-400 font-black">
+                                ${Number(r.bet).toFixed(2)}
+                              </span>
+
+                              {r.creator_doc && (
+                                <span className="text-[11px] font-mono text-zinc-400 bg-black/70 border border-zinc-800 px-2 py-0.5 rounded-md">
+                                  CI: {r.creator_doc}
+                                </span>
+                              )}
+                            </div>
                           </div>
 
-                          {!r.is_public && (
-                            <div className="flex gap-2 pt-1.5 border-t border-zinc-800">
-                              <input
-                                type="text"
-                                placeholder="Contraseña..."
-                                value={roomPasswords[r.room_id] || ""}
-                                onChange={(e) =>
-                                  setRoomPasswords((previous) => ({
-                                    ...previous,
-                                    [r.room_id]: e.target.value,
-                                  }))
-                                }
-                                autoComplete="off"
-                                spellCheck="false"
-                                className="flex-1 bg-black border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-emerald-500"
-                              />
-
-                              <button
-                                disabled={isProcessing}
-                                onClick={() =>
-                                  connectToGame(
-                                    r.room_id,
-                                    roomPasswords[r.room_id] || "",
-                                    selectedWallet,
-                                    Number(r.bet),
-                                    true,
-                                    r.creator
-                                  )
-                                }
-                                className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black text-[11px] font-black uppercase tracking-wider rounded-lg active:scale-95"
-                              >
-                                Entrar
-                              </button>
-                            </div>
+                          {r.is_public && (
+                            <button
+                              disabled={isProcessing}
+                              onClick={() =>
+                                connectToGame(
+                                  r.room_id,
+                                  "",
+                                  selectedWallet,
+                                  Number(r.bet),
+                                  true,
+                                  r.creator,
+                                  r.creator_doc
+                                )
+                              }
+                              className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black text-[11px] font-black uppercase tracking-wider rounded-xl transition-all active:scale-95 shrink-0"
+                            >
+                              Unirse
+                            </button>
                           )}
                         </div>
-                      ))
-                    )}
-                  </div>
+
+                        {!r.is_public && (
+                          <div className="flex flex-col sm:flex-row gap-2 pt-2.5 border-t border-zinc-800/80">
+                            <input
+                              type="text"
+                              placeholder="Contraseña de la sala..."
+                              value={roomPasswords[r.room_id] || ""}
+                              onChange={(e) =>
+                                setRoomPasswords((previous) => ({
+                                  ...previous,
+                                  [r.room_id]: e.target.value,
+                                }))
+                              }
+                              autoComplete="off"
+                              spellCheck="false"
+                              className="flex-1 bg-black border border-zinc-800 rounded-xl px-3 py-2 text-sm sm:text-xs text-white outline-none focus:border-emerald-500"
+                            />
+
+                            <button
+                              disabled={isProcessing}
+                              onClick={() =>
+                                connectToGame(
+                                  r.room_id,
+                                  roomPasswords[r.room_id] || "",
+                                  selectedWallet,
+                                  Number(r.bet),
+                                  true,
+                                  r.creator,
+                                  r.creator_doc
+                                )
+                              }
+                              className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black text-[11px] font-black uppercase tracking-wider rounded-xl active:scale-95 shrink-0"
+                            >
+                              Entrar
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             </div>
           </div>
         ) : (
           <div className="w-full max-w-md flex flex-col gap-4">
-            <div className="bg-black border border-zinc-800 rounded-2xl p-6 shadow-2xl text-center">
+            <div className="bg-zinc-950/95 border border-zinc-800/90 rounded-3xl p-5 sm:p-6 shadow-2xl text-center">
               <h2 className="text-2xl font-black mb-1 uppercase tracking-wider text-emerald-400">
                 X vs O
               </h2>
 
               <p
-                className={`text-sm mb-5 font-black uppercase tracking-wider transition-all ${status === "EMPATE"
+                className={`text-xs sm:text-sm mb-5 font-black uppercase tracking-wider transition-all ${
+                  status === "EMPATE"
                     ? "text-yellow-400"
                     : status.startsWith("WIN")
-                      ? "text-emerald-400 text-base animate-pulse"
-                      : status === "GAME OVER" || status === "ABANDONASTE LA SALA"
-                        ? "text-red-500"
-                        : "text-zinc-300"
-                  }`}
+                    ? "text-emerald-400 text-sm sm:text-base animate-pulse"
+                    : status === "GAME OVER" || status === "ABANDONASTE LA SALA"
+                    ? "text-red-500"
+                    : "text-zinc-300"
+                }`}
               >
                 {status}
               </p>
 
               {status.startsWith("WIN") && (
-                <div className="mb-5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4">
+                <div className="mb-5 rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4">
                   <p className="text-xs font-bold uppercase tracking-widest text-emerald-400">
                     ¡Has ganado la partida!
                   </p>
@@ -1445,7 +1435,7 @@ export default function P2PLobby() {
               )}
 
               {status === "EMPATE" && (
-                <div className="mb-5 rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4">
+                <div className="mb-5 rounded-2xl border border-yellow-500/30 bg-yellow-500/10 p-4">
                   <p className="text-xs font-bold uppercase tracking-widest text-yellow-400">
                     La partida terminó en empate
                   </p>
@@ -1455,21 +1445,27 @@ export default function P2PLobby() {
                 </div>
               )}
 
-              <div className="flex justify-between mb-5 bg-zinc-900 p-3.5 rounded-xl border border-zinc-800 text-xs">
-                <span>
-                  Tu Ficha:{" "}
-                  <strong className="text-emerald-400 font-black">
+              <div className="grid grid-cols-2 gap-2.5 mb-5 bg-zinc-900/80 p-3 rounded-2xl border border-zinc-800 text-xs">
+                <div className="bg-black/60 rounded-xl py-2 px-2.5 border border-zinc-800/70">
+                  <span className="text-zinc-500 block text-[10px] uppercase font-bold">
+                    Tu Ficha
+                  </span>
+                  <strong className="text-emerald-400 font-black text-sm">
                     {symbol || "?"}
                   </strong>
-                </span>
+                </div>
 
-                <span>
-                  Turno Actual:{" "}
-                  <strong className="text-white font-black">{turn}</strong>
-                </span>
+                <div className="bg-black/60 rounded-xl py-2 px-2.5 border border-zinc-800/70">
+                  <span className="text-zinc-500 block text-[10px] uppercase font-bold">
+                    Turno Actual
+                  </span>
+                  <strong className="text-white font-black text-sm">
+                    {turn}
+                  </strong>
+                </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-2.5 mb-5">
+              <div className="grid grid-cols-3 gap-2.5 sm:gap-3 mb-5">
                 {board.map((cell: string | null, index: number) => (
                   <button
                     key={index}
@@ -1481,10 +1477,11 @@ export default function P2PLobby() {
                       !gameSocketRef.current ||
                       gameSocketRef.current.readyState !== WebSocket.OPEN
                     }
-                    className={`h-24 rounded-xl text-4xl font-black flex items-center justify-center transition-all border ${!cell && symbol === turn && !winner
-                        ? "bg-zinc-900 hover:bg-zinc-800 border-zinc-700 cursor-pointer text-white"
+                    className={`h-20 sm:h-24 rounded-2xl text-3xl sm:text-4xl font-black flex items-center justify-center transition-all border ${
+                      !cell && symbol === turn && !winner
+                        ? "bg-zinc-900 hover:bg-zinc-800 border-zinc-700 cursor-pointer text-white active:scale-95"
                         : "bg-zinc-900/40 border-zinc-900 cursor-not-allowed"
-                      }`}
+                    }`}
                   >
                     <span
                       className={
@@ -1499,7 +1496,7 @@ export default function P2PLobby() {
 
               <button
                 onClick={() => leaveGame(true)}
-                className="w-full py-2.5 bg-zinc-900 hover:bg-red-950/50 text-zinc-300 hover:text-red-400 font-black text-xs uppercase tracking-wider rounded-xl transition-all border border-zinc-800 active:scale-95"
+                className="w-full py-3 bg-zinc-900 hover:bg-red-950/50 text-zinc-300 hover:text-red-400 font-black text-xs uppercase tracking-wider rounded-2xl transition-all border border-zinc-800 active:scale-95"
               >
                 Abandonar Sala
               </button>
@@ -1508,7 +1505,7 @@ export default function P2PLobby() {
         )}
       </main>
 
-      <footer className="py-6 text-center text-[10px] text-zinc-600 font-bold uppercase tracking-widest">
+      <footer className="py-5 text-center text-[10px] text-zinc-600 font-bold uppercase tracking-widest">
         AXIOM P2P ARENA
       </footer>
     </div>
