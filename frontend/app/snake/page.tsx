@@ -90,12 +90,6 @@ const SNAKE_BETS: Record<SnakeBet, { amount: number; room: string }> = {
     "50": { amount: 50, room: "snake_5000" },
 };
 
-const BOOST_COIN_VALUES: Record<SnakeBet, number> = {
-    "0.20": 0.01,
-    "10": 0.5,
-    "50": 2.5,
-};
-
 function money(value: number): string {
     return `$${Number(value || 0).toFixed(2)}`;
 }
@@ -118,6 +112,7 @@ function drawSnakeVisual(
         bodyStyle: BodyStyle;
         eyes: EyeStyle;
         accessory: AccessoryStyle;
+        customText?: string;
         baseHeadRadius?: number;
         baseBodyRadius?: number;
         scale?: number;
@@ -133,6 +128,7 @@ function drawSnakeVisual(
         bodyStyle,
         eyes,
         accessory,
+        customText = "",
         baseHeadRadius = 12,
         baseBodyRadius = 9,
         scale = 1,
@@ -215,6 +211,30 @@ function drawSnakeVisual(
         );
         ctx.fillStyle = "rgba(255,255,255,0.28)";
         ctx.fill();
+        ctx.restore();
+    }
+
+    const cleanLabel = customText.trim();
+    if (cleanLabel.length > 0 && body.length > 2) {
+        const chars = Array.from(cleanLabel.slice(0, 14));
+        const maxSteps = Math.min(chars.length, body.length - 1);
+        ctx.save();
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        for (let idx = 0; idx < maxSteps; idx++) {
+            const seg = body[idx + 1];
+            const segRadius = Math.max(
+                6,
+                Number(seg.radius ?? baseBodyRadius)
+            );
+            const fontPx = Math.max(8, Math.min(13, segRadius * 1.15));
+            ctx.font = `900 ${fontPx}px Arial`;
+            ctx.lineWidth = 2.6 / scale;
+            ctx.strokeStyle = "rgba(0,0,0,0.85)";
+            ctx.strokeText(chars[idx], seg.x, seg.y);
+            ctx.fillStyle = "#ffffff";
+            ctx.fillText(chars[idx], seg.x, seg.y);
+        }
         ctx.restore();
     }
 
@@ -370,6 +390,7 @@ function SnakeStudioPreview({
     bodyStyle,
     eyes,
     accessory,
+    customText,
     presetName,
 }: {
     primaryColor: string;
@@ -378,6 +399,7 @@ function SnakeStudioPreview({
     bodyStyle: BodyStyle;
     eyes: EyeStyle;
     accessory: AccessoryStyle;
+    customText: string;
     presetName: string;
 }) {
     const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -419,17 +441,17 @@ function SnakeStudioPreview({
             }
 
             const centerY = cssHeight * 0.56;
-            const startX = Math.min(cssWidth - 48, cssWidth * 0.74);
+            const startX = Math.min(cssWidth - 48, cssWidth * 0.78);
             const segments: { x: number; y: number }[] = [];
 
-            for (let i = 0; i < 14; i++) {
-                const x = startX - i * 15;
-                const wave = Math.sin(time * 0.0045 - i * 0.5) * 10;
+            for (let i = 0; i < 16; i++) {
+                const x = startX - i * 16;
+                const wave = Math.sin(time * 0.0045 - i * 0.45) * 9;
                 segments.push({ x, y: centerY + wave });
             }
 
             const head = segments[0];
-            const next = segments[1] || { x: head.x - 15, y: head.y };
+            const next = segments[1] || { x: head.x - 16, y: head.y };
             const angle = Math.atan2(head.y - next.y, head.x - next.x);
 
             drawSnakeVisual(ctx, {
@@ -441,8 +463,9 @@ function SnakeStudioPreview({
                 bodyStyle,
                 eyes,
                 accessory,
+                customText,
                 baseHeadRadius: 12.5,
-                baseBodyRadius: 9.5,
+                baseBodyRadius: 10,
                 scale: 1,
                 time,
             });
@@ -459,6 +482,7 @@ function SnakeStudioPreview({
         bodyStyle,
         eyes,
         accessory,
+        customText,
     ]);
 
     return (
@@ -496,12 +520,14 @@ export default function SnakeGamePage() {
     const [snakeEyes, setSnakeEyes] = useState<EyeStyle>("classic");
     const [snakeAccessory, setSnakeAccessory] =
         useState<AccessoryStyle>("none");
+    const [snakeText, setSnakeText] = useState("");
 
     const customColorRef = useRef("#10b981");
     const secondaryColorRef = useRef("#047857");
     const bodyStyleRef = useRef<BodyStyle>("connected");
     const snakeEyesRef = useRef<EyeStyle>("classic");
     const snakeAccessoryRef = useRef<AccessoryStyle>("none");
+    const snakeTextRef = useRef("");
 
     const [selectedBet, setSelectedBet] = useState<SnakeBet>("0.20");
     const selectedBetRef = useRef<number>(0.2);
@@ -1070,6 +1096,9 @@ export default function SnakeGamePage() {
                 accessory: isOwnSnake
                     ? snakeAccessoryRef.current
                     : value.accessory || "none",
+                customText: isOwnSnake
+                    ? snakeTextRef.current
+                    : value.label || value.text || "",
                 baseHeadRadius: headRadius,
                 baseBodyRadius: bodyRadius,
                 scale,
@@ -1289,7 +1318,8 @@ export default function SnakeGamePage() {
                 `&secondary_color=${encodeURIComponent(secondaryColorRef.current)}` +
                 `&body_style=${encodeURIComponent(bodyStyleRef.current)}` +
                 `&eyes=${encodeURIComponent(snakeEyesRef.current)}` +
-                `&accessory=${encodeURIComponent(snakeAccessoryRef.current)}`
+                `&accessory=${encodeURIComponent(snakeAccessoryRef.current)}` +
+                `&label=${encodeURIComponent(snakeTextRef.current.trim())}`
         );
 
         let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -1610,7 +1640,6 @@ export default function SnakeGamePage() {
         }
     };
 
-    const boostCoinValue = BOOST_COIN_VALUES[selectedBet];
     const activePreset =
         SKIN_PRESETS.find((p) => p.id === selectedPresetId) || null;
 
@@ -1639,7 +1668,7 @@ export default function SnakeGamePage() {
                         </h2>
 
                         <p className="text-xs text-zinc-400 leading-relaxed">
-                            Inicia sesión para entrar a las arenas y apostar.
+                            Inicia sesión para entrar a las arenas.
                         </p>
 
                         <Link
@@ -1690,10 +1719,6 @@ export default function SnakeGamePage() {
                                 <span>&lsaquo;</span>
                                 <span>Volver</span>
                             </Link>
-
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 bg-zinc-900 border border-zinc-800 px-3 py-1 rounded-full">
-                                {SNAKE_BETS[selectedBet].room}
-                            </span>
                         </div>
 
                         <div className="text-center">
@@ -1714,6 +1739,24 @@ export default function SnakeGamePage() {
                                     <span className="text-[10px] font-mono text-zinc-400">
                                         {customColor}
                                     </span>
+                                </div>
+
+                                <div>
+                                    <label className="text-[10px] text-zinc-400 block mb-1 uppercase font-bold">
+                                        Texto sobre el cuerpo
+                                    </label>
+                                    <input
+                                        type="text"
+                                        maxLength={14}
+                                        value={snakeText}
+                                        onChange={(e) => {
+                                            setSelectedPresetId("custom");
+                                            snakeTextRef.current = e.target.value;
+                                            setSnakeText(e.target.value);
+                                        }}
+                                        placeholder="Escribe tu texto (ej. AXIOM)"
+                                        className="w-full bg-black border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-emerald-500"
+                                    />
                                 </div>
 
                                 <div>
@@ -1888,6 +1931,7 @@ export default function SnakeGamePage() {
                                     bodyStyle={bodyStyle}
                                     eyes={snakeEyes}
                                     accessory={snakeAccessory}
+                                    customText={snakeText}
                                     presetName={
                                         activePreset
                                             ? activePreset.name
@@ -1899,7 +1943,7 @@ export default function SnakeGamePage() {
                             <div className="lg:col-span-5 bg-zinc-900/40 border border-zinc-800 rounded-2xl p-4 sm:p-5 space-y-5">
                                 <div>
                                     <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">
-                                        Billetera de origen
+                                        Billetera
                                     </label>
 
                                     <div className="grid grid-cols-2 gap-2.5">
@@ -1933,7 +1977,7 @@ export default function SnakeGamePage() {
 
                                 <div>
                                     <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">
-                                        Selecciona tu apuesta
+                                        Sala
                                     </label>
 
                                     <div className="grid grid-cols-3 gap-2">
@@ -1953,27 +1997,6 @@ export default function SnakeGamePage() {
                                                 </button>
                                             )
                                         )}
-                                    </div>
-                                </div>
-
-                                <div className="bg-black/70 border border-zinc-800/80 rounded-2xl p-3.5 space-y-1.5 text-[11px] text-zinc-400">
-                                    <div className="flex justify-between">
-                                        <span>Sala</span>
-                                        <strong className="text-zinc-200">
-                                            {SNAKE_BETS[selectedBet].room}
-                                        </strong>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span>Moneda al acelerar</span>
-                                        <strong className="text-yellow-400">
-                                            {money(boostCoinValue)} / seg
-                                        </strong>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span>Tiempo de retiro</span>
-                                        <strong className="text-zinc-200">
-                                            20 segundos
-                                        </strong>
                                     </div>
                                 </div>
 
@@ -2059,9 +2082,6 @@ export default function SnakeGamePage() {
                                 <span className="block text-2xl font-black">
                                     {cashOutSeconds}s
                                 </span>
-                                <span className="block text-[9px] font-bold">
-                                    Mantente con vida hasta completar
-                                </span>
                             </div>
                         )}
 
@@ -2103,9 +2123,6 @@ export default function SnakeGamePage() {
                             >
                                 <span>
                                     {isBoosting ? "Activo" : "Acelerar"}
-                                </span>
-                                <span className="block text-[9px] mt-1 opacity-80">
-                                    {money(boostCoinValue)}/s
                                 </span>
                             </button>
                         )}
