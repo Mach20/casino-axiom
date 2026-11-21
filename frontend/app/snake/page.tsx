@@ -515,8 +515,6 @@ export default function SnakeGamePage() {
     const [cashOutProcessing, setCashOutProcessing] = useState(false);
     const [cashOutSeconds, setCashOutSeconds] = useState(0);
     const [isBoosting, setIsBoosting] = useState(false);
-    const [joystickKnob, setJoystickKnob] = useState({ x: 0, y: 0 });
-    const [joystickActive, setJoystickActive] = useState(false);
 
     const [modal, setModal] = useState({
         isOpen: false,
@@ -525,7 +523,6 @@ export default function SnakeGamePage() {
     });
 
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
-    const joystickBaseRef = useRef<HTMLDivElement | null>(null);
     const snakeSocketRef = useRef<WebSocket | null>(null);
     const gameStateRef = useRef<any>(null);
 
@@ -542,6 +539,7 @@ export default function SnakeGamePage() {
     const boostActiveRef = useRef(false);
     const startingRef = useRef(false);
     const lastSteerSentRef = useRef(0);
+    const activePointerIdRef = useRef<number | null>(null);
 
     const applyPreset = (preset: SkinPreset) => {
         setSelectedPresetId(preset.id);
@@ -678,7 +676,7 @@ export default function SnakeGamePage() {
         };
     }, [loadUserBalances]);
 
-    const sendSteerAngle = useCallback((angle: number, throttleMs = 25) => {
+    const sendSteerAngle = useCallback((angle: number, throttleMs = 20) => {
         if (!Number.isFinite(angle)) return;
         const now = performance.now();
         if (now - lastSteerSentRef.current < throttleMs) return;
@@ -694,6 +692,46 @@ export default function SnakeGamePage() {
             console.error("Error enviando dirección:", error);
         }
     }, []);
+
+    const steerTowardsClientPoint = useCallback(
+        (clientX: number, clientY: number) => {
+            if (!connectedRef.current || !aliveRef.current) return;
+
+            const canvas = canvasRef.current;
+            const state = gameStateRef.current;
+            const uid = userIdRef.current;
+
+            if (!canvas || !state || !uid) return;
+
+            const snake = state.snakes?.[uid];
+            if (
+                !snake?.alive ||
+                !Array.isArray(snake.body) ||
+                !snake.body.length
+            )
+                return;
+
+            const head = snake.body[0];
+            if (typeof head?.x !== "number" || typeof head?.y !== "number")
+                return;
+
+            const rect = canvas.getBoundingClientRect();
+            const pointerX = clientX - rect.left;
+            const pointerY = clientY - rect.top;
+
+            const scale = Math.min(
+                1.25,
+                Math.max(0.55, Math.min(rect.width, rect.height) / 720)
+            );
+
+            const worldX = head.x + (pointerX - rect.width / 2) / scale;
+            const worldY = head.y + (pointerY - rect.height / 2) / scale;
+            const angle = Math.atan2(worldY - head.y, worldX - head.x);
+
+            sendSteerAngle(angle, 20);
+        },
+        [sendSteerAngle]
+    );
 
     const stopBoost = useCallback(() => {
         const ws = snakeSocketRef.current;
@@ -743,78 +781,41 @@ export default function SnakeGamePage() {
         }
     }, []);
 
-    const handleBoostPointerDown = (e: PointerEvent<HTMLButtonElement>) => {
+    const handleCanvasPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
+        if (e.pointerType === "mouse" && e.button !== 0) return;
+
         e.preventDefault();
+        activePointerIdRef.current = e.pointerId;
 
         try {
             e.currentTarget.setPointerCapture(e.pointerId);
         } catch {}
 
+        steerTowardsClientPoint(e.clientX, e.clientY);
         startBoost();
     };
 
-    const handleBoostPointerUp = (e: PointerEvent<HTMLButtonElement>) => {
-        e.preventDefault();
-        stopBoost();
-
-        try {
-            if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-                e.currentTarget.releasePointerCapture(e.pointerId);
-            }
-        } catch {}
-    };
-
-    const updateJoystickFromClientPoint = (clientX: number, clientY: number) => {
-        const base = joystickBaseRef.current;
-        if (!base) return;
-
-        const rect = base.getBoundingClientRect();
-        const cx = rect.left + rect.width / 2;
-        const cy = rect.top + rect.height / 2;
-        const maxRadius = Math.max(24, rect.width * 0.34);
-
-        const dx = clientX - cx;
-        const dy = clientY - cy;
-        const dist = Math.hypot(dx, dy);
-
-        if (dist < 4) {
-            setJoystickKnob({ x: 0, y: 0 });
+    const handleCanvasPointerMove = (e: PointerEvent<HTMLCanvasElement>) => {
+        if (
+            activePointerIdRef.current !== null &&
+            e.pointerId !== activePointerIdRef.current
+        ) {
             return;
         }
 
-        const clampedDist = Math.min(dist, maxRadius);
-        const angle = Math.atan2(dy, dx);
-        const knobX = Math.cos(angle) * clampedDist;
-        const knobY = Math.sin(angle) * clampedDist;
-
-        setJoystickKnob({ x: knobX, y: knobY });
-        sendSteerAngle(angle, 20);
+        steerTowardsClientPoint(e.clientX, e.clientY);
     };
 
-    const handleJoystickPointerDown = (e: PointerEvent<HTMLDivElement>) => {
-        e.preventDefault();
-        e.stopPropagation();
+    const handleCanvasPointerUp = (e: PointerEvent<HTMLCanvasElement>) => {
+        if (
+            activePointerIdRef.current !== null &&
+            e.pointerId !== activePointerIdRef.current
+        ) {
+            return;
+        }
 
-        try {
-            e.currentTarget.setPointerCapture(e.pointerId);
-        } catch {}
-
-        setJoystickActive(true);
-        updateJoystickFromClientPoint(e.clientX, e.clientY);
-    };
-
-    const handleJoystickPointerMove = (e: PointerEvent<HTMLDivElement>) => {
-        if (!joystickActive) return;
-        e.preventDefault();
-        e.stopPropagation();
-        updateJoystickFromClientPoint(e.clientX, e.clientY);
-    };
-
-    const handleJoystickPointerUp = (e: PointerEvent<HTMLDivElement>) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setJoystickActive(false);
-        setJoystickKnob({ x: 0, y: 0 });
+        activePointerIdRef.current = null;
+        stopBoost();
 
         try {
             if (e.currentTarget.hasPointerCapture(e.pointerId)) {
@@ -1173,6 +1174,7 @@ export default function SnakeGamePage() {
 
     const exitSnakeGame = useCallback(() => {
         stopBoost();
+        activePointerIdRef.current = null;
 
         closingByUserRef.current = true;
         startingRef.current = false;
@@ -1182,8 +1184,6 @@ export default function SnakeGamePage() {
         readySentRef.current = false;
         cashOutSentRef.current = false;
 
-        setJoystickActive(false);
-        setJoystickKnob({ x: 0, y: 0 });
         setCashOutProcessing(false);
         setCashOutSeconds(0);
         setIsConnected(false);
@@ -1269,6 +1269,7 @@ export default function SnakeGamePage() {
         readySentRef.current = false;
         cashOutSentRef.current = false;
         closingByUserRef.current = false;
+        activePointerIdRef.current = null;
 
         boostActiveRef.current = false;
         setIsBoosting(false);
@@ -1536,39 +1537,6 @@ export default function SnakeGamePage() {
                 "No se pudo establecer una conexión con AXIOM Arena."
             );
         }
-    };
-
-    const handlePointerMove = (e: PointerEvent<HTMLCanvasElement>) => {
-        if (e.pointerType === "touch") return;
-        if (!connectedRef.current || !aliveRef.current) return;
-
-        const canvas = canvasRef.current;
-        const state = gameStateRef.current;
-        const uid = userIdRef.current;
-
-        if (!canvas || !state || !uid) return;
-
-        const snake = state.snakes?.[uid];
-        if (!snake?.alive || !Array.isArray(snake.body) || !snake.body.length)
-            return;
-
-        const head = snake.body[0];
-        if (typeof head?.x !== "number" || typeof head?.y !== "number") return;
-
-        const rect = canvas.getBoundingClientRect();
-        const pointerX = e.clientX - rect.left;
-        const pointerY = e.clientY - rect.top;
-
-        const scale = Math.min(
-            1.25,
-            Math.max(0.55, Math.min(rect.width, rect.height) / 720)
-        );
-
-        const worldX = head.x + (pointerX - rect.width / 2) / scale;
-        const worldY = head.y + (pointerY - rect.height / 2) / scale;
-        const angle = Math.atan2(worldY - head.y, worldX - head.x);
-
-        sendSteerAngle(angle, 20);
     };
 
     const triggerCashOut = () => {
@@ -2015,9 +1983,21 @@ export default function SnakeGamePage() {
 
                         <canvas
                             ref={canvasRef}
-                            onPointerMove={handlePointerMove}
-                            className="absolute inset-0 w-full h-full block cursor-crosshair touch-none"
+                            onPointerDown={handleCanvasPointerDown}
+                            onPointerMove={handleCanvasPointerMove}
+                            onPointerUp={handleCanvasPointerUp}
+                            onPointerCancel={handleCanvasPointerUp}
+                            onLostPointerCapture={handleCanvasPointerUp}
+                            onContextMenu={(e) => e.preventDefault()}
+                            className="absolute inset-0 w-full h-full block cursor-crosshair touch-none select-none"
+                            style={{ touchAction: "none" }}
                         />
+
+                        {isConnected && isAlive && !cashedOut && isBoosting && (
+                            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 pointer-events-none bg-yellow-400/90 text-black px-3.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider shadow-lg">
+                                Acelerando
+                            </div>
+                        )}
 
                         {cashOutProcessing && isAlive && (
                             <div className="absolute top-24 left-1/2 -translate-x-1/2 z-30 bg-yellow-400 text-black px-5 py-3 rounded-2xl text-center shadow-xl">
@@ -2028,48 +2008,6 @@ export default function SnakeGamePage() {
                                     {cashOutSeconds}s
                                 </span>
                             </div>
-                        )}
-
-                        {isConnected && isAlive && !cashedOut && (
-                            <div
-                                ref={joystickBaseRef}
-                                onPointerDown={handleJoystickPointerDown}
-                                onPointerMove={handleJoystickPointerMove}
-                                onPointerUp={handleJoystickPointerUp}
-                                onPointerCancel={handleJoystickPointerUp}
-                                onLostPointerCapture={handleJoystickPointerUp}
-                                onContextMenu={(e) => e.preventDefault()}
-                                className="md:hidden fixed bottom-7 left-5 z-30 w-28 h-28 rounded-full bg-zinc-900/75 border-2 border-emerald-500/40 backdrop-blur-sm flex items-center justify-center touch-none select-none shadow-2xl"
-                                style={{ touchAction: "none" }}
-                            >
-                                <div
-                                    className="w-11 h-11 rounded-full bg-emerald-400 border-2 border-emerald-200 shadow-lg transition-transform duration-75"
-                                    style={{
-                                        transform: `translate(${joystickKnob.x}px, ${joystickKnob.y}px)`,
-                                    }}
-                                />
-                            </div>
-                        )}
-
-                        {isConnected && isAlive && !cashedOut && (
-                            <button
-                                type="button"
-                                onPointerDown={handleBoostPointerDown}
-                                onPointerUp={handleBoostPointerUp}
-                                onPointerCancel={stopBoost}
-                                onLostPointerCapture={stopBoost}
-                                onContextMenu={(e) => e.preventDefault()}
-                                className={`fixed bottom-7 right-5 sm:bottom-8 sm:right-6 z-30 w-24 h-24 sm:w-28 sm:h-28 rounded-full border-4 font-black text-[11px] sm:text-xs uppercase shadow-2xl select-none touch-none transition-all active:scale-95 flex flex-col items-center justify-center ${
-                                    isBoosting
-                                        ? "bg-yellow-300 border-yellow-100 text-black scale-105"
-                                        : "bg-yellow-500/95 border-yellow-300 text-black hover:bg-yellow-400"
-                                }`}
-                                style={{ touchAction: "none" }}
-                            >
-                                <span>
-                                    {isBoosting ? "Activo" : "Acelerar"}
-                                </span>
-                            </button>
                         )}
 
                         {!isConnected && (
@@ -2117,7 +2055,7 @@ export default function SnakeGamePage() {
 
             {!isInSnakeGame && (
                 <footer className="py-6 text-center text-[10px] text-zinc-600 font-bold uppercase tracking-widest">
-                    AXIOM Arena &copy; 2026. Todos los derechos reservados.
+                    AXIOM SNAKE IO ARENA
                 </footer>
             )}
         </div>
