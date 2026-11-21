@@ -83,7 +83,6 @@ const SKIN_PRESETS: SkinPreset[] = [
 
 const WORLD_WIDTH = 20000;
 const WORLD_HEIGHT = 20000;
-const MIN_BOOST_SEGMENTS = 6;
 
 const SNAKE_BETS: Record<SnakeBet, { amount: number; room: string }> = {
     "0.20": { amount: 0.2, room: "snake_020" },
@@ -117,7 +116,7 @@ function drawSnakeVisual(
         baseBodyRadius?: number;
         scale?: number;
         time?: number;
-        isBoosting?: boolean;
+        sizeFactor?: number;
     }
 ) {
     const {
@@ -133,59 +132,52 @@ function drawSnakeVisual(
         baseBodyRadius = 9,
         scale = 1,
         time = 0,
-        isBoosting = false,
+        sizeFactor = 1,
     } = options;
 
     if (!Array.isArray(body) || body.length === 0) return;
 
-    // Al acelerar se contrae visualmente el grosor y el largo de la cola
-    const shrinkRatio = isBoosting ? 0.84 : 1;
-    const renderBody =
-        isBoosting && body.length > MIN_BOOST_SEGMENTS
-            ? body.slice(0, Math.max(MIN_BOOST_SEGMENTS, Math.floor(body.length * 0.88)))
-            : body;
+    const clampedSize = Math.max(0.55, Math.min(1.35, sizeFactor));
+    const effectiveBodyRadius = baseBodyRadius * clampedSize;
 
-    const effectiveBodyRadius = baseBodyRadius * shrinkRatio;
-    const effectiveHeadRadius = baseHeadRadius * (isBoosting ? 0.92 : 1);
-
-    if (bodyStyle === "trail" && renderBody.length > 1) {
+    if (bodyStyle === "trail" && body.length > 1) {
         ctx.save();
         ctx.beginPath();
-        ctx.moveTo(renderBody[0].x, renderBody[0].y);
-        for (let i = 1; i < renderBody.length; i++) {
-            ctx.lineTo(renderBody[i].x, renderBody[i].y);
+        ctx.moveTo(body[0].x, body[0].y);
+        for (let i = 1; i < body.length; i++) {
+            ctx.lineTo(body[i].x, body[i].y);
         }
         ctx.strokeStyle = glowColor;
-        ctx.globalAlpha = isBoosting ? 0.35 : 0.22;
-        ctx.lineWidth = Math.max(7, effectiveBodyRadius * 1.7);
+        ctx.globalAlpha = 0.22;
+        ctx.lineWidth = Math.max(6, effectiveBodyRadius * 1.7);
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
         ctx.stroke();
         ctx.restore();
     }
 
-    if (bodyStyle === "connected" && renderBody.length > 1) {
+    if (bodyStyle === "connected" && body.length > 1) {
         ctx.save();
         ctx.beginPath();
-        ctx.moveTo(renderBody[0].x, renderBody[0].y);
-        for (let i = 1; i < renderBody.length; i++) {
-            ctx.lineTo(renderBody[i].x, renderBody[i].y);
+        ctx.moveTo(body[0].x, body[0].y);
+        for (let i = 1; i < body.length; i++) {
+            ctx.lineTo(body[i].x, body[i].y);
         }
         ctx.strokeStyle = secondaryColor;
-        ctx.lineWidth = Math.max(8, effectiveBodyRadius * 1.85);
+        ctx.lineWidth = Math.max(7, effectiveBodyRadius * 1.85);
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
         ctx.stroke();
         ctx.restore();
     }
 
-    for (let i = renderBody.length - 1; i >= 1; i--) {
-        const seg = renderBody[i];
-        const ratio = i / Math.max(renderBody.length, 1);
-        const taper = Math.max(0.42, 1 - ratio * 0.48);
+    for (let i = body.length - 1; i >= 1; i--) {
+        const seg = body[i];
+        const ratio = i / Math.max(body.length, 1);
+        const taper = Math.max(0.45, 1 - ratio * 0.45);
         const radius = Math.max(
-            4,
-            Number(seg.radius ?? baseBodyRadius) * shrinkRatio * taper
+            3.5,
+            Number(seg.radius ?? baseBodyRadius) * clampedSize * taper
         );
         const fill = i % 2 === 0 ? primaryColor : secondaryColor;
 
@@ -194,7 +186,7 @@ function drawSnakeVisual(
         ctx.arc(seg.x, seg.y, radius, 0, Math.PI * 2);
         ctx.fillStyle = fill;
         ctx.shadowColor = glowColor;
-        ctx.shadowBlur = (isBoosting ? 14 : bodyStyle === "pulse" ? 11 : 4) / scale;
+        ctx.shadowBlur = (bodyStyle === "pulse" ? 11 : 4) / scale;
         ctx.fill();
         ctx.shadowBlur = 0;
 
@@ -225,10 +217,10 @@ function drawSnakeVisual(
         ctx.restore();
     }
 
-    const head = renderBody[0];
+    const head = body[0];
     const headRadius = Math.max(
-        9,
-        Number(head.radius ?? baseHeadRadius) * (isBoosting ? 0.92 : 1)
+        8.5,
+        Number(head.radius ?? baseHeadRadius) * clampedSize
     );
 
     ctx.save();
@@ -264,7 +256,7 @@ function drawSnakeVisual(
     );
     ctx.fillStyle = primaryColor;
     ctx.shadowColor = glowColor;
-    ctx.shadowBlur = (isBoosting ? 18 : 14) / scale;
+    ctx.shadowBlur = 14 / scale;
     ctx.fill();
     ctx.shadowBlur = 0;
 
@@ -401,7 +393,7 @@ function SnakeStudioPreview({
         let frameId = 0;
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         const cssWidth = canvas.clientWidth || 320;
-        const cssHeight = canvas.clientHeight || 144;
+        const cssHeight = canvas.clientHeight || 136;
 
         canvas.width = Math.floor(cssWidth * dpr);
         canvas.height = Math.floor(cssHeight * dpr);
@@ -429,17 +421,17 @@ function SnakeStudioPreview({
             }
 
             const centerY = cssHeight * 0.56;
-            const startX = Math.min(cssWidth - 48, cssWidth * 0.76);
+            const startX = Math.min(cssWidth - 44, cssWidth * 0.78);
             const segments: { x: number; y: number }[] = [];
 
             for (let i = 0; i < 14; i++) {
-                const x = startX - i * 15;
-                const wave = Math.sin(time * 0.0045 - i * 0.5) * 10;
+                const x = startX - i * 14;
+                const wave = Math.sin(time * 0.0045 - i * 0.5) * 9;
                 segments.push({ x, y: centerY + wave });
             }
 
             const head = segments[0];
-            const next = segments[1] || { x: head.x - 15, y: head.y };
+            const next = segments[1] || { x: head.x - 14, y: head.y };
             const angle = Math.atan2(head.y - next.y, head.x - next.x);
 
             drawSnakeVisual(ctx, {
@@ -451,10 +443,11 @@ function SnakeStudioPreview({
                 bodyStyle,
                 eyes,
                 accessory,
-                baseHeadRadius: 12.5,
-                baseBodyRadius: 9.5,
+                baseHeadRadius: 12,
+                baseBodyRadius: 9,
                 scale: 1,
                 time,
+                sizeFactor: 1,
             });
 
             frameId = requestAnimationFrame(render);
@@ -472,7 +465,7 @@ function SnakeStudioPreview({
     ]);
 
     return (
-        <div className="bg-black border border-zinc-800 rounded-2xl p-3.5">
+        <div className="bg-black border border-zinc-800 rounded-2xl p-3">
             <div className="flex items-center justify-between gap-2 mb-2">
                 <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400">
                     Vista previa en vivo
@@ -484,7 +477,7 @@ function SnakeStudioPreview({
 
             <canvas
                 ref={previewCanvasRef}
-                className="w-full h-32 sm:h-36 rounded-xl border border-zinc-900 block"
+                className="w-full h-28 sm:h-32 rounded-xl border border-zinc-900 block"
             />
         </div>
     );
@@ -498,6 +491,8 @@ export default function SnakeGamePage() {
     const [playBalance, setPlayBalance] = useState(0);
     const [bonusBalance, setBonusBalance] = useState(0);
     const [selectedWallet, setSelectedWallet] = useState<Wallet>("play");
+
+    const [isCustomizerOpen, setIsCustomizerOpen] = useState(false);
 
     const [selectedPresetId, setSelectedPresetId] = useState<string>("emerald");
     const [customColor, setCustomColor] = useState("#10b981");
@@ -540,6 +535,7 @@ export default function SnakeGamePage() {
     });
 
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
+    const minimapCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const joystickBaseRef = useRef<HTMLDivElement | null>(null);
     const snakeSocketRef = useRef<WebSocket | null>(null);
     const gameStateRef = useRef<any>(null);
@@ -559,6 +555,8 @@ export default function SnakeGamePage() {
     const lastSteerSentRef = useRef(0);
     const boostPointerIdRef = useRef<number | null>(null);
     const joystickPointerIdRef = useRef<number | null>(null);
+    const minimapPointerIdRef = useRef<number | null>(null);
+    const initialBodyLengthRef = useRef<number>(0);
 
     const applyPreset = (preset: SkinPreset) => {
         setSelectedPresetId(preset.id);
@@ -787,11 +785,6 @@ export default function SnakeGamePage() {
 
         if (!snake?.alive || !snake?.ready) return;
 
-        // No acelerar si ya se encogió hasta el mínimo de segmentos
-        if (Array.isArray(snake.body) && snake.body.length <= MIN_BOOST_SEGMENTS) {
-            return;
-        }
-
         boostActiveRef.current = true;
 
         try {
@@ -878,6 +871,74 @@ export default function SnakeGamePage() {
         } catch {}
     };
 
+    const steerFromMinimapPoint = useCallback(
+        (clientX: number, clientY: number) => {
+            const mini = minimapCanvasRef.current;
+            const state = gameStateRef.current;
+            const uid = userIdRef.current;
+            if (!mini || !state || !uid) return;
+
+            const snake = state.snakes?.[uid];
+            const head = snake?.body?.[0];
+            if (!snake?.alive || typeof head?.x !== "number" || typeof head?.y !== "number") {
+                return;
+            }
+
+            const worldWidth = Number(state.world?.width || WORLD_WIDTH);
+            const worldHeight = Number(state.world?.height || WORLD_HEIGHT);
+            const rect = mini.getBoundingClientRect();
+            if (!rect.width || !rect.height) return;
+
+            const nx = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+            const ny = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+
+            const targetWorldX = nx * worldWidth;
+            const targetWorldY = ny * worldHeight;
+            const angle = Math.atan2(targetWorldY - head.y, targetWorldX - head.x);
+            sendSteerAngle(angle, 20);
+        },
+        [sendSteerAngle]
+    );
+
+    const handleMinimapPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
+        e.preventDefault();
+        e.stopPropagation();
+        minimapPointerIdRef.current = e.pointerId;
+        try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {}
+        steerFromMinimapPoint(e.clientX, e.clientY);
+    };
+
+    const handleMinimapPointerMove = (e: PointerEvent<HTMLCanvasElement>) => {
+        if (
+            minimapPointerIdRef.current === null ||
+            e.pointerId !== minimapPointerIdRef.current
+        ) {
+            return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        steerFromMinimapPoint(e.clientX, e.clientY);
+    };
+
+    const handleMinimapPointerUp = (e: PointerEvent<HTMLCanvasElement>) => {
+        if (
+            minimapPointerIdRef.current !== null &&
+            e.pointerId !== minimapPointerIdRef.current
+        ) {
+            return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        minimapPointerIdRef.current = null;
+        try {
+            if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                e.currentTarget.releasePointerCapture(e.pointerId);
+            }
+        } catch {}
+    };
+
     const handleCanvasPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
         if (e.pointerType === "mouse" && e.button !== 0) return;
 
@@ -917,6 +978,75 @@ export default function SnakeGamePage() {
             }
         } catch {}
     };
+
+    const renderMinimap = useCallback(() => {
+        const mini = minimapCanvasRef.current;
+        if (!mini) return;
+
+        const ctx = mini.getContext("2d");
+        if (!ctx) return;
+
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const cssW = mini.clientWidth || 128;
+        const cssH = mini.clientHeight || 128;
+
+        if (mini.width !== Math.floor(cssW * dpr) || mini.height !== Math.floor(cssH * dpr)) {
+            mini.width = Math.floor(cssW * dpr);
+            mini.height = Math.floor(cssH * dpr);
+        }
+
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, cssW, cssH);
+
+        ctx.fillStyle = "rgba(6, 12, 9, 0.92)";
+        ctx.fillRect(0, 0, cssW, cssH);
+
+        ctx.strokeStyle = "rgba(52, 211, 153, 0.25)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(0.5, 0.5, cssW - 1, cssH - 1);
+
+        // Cuadrante central del minimapa
+        ctx.strokeStyle = "rgba(52, 211, 153, 0.08)";
+        ctx.beginPath();
+        ctx.moveTo(cssW / 2, 0);
+        ctx.lineTo(cssW / 2, cssH);
+        ctx.moveTo(0, cssH / 2);
+        ctx.lineTo(cssW, cssH / 2);
+        ctx.stroke();
+
+        const state = gameStateRef.current;
+        if (!state || !state.snakes) return;
+
+        const worldWidth = Number(state.world?.width || WORLD_WIDTH);
+        const worldHeight = Number(state.world?.height || WORLD_HEIGHT);
+
+        Object.entries(state.snakes).forEach(([uid, value]: [string, any]) => {
+            if (!value?.alive || !Array.isArray(value.body) || !value.body.length) {
+                return;
+            }
+            const head = value.body[0];
+            if (typeof head?.x !== "number" || typeof head?.y !== "number") {
+                return;
+            }
+
+            const mx = Math.max(2, Math.min(cssW - 2, (head.x / worldWidth) * cssW));
+            const my = Math.max(2, Math.min(cssH - 2, (head.y / worldHeight) * cssH));
+            const isOwn = uid === userIdRef.current;
+
+            ctx.beginPath();
+            ctx.arc(mx, my, isOwn ? 4 : 3, 0, Math.PI * 2);
+            ctx.fillStyle = isOwn
+                ? customColorRef.current
+                : value.color || "#f43f5e";
+            ctx.fill();
+
+            if (isOwn) {
+                ctx.strokeStyle = "#ffffff";
+                ctx.lineWidth = 1.4;
+                ctx.stroke();
+            }
+        });
+    }, []);
 
     const renderCanvas = useCallback((now = 0) => {
         const canvas = canvasRef.current;
@@ -1122,6 +1252,22 @@ export default function SnakeGamePage() {
                 ? boostActiveRef.current || Boolean(value.boosting)
                 : Boolean(value.boosting);
 
+            if (isOwnSnake && initialBodyLengthRef.current === 0) {
+                initialBodyLengthRef.current = value.body.length;
+            }
+
+            const lengthRatio =
+                isOwnSnake && initialBodyLengthRef.current > 0
+                    ? Math.max(
+                          0.68,
+                          Math.min(1.15, value.body.length / initialBodyLengthRef.current)
+                      )
+                    : 1;
+
+            const sizeFactor = snakeBoosting
+                ? Math.max(0.68, lengthRatio * 0.88)
+                : lengthRatio;
+
             const primaryColor = isOwnSnake
                 ? customColorRef.current
                 : value.color || "#f43f5e";
@@ -1167,7 +1313,7 @@ export default function SnakeGamePage() {
                 baseBodyRadius: bodyRadius,
                 scale,
                 time: now,
-                isBoosting: snakeBoosting,
+                sizeFactor,
             });
 
             if (head) {
@@ -1187,7 +1333,7 @@ export default function SnakeGamePage() {
                 ctx.fillText(
                     money(balance),
                     head.x,
-                    head.y - headRadius - 16
+                    head.y - headRadius * sizeFactor - 16
                 );
                 ctx.shadowBlur = 0;
             }
@@ -1201,17 +1347,8 @@ export default function SnakeGamePage() {
         ctx.font = "bold 13px Arial";
         ctx.fillText(`PUNTOS: ${Number(ownSnake?.score || 0)}`, 20, height - 20);
 
-        ctx.textAlign = "right";
-        ctx.fillStyle = "#10b981";
-        ctx.fillText(
-            `JUGADORES: ${
-                Object.values(state.snakes).filter((snake: any) => snake?.alive)
-                    .length
-            }`,
-            width - 20,
-            height - 20
-        );
-    }, []);
+        renderMinimap();
+    }, [renderMinimap]);
 
     useEffect(() => {
         if (!isInSnakeGame) return;
@@ -1275,6 +1412,8 @@ export default function SnakeGamePage() {
         stopBoost();
         boostPointerIdRef.current = null;
         joystickPointerIdRef.current = null;
+        minimapPointerIdRef.current = null;
+        initialBodyLengthRef.current = 0;
 
         closingByUserRef.current = true;
         startingRef.current = false;
@@ -1349,6 +1488,7 @@ export default function SnakeGamePage() {
 
         startingRef.current = true;
         selectedBetRef.current = parsedBet;
+        initialBodyLengthRef.current = 0;
 
         setSnakeRoomId(generatedRoomId);
         setIsInSnakeGame(true);
@@ -1373,6 +1513,7 @@ export default function SnakeGamePage() {
         closingByUserRef.current = false;
         boostPointerIdRef.current = null;
         joystickPointerIdRef.current = null;
+        minimapPointerIdRef.current = null;
 
         boostActiveRef.current = false;
 
@@ -1456,15 +1597,6 @@ export default function SnakeGamePage() {
 
                             if (!(cashOutSentRef.current && !alive)) {
                                 setIsAlive(alive);
-                            }
-
-                            // Detener aceleración automáticamente si alcanzó el tamaño mínimo
-                            if (
-                                boostActiveRef.current &&
-                                Array.isArray(currentSnake.body) &&
-                                currentSnake.body.length <= MIN_BOOST_SEGMENTS
-                            ) {
-                                stopBoost();
                             }
 
                             if (!alive) {
@@ -1750,10 +1882,10 @@ export default function SnakeGamePage() {
 
             <Header />
 
-            <main className="flex-1 max-w-6xl w-full mx-auto px-3 sm:px-6 py-5 sm:py-8 flex flex-col items-center justify-center">
+            <main className="flex-1 max-w-4xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-8 flex flex-col items-center justify-center">
                 {!isInSnakeGame ? (
-                    <div className="w-full max-w-4xl bg-zinc-950 border border-zinc-800 rounded-3xl p-4 sm:p-6 md:p-8 space-y-6 shadow-2xl">
-                        <div className="flex items-center justify-between gap-3 border-b border-zinc-900 pb-4">
+                    <div className="w-full max-w-xl bg-zinc-950 border border-zinc-800 rounded-3xl p-4 sm:p-6 space-y-5 shadow-2xl">
+                        <div className="flex items-center justify-between gap-2 border-b border-zinc-900 pb-3.5">
                             <Link
                                 href="/"
                                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 hover:text-emerald-400 font-bold uppercase transition-colors"
@@ -1761,19 +1893,41 @@ export default function SnakeGamePage() {
                                 <span>&lsaquo;</span>
                                 <span>Volver</span>
                             </Link>
+
+                            <button
+                                type="button"
+                                onClick={() =>
+                                    setIsCustomizerOpen((prev) => !prev)
+                                }
+                                className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black uppercase border transition-all ${
+                                    isCustomizerOpen
+                                        ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
+                                        : "bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border-zinc-700"
+                                }`}
+                            >
+                                <span
+                                    className="w-3 h-3 rounded-full border border-white/30"
+                                    style={{ backgroundColor: customColor }}
+                                />
+                                <span>
+                                    {isCustomizerOpen
+                                        ? "Ocultar Serpiente"
+                                        : "Modificar Serpiente"}
+                                </span>
+                            </button>
                         </div>
 
                         <div className="text-center">
-                            <h2 className="text-2xl sm:text-3xl font-black text-emerald-400 uppercase tracking-wider">
+                            <h2 className="text-xl sm:text-2xl font-black text-emerald-400 uppercase tracking-wider">
                                 Snake Arena P2P
                             </h2>
                             <p className="text-xs text-zinc-400 mt-1">
-                                Personaliza tu serpiente y elige tu sala de juego.
+                                Elige tu billetera, sala y entra a jugar.
                             </p>
                         </div>
 
-                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                            <div className="lg:col-span-7 bg-zinc-900/40 border border-zinc-800 rounded-2xl p-4 sm:p-5 space-y-4">
+                        {isCustomizerOpen && (
+                            <div className="bg-zinc-900/45 border border-zinc-800 rounded-2xl p-3.5 sm:p-4 space-y-4">
                                 <div className="flex items-center justify-between">
                                     <h3 className="text-xs font-black uppercase tracking-wider text-zinc-200">
                                         Diseño de Serpiente
@@ -1798,14 +1952,14 @@ export default function SnakeGamePage() {
                                                     onClick={() =>
                                                         applyPreset(preset)
                                                     }
-                                                    className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all ${
+                                                    className={`flex items-center gap-2 p-2.5 rounded-xl border text-left transition-all ${
                                                         active
                                                             ? "bg-zinc-900 border-emerald-400 text-white"
                                                             : "bg-black/80 border-zinc-800 text-zinc-400 hover:text-white"
                                                     }`}
                                                 >
                                                     <span
-                                                        className="w-4 h-4 rounded-full shrink-0 border border-white/20"
+                                                        className="w-3.5 h-3.5 rounded-full shrink-0 border border-white/20"
                                                         style={{
                                                             background: `linear-gradient(135deg, ${preset.primary}, ${preset.secondary})`,
                                                         }}
@@ -1819,13 +1973,13 @@ export default function SnakeGamePage() {
                                     </div>
                                 </div>
 
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                    <div className="flex items-center justify-between bg-black border border-zinc-800 px-3.5 py-2.5 rounded-xl">
-                                        <div>
-                                            <span className="text-[10px] text-zinc-400 uppercase font-bold block">
-                                                Color primario
+                                <div className="grid grid-cols-2 gap-2.5">
+                                    <div className="flex items-center justify-between bg-black border border-zinc-800 px-3 py-2 rounded-xl">
+                                        <div className="min-w-0">
+                                            <span className="text-[9px] text-zinc-400 uppercase font-bold block">
+                                                Primario
                                             </span>
-                                            <span className="text-[11px] font-mono text-emerald-400">
+                                            <span className="text-[10px] font-mono text-emerald-400 truncate block">
                                                 {customColor}
                                             </span>
                                         </div>
@@ -1838,16 +1992,16 @@ export default function SnakeGamePage() {
                                                     e.target.value;
                                                 setCustomColor(e.target.value);
                                             }}
-                                            className="w-9 h-9 rounded-lg bg-transparent cursor-pointer border-0"
+                                            className="w-8 h-8 rounded-lg bg-transparent cursor-pointer border-0 shrink-0"
                                         />
                                     </div>
 
-                                    <div className="flex items-center justify-between bg-black border border-zinc-800 px-3.5 py-2.5 rounded-xl">
-                                        <div>
-                                            <span className="text-[10px] text-zinc-400 uppercase font-bold block">
-                                                Color secundario
+                                    <div className="flex items-center justify-between bg-black border border-zinc-800 px-3 py-2 rounded-xl">
+                                        <div className="min-w-0">
+                                            <span className="text-[9px] text-zinc-400 uppercase font-bold block">
+                                                Secundario
                                             </span>
-                                            <span className="text-[11px] font-mono text-zinc-300">
+                                            <span className="text-[10px] font-mono text-zinc-300 truncate block">
                                                 {secondaryColor}
                                             </span>
                                         </div>
@@ -1862,12 +2016,12 @@ export default function SnakeGamePage() {
                                                     e.target.value
                                                 );
                                             }}
-                                            className="w-9 h-9 rounded-lg bg-transparent cursor-pointer border-0"
+                                            className="w-8 h-8 rounded-lg bg-transparent cursor-pointer border-0 shrink-0"
                                         />
                                     </div>
                                 </div>
 
-                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                                <div className="grid grid-cols-3 gap-2">
                                     <div>
                                         <label className="text-[10px] text-zinc-400 block mb-1 uppercase font-bold">
                                             Cuerpo
@@ -1881,7 +2035,7 @@ export default function SnakeGamePage() {
                                                 bodyStyleRef.current = val;
                                                 setBodyStyle(val);
                                             }}
-                                            className="w-full bg-black border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-zinc-200 outline-none focus:border-emerald-500"
+                                            className="w-full bg-black border border-zinc-800 rounded-xl px-2.5 py-2 text-xs text-zinc-200 outline-none focus:border-emerald-500"
                                         >
                                             <option value="connected">
                                                 Continuo
@@ -1907,7 +2061,7 @@ export default function SnakeGamePage() {
                                                 snakeEyesRef.current = val;
                                                 setSnakeEyes(val);
                                             }}
-                                            className="w-full bg-black border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-zinc-200 outline-none focus:border-emerald-500"
+                                            className="w-full bg-black border border-zinc-800 rounded-xl px-2.5 py-2 text-xs text-zinc-200 outline-none focus:border-emerald-500"
                                         >
                                             <option value="classic">
                                                 Clásicos
@@ -1936,7 +2090,7 @@ export default function SnakeGamePage() {
                                                     val;
                                                 setSnakeAccessory(val);
                                             }}
-                                            className="w-full bg-black border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-zinc-200 outline-none focus:border-emerald-500"
+                                            className="w-full bg-black border border-zinc-800 rounded-xl px-2.5 py-2 text-xs text-zinc-200 outline-none focus:border-emerald-500"
                                         >
                                             <option value="none">Ninguno</option>
                                             <option value="crown">Corona</option>
@@ -1962,76 +2116,76 @@ export default function SnakeGamePage() {
                                     }
                                 />
                             </div>
+                        )}
 
-                            <div className="lg:col-span-5 bg-zinc-900/40 border border-zinc-800 rounded-2xl p-4 sm:p-5 space-y-5">
-                                <div>
-                                    <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">
-                                        Billetera
-                                    </label>
+                        <div className="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-4 space-y-5">
+                            <div>
+                                <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">
+                                    Billetera
+                                </label>
 
-                                    <div className="grid grid-cols-2 gap-2.5">
-                                        <button
-                                            type="button"
-                                            onClick={() => setSelectedWallet("play")}
-                                            className={`py-3 px-2 rounded-xl text-xs font-black uppercase border transition-all ${
-                                                selectedWallet === "play"
-                                                    ? "bg-emerald-500 text-black border-emerald-400"
-                                                    : "bg-black text-zinc-400 hover:text-white border-zinc-800"
-                                            }`}
-                                        >
-                                            Jugar (${playBalance.toFixed(2)})
-                                        </button>
+                                <div className="grid grid-cols-2 gap-2.5">
+                                    <button
+                                        type="button"
+                                        onClick={() => setSelectedWallet("play")}
+                                        className={`py-3 px-2 rounded-xl text-xs font-black uppercase border transition-all ${
+                                            selectedWallet === "play"
+                                                ? "bg-emerald-500 text-black border-emerald-400"
+                                                : "bg-black text-zinc-400 hover:text-white border-zinc-800"
+                                        }`}
+                                    >
+                                        Jugar (${playBalance.toFixed(2)})
+                                    </button>
 
-                                        <button
-                                            type="button"
-                                            onClick={() =>
-                                                setSelectedWallet("bonus")
-                                            }
-                                            className={`py-3 px-2 rounded-xl text-xs font-black uppercase border transition-all ${
-                                                selectedWallet === "bonus"
-                                                    ? "bg-yellow-400 text-black border-yellow-300"
-                                                    : "bg-black text-zinc-400 hover:text-white border-zinc-800"
-                                            }`}
-                                        >
-                                            Bono (${bonusBalance.toFixed(2)})
-                                        </button>
-                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            setSelectedWallet("bonus")
+                                        }
+                                        className={`py-3 px-2 rounded-xl text-xs font-black uppercase border transition-all ${
+                                            selectedWallet === "bonus"
+                                                ? "bg-yellow-400 text-black border-yellow-300"
+                                                : "bg-black text-zinc-400 hover:text-white border-zinc-800"
+                                        }`}
+                                    >
+                                        Bono (${bonusBalance.toFixed(2)})
+                                    </button>
                                 </div>
-
-                                <div>
-                                    <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">
-                                        Sala
-                                    </label>
-
-                                    <div className="grid grid-cols-3 gap-2">
-                                        {(["0.20", "10", "50"] as SnakeBet[]).map(
-                                            (bet) => (
-                                                <button
-                                                    key={bet}
-                                                    type="button"
-                                                    onClick={() => setSelectedBet(bet)}
-                                                    className={`py-3 rounded-xl text-sm font-black border transition-all ${
-                                                        selectedBet === bet
-                                                            ? "bg-emerald-500 text-black border-emerald-400"
-                                                            : "bg-black text-zinc-400 border-zinc-800 hover:border-emerald-500"
-                                                    }`}
-                                                >
-                                                    ${Number(bet).toFixed(2)}
-                                                </button>
-                                            )
-                                        )}
-                                    </div>
-                                </div>
-
-                                <button
-                                    type="button"
-                                    onClick={startSnakeGame}
-                                    disabled={startingRef.current}
-                                    className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-black text-xs uppercase tracking-wider rounded-2xl shadow-lg active:scale-95 transition-all"
-                                >
-                                    Entrar a la Arena
-                                </button>
                             </div>
+
+                            <div>
+                                <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">
+                                    Sala
+                                </label>
+
+                                <div className="grid grid-cols-3 gap-2">
+                                    {(["0.20", "10", "50"] as SnakeBet[]).map(
+                                        (bet) => (
+                                            <button
+                                                key={bet}
+                                                type="button"
+                                                onClick={() => setSelectedBet(bet)}
+                                                className={`py-3 rounded-xl text-sm font-black border transition-all ${
+                                                    selectedBet === bet
+                                                        ? "bg-emerald-500 text-black border-emerald-400"
+                                                        : "bg-black text-zinc-400 border-zinc-800 hover:border-emerald-500"
+                                                }`}
+                                            >
+                                                ${Number(bet).toFixed(2)}
+                                            </button>
+                                        )
+                                    )}
+                                </div>
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={startSnakeGame}
+                                disabled={startingRef.current}
+                                className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-black text-xs uppercase tracking-wider rounded-2xl shadow-lg active:scale-95 transition-all"
+                            >
+                                Entrar a la Arena
+                            </button>
                         </div>
                     </div>
                 ) : (
@@ -2112,14 +2266,29 @@ export default function SnakeGamePage() {
                                 onPointerCancel={handleJoystickPointerUp}
                                 onLostPointerCapture={handleJoystickPointerUp}
                                 onContextMenu={(e) => e.preventDefault()}
-                                className="md:hidden fixed bottom-7 left-5 z-30 w-28 h-28 rounded-full bg-zinc-900/75 border-2 border-emerald-500/40 backdrop-blur-sm flex items-center justify-center touch-none select-none shadow-2xl"
+                                className="md:hidden fixed bottom-6 left-4 z-30 w-24 h-24 rounded-full bg-zinc-900/75 border-2 border-emerald-500/40 backdrop-blur-sm flex items-center justify-center touch-none select-none shadow-2xl"
                                 style={{ touchAction: "none" }}
                             >
                                 <div
-                                    className="w-11 h-11 rounded-full bg-emerald-400 border-2 border-emerald-200 shadow-lg transition-transform duration-75"
+                                    className="w-10 h-10 rounded-full bg-emerald-400 border-2 border-emerald-200 shadow-lg transition-transform duration-75"
                                     style={{
                                         transform: `translate(${joystickKnob.x}px, ${joystickKnob.y}px)`,
                                     }}
+                                />
+                            </div>
+                        )}
+
+                        {isConnected && (
+                            <div className="fixed bottom-6 right-4 sm:bottom-7 sm:right-6 z-30 bg-zinc-950/85 border border-zinc-800 rounded-2xl p-2 shadow-2xl backdrop-blur-md">
+                                <canvas
+                                    ref={minimapCanvasRef}
+                                    onPointerDown={handleMinimapPointerDown}
+                                    onPointerMove={handleMinimapPointerMove}
+                                    onPointerUp={handleMinimapPointerUp}
+                                    onPointerCancel={handleMinimapPointerUp}
+                                    onLostPointerCapture={handleMinimapPointerUp}
+                                    className="w-24 h-24 sm:w-28 sm:h-28 rounded-xl block cursor-pointer touch-none"
+                                    style={{ touchAction: "none" }}
                                 />
                             </div>
                         )}
@@ -2180,7 +2349,7 @@ export default function SnakeGamePage() {
 
             {!isInSnakeGame && (
                 <footer className="py-6 text-center text-[10px] text-zinc-600 font-bold uppercase tracking-widest">
-                    AXIOM Arena &copy; 2026. Todos los derechos reservados.
+                    AXIOM SNAKE IO ARENA
                 </footer>
             )}
         </div>
