@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useEffect, useRef } from "react";
@@ -50,6 +49,7 @@ export default function P2PLobby() {
   const [status, setStatus] = useState("Conectando...");
   const [winner, setWinner] = useState<string | null>(null);
   const [winnerPrize, setWinnerPrize] = useState(0);
+  const [refundedAmount, setRefundedAmount] = useState(0);
   const [gameBet, setGameBet] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -67,6 +67,7 @@ export default function P2PLobby() {
 
   const registeredCommissionsRef = useRef<Set<string>>(new Set());
   const paidRoomsRef = useRef<Set<string>>(new Set());
+  const refundedRoomsRef = useRef<Set<string>>(new Set());
   const processedFinishRoomsRef = useRef<Set<string>>(new Set());
 
   const pendingCreateRef = useRef<{
@@ -234,10 +235,8 @@ export default function P2PLobby() {
   }, []);
 
   // ==========================================================
-  // COMISIÓN
-  // Se registra una sola vez por usuario y sala en esta sesión.
-  // El reparto del 6% se realiza en registrar_comision_xo:
-  // 2% para el referente y 4% para AXIOM.
+  // COMISIÓN (SOLO CUANDO ALGUIEN GANA)
+  // Se registra una sola vez por usuario y sala al haber victoria.
   // ==========================================================
 
   const registrarComision = async (roomId: string, monto: number) => {
@@ -271,6 +270,42 @@ export default function P2PLobby() {
         "Error al registrar comisión",
         error.message || "No se pudo guardar la comisión de esta partida."
       );
+    }
+  };
+
+  // ==========================================================
+  // DEVOLUCIÓN DE APUESTA EN EMPATE (SIN COMISIÓN)
+  // ==========================================================
+
+  const devolverApuestaEmpate = async (
+    roomId: string,
+    monto: number,
+    walletType: Wallet
+  ) => {
+    const currentUserId = userIdRef.current;
+    if (!currentUserId || monto <= 0) return;
+
+    const refundKey = `${roomId}:${currentUserId}`;
+    if (refundedRoomsRef.current.has(refundKey)) return;
+
+    refundedRoomsRef.current.add(refundKey);
+
+    const { error } = await supabase.rpc("refund_bet_balance", {
+      p_user_id: currentUserId,
+      p_amount: monto,
+      p_wallet: walletType === "bonus" ? "bonus" : "play",
+    });
+
+    if (error) {
+      refundedRoomsRef.current.delete(refundKey);
+      console.error("ERROR AL DEVOLVER APUESTA POR EMPATE:", error);
+      showAlert(
+        "Error al reembolsar apuesta",
+        error.message || "No se pudo devolver la apuesta del empate."
+      );
+    } else {
+      setRefundedAmount(monto);
+      await loadUserBalances();
     }
   };
 
@@ -440,7 +475,6 @@ export default function P2PLobby() {
     setIsProcessing(true);
 
     try {
-      // El backend actual espera que el débito se haga antes de entrar.
       if (checkClientBalance) {
         const walletParam = walletType === "bonus" ? "bonus" : "play";
 
@@ -475,6 +509,7 @@ export default function P2PLobby() {
 
       let initialized = false;
       let finished = false;
+      const effectiveBet = Number(roomBet ?? betVal);
 
       ws.onopen = () => {
         setStatus("Entrando a la sala...");
@@ -512,16 +547,18 @@ export default function P2PLobby() {
           );
 
           setTurn(data.turn || "X");
-          setGameBet(Number(data.bet || betVal));
+          const currentRoomBet = Number(data.bet ?? effectiveBet);
+          setGameBet(currentRoomBet);
           setWinner(null);
           setWinnerPrize(0);
+          setRefundedAmount(0);
 
           processedFinishRoomsRef.current.delete(roomId);
 
           setStatus(
             data.status === "PLAYING"
-              ? `En juego. Apuesta: $${Number(data.bet).toFixed(2)}`
-              : `Esperando rival... Apuesta: $${Number(data.bet).toFixed(2)}`
+              ? `En juego. Apuesta: $${currentRoomBet.toFixed(2)}`
+              : `Esperando rival... Apuesta: $${currentRoomBet.toFixed(2)}`
           );
 
           if (lobbySocketRef.current) {
@@ -529,7 +566,6 @@ export default function P2PLobby() {
             lobbySocketRef.current = null;
           }
 
-          await registrarComision(roomId, betVal);
           await loadUserBalances();
 
           setIsProcessing(false);
@@ -549,8 +585,6 @@ export default function P2PLobby() {
 
         // ----------------------------------------------------
         // MOVE_MADE
-        // El backend ya valida los movimientos.
-        // La liquidación se espera en GAME_FINISHED.
         // ----------------------------------------------------
 
         if (data.type === "MOVE_MADE") {
@@ -569,7 +603,8 @@ export default function P2PLobby() {
 
         // ----------------------------------------------------
         // GAME_FINISHED
-        // Resultado autoritativo enviado por main.py.
+        // Cubre empate (devuelve apuesta, sin comisión),
+        // victoria normal y victoria por abandono del rival.
         // ----------------------------------------------------
 
         if (data.type === "GAME_FINISHED") {
@@ -586,34 +621,38 @@ export default function P2PLobby() {
 
           processedFinishRoomsRef.current.add(roomId);
 
+          const settledBet = Number(data.bet ?? effectiveBet);
+
           if (data.result === "draw") {
             setWinner("DRAW");
             setStatus("EMPATE");
             setWinnerPrize(0);
+
+            await devolverApuestaEmpate(roomId, settledBet, walletType);
           } else {
             const currentUserId = userIdRef.current;
             const isWinner = String(data.winner_id) === String(currentUserId);
+            const isForfeitWin =
+              isWinner &&
+              (data.reason === "forfeit" || data.reason === "opponent_left");
 
             if (isWinner) {
               setWinner(symbolRef.current || "X");
-              setStatus("WIN");
+              setStatus(isForfeitWin ? "WIN (RIVAL ABANDONÓ)" : "WIN");
 
-              const totalPot = Number((betVal * 2).toFixed(2));
-
-              // Comisión del 6% por cada jugador.
+              const totalPot = Number((settledBet * 2).toFixed(2));
               const commissionPerPlayer =
-                Math.round(betVal * 0.06 * 100) / 100;
-
+                Math.round(settledBet * 0.06 * 100) / 100;
               const totalCommission = Number(
                 (commissionPerPlayer * 2).toFixed(2)
               );
-
-              // Premio neto después de descontar ambas comisiones.
               const netPrize = Number(
                 (totalPot - totalCommission).toFixed(2)
               );
 
               setWinnerPrize(netPrize);
+
+              await registrarComision(roomId, settledBet);
 
               const payoutKey = `${roomId}:${currentUserId}`;
 
@@ -651,7 +690,11 @@ export default function P2PLobby() {
               }
             } else {
               setWinner("OPPONENT");
-              setStatus("GAME OVER");
+              setStatus(
+                data.reason === "forfeit" || data.reason === "player_left"
+                  ? "ABANDONASTE LA SALA"
+                  : "GAME OVER"
+              );
             }
           }
 
@@ -670,9 +713,14 @@ export default function P2PLobby() {
 
         // ----------------------------------------------------
         // ROOM_CLOSED_BY_HOST
+        // Si nadie más había entrado aún, devuelve la apuesta.
         // ----------------------------------------------------
 
         if (data.type === "ROOM_CLOSED_BY_HOST") {
+          if (!isHost && effectiveBet > 0) {
+            await devolverApuestaEmpate(roomId, effectiveBet, walletType);
+          }
+
           showAlert(
             "Sala Cerrada",
             "El creador de la sala ha cancelado la partida."
@@ -750,7 +798,9 @@ export default function P2PLobby() {
   };
 
   // ==========================================================
-  // SALIR DE LA PARTIDA
+  // SALIR / ABANDONAR SALA
+  // Si abandona una partida en curso, notifica LEAVE_GAME para
+  // perder lo apostado y que el rival gane.
   // ==========================================================
 
   const leaveGame = async (notifyServer = true) => {
@@ -767,36 +817,43 @@ export default function P2PLobby() {
 
     const ws = gameSocketRef.current;
 
-    if (ws) {
-      if (
-        notifyServer &&
-        isHost &&
-        ws.readyState === WebSocket.OPEN
-      ) {
-        try {
+    if (ws && ws.readyState === WebSocket.OPEN && notifyServer) {
+      try {
+        const gameAlreadyStarted = !status.includes("Esperando");
+
+        if (isHost && !gameAlreadyStarted) {
           ws.send(JSON.stringify({ type: "CLOSE_ROOM" }));
-        } catch (error) {
-          console.error("ERROR CERRANDO SALA:", error);
+        } else if (!winner) {
+          ws.send(
+            JSON.stringify({
+              type: "LEAVE_GAME",
+              user_id: userIdRef.current,
+            })
+          );
         }
+      } catch (error) {
+        console.error("ERROR NOTIFICANDO SALIDA DE SALA:", error);
       }
+    }
 
-      gameSocketRef.current = null;
+    gameSocketRef.current = null;
 
-      if (
-        ws.readyState === WebSocket.OPEN ||
-        ws.readyState === WebSocket.CONNECTING
-      ) {
-        try {
-          ws.close();
-        } catch {
-          // La conexión ya puede estar cerrada.
-        }
+    if (
+      ws &&
+      (ws.readyState === WebSocket.OPEN ||
+        ws.readyState === WebSocket.CONNECTING)
+    ) {
+      try {
+        ws.close();
+      } catch {
+        // La conexión ya puede estar cerrada.
       }
     }
 
     setActiveRoomId(null);
     setWinner(null);
     setWinnerPrize(0);
+    setRefundedAmount(0);
     setSymbol(null);
     symbolRef.current = null;
     setIsHost(false);
@@ -875,8 +932,6 @@ export default function P2PLobby() {
     try {
       const walletParam = selectedWallet === "bonus" ? "bonus" : "play";
 
-      // El backend que compartiste espera que el cliente descuente
-      // la apuesta antes de enviar CREATE_ROOM.
       const { error: rpcError } = await supabase.rpc(
         "deduct_bet_balance",
         {
@@ -942,7 +997,7 @@ export default function P2PLobby() {
       symbol !== turn ||
       winner ||
       status.includes("Esperando") ||
-      status === "WIN" ||
+      status.startsWith("WIN") ||
       status === "GAME OVER" ||
       !ws ||
       ws.readyState !== WebSocket.OPEN
@@ -1173,7 +1228,7 @@ export default function P2PLobby() {
                       />
 
                       <p className="text-[10px] text-zinc-500 mt-1">
-                        Comisión del 6% incluida en cada apuesta.
+                        Comisión del 6% solo al ganar. En empate se devuelve tu apuesta.
                       </p>
                     </div>
 
@@ -1363,9 +1418,9 @@ export default function P2PLobby() {
               <p
                 className={`text-sm mb-5 font-black uppercase tracking-wider transition-all ${status === "EMPATE"
                     ? "text-yellow-400"
-                    : status === "WIN"
+                    : status.startsWith("WIN")
                       ? "text-emerald-400 text-base animate-pulse"
-                      : status === "GAME OVER"
+                      : status === "GAME OVER" || status === "ABANDONASTE LA SALA"
                         ? "text-red-500"
                         : "text-zinc-300"
                   }`}
@@ -1373,7 +1428,7 @@ export default function P2PLobby() {
                 {status}
               </p>
 
-              {status === "WIN" && (
+              {status.startsWith("WIN") && (
                 <div className="mb-5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4">
                   <p className="text-xs font-bold uppercase tracking-widest text-emerald-400">
                     ¡Has ganado la partida!
@@ -1393,6 +1448,9 @@ export default function P2PLobby() {
                 <div className="mb-5 rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4">
                   <p className="text-xs font-bold uppercase tracking-widest text-yellow-400">
                     La partida terminó en empate
+                  </p>
+                  <p className="mt-1 text-xs text-zinc-300">
+                    Apuesta devuelta: +${(refundedAmount || gameBet).toFixed(2)} (sin comisión)
                   </p>
                 </div>
               )}
