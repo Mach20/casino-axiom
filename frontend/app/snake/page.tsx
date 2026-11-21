@@ -112,7 +112,6 @@ function drawSnakeVisual(
         bodyStyle: BodyStyle;
         eyes: EyeStyle;
         accessory: AccessoryStyle;
-        customText?: string;
         baseHeadRadius?: number;
         baseBodyRadius?: number;
         scale?: number;
@@ -128,7 +127,6 @@ function drawSnakeVisual(
         bodyStyle,
         eyes,
         accessory,
-        customText = "",
         baseHeadRadius = 12,
         baseBodyRadius = 9,
         scale = 1,
@@ -211,30 +209,6 @@ function drawSnakeVisual(
         );
         ctx.fillStyle = "rgba(255,255,255,0.28)";
         ctx.fill();
-        ctx.restore();
-    }
-
-    const cleanLabel = customText.trim();
-    if (cleanLabel.length > 0 && body.length > 2) {
-        const chars = Array.from(cleanLabel.slice(0, 14));
-        const maxSteps = Math.min(chars.length, body.length - 1);
-        ctx.save();
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        for (let idx = 0; idx < maxSteps; idx++) {
-            const seg = body[idx + 1];
-            const segRadius = Math.max(
-                6,
-                Number(seg.radius ?? baseBodyRadius)
-            );
-            const fontPx = Math.max(8, Math.min(13, segRadius * 1.15));
-            ctx.font = `900 ${fontPx}px Arial`;
-            ctx.lineWidth = 2.6 / scale;
-            ctx.strokeStyle = "rgba(0,0,0,0.85)";
-            ctx.strokeText(chars[idx], seg.x, seg.y);
-            ctx.fillStyle = "#ffffff";
-            ctx.fillText(chars[idx], seg.x, seg.y);
-        }
         ctx.restore();
     }
 
@@ -390,7 +364,6 @@ function SnakeStudioPreview({
     bodyStyle,
     eyes,
     accessory,
-    customText,
     presetName,
 }: {
     primaryColor: string;
@@ -399,7 +372,6 @@ function SnakeStudioPreview({
     bodyStyle: BodyStyle;
     eyes: EyeStyle;
     accessory: AccessoryStyle;
-    customText: string;
     presetName: string;
 }) {
     const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -441,17 +413,17 @@ function SnakeStudioPreview({
             }
 
             const centerY = cssHeight * 0.56;
-            const startX = Math.min(cssWidth - 48, cssWidth * 0.78);
+            const startX = Math.min(cssWidth - 48, cssWidth * 0.76);
             const segments: { x: number; y: number }[] = [];
 
-            for (let i = 0; i < 16; i++) {
-                const x = startX - i * 16;
-                const wave = Math.sin(time * 0.0045 - i * 0.45) * 9;
+            for (let i = 0; i < 14; i++) {
+                const x = startX - i * 15;
+                const wave = Math.sin(time * 0.0045 - i * 0.5) * 10;
                 segments.push({ x, y: centerY + wave });
             }
 
             const head = segments[0];
-            const next = segments[1] || { x: head.x - 16, y: head.y };
+            const next = segments[1] || { x: head.x - 15, y: head.y };
             const angle = Math.atan2(head.y - next.y, head.x - next.x);
 
             drawSnakeVisual(ctx, {
@@ -463,9 +435,8 @@ function SnakeStudioPreview({
                 bodyStyle,
                 eyes,
                 accessory,
-                customText,
                 baseHeadRadius: 12.5,
-                baseBodyRadius: 10,
+                baseBodyRadius: 9.5,
                 scale: 1,
                 time,
             });
@@ -482,7 +453,6 @@ function SnakeStudioPreview({
         bodyStyle,
         eyes,
         accessory,
-        customText,
     ]);
 
     return (
@@ -520,14 +490,12 @@ export default function SnakeGamePage() {
     const [snakeEyes, setSnakeEyes] = useState<EyeStyle>("classic");
     const [snakeAccessory, setSnakeAccessory] =
         useState<AccessoryStyle>("none");
-    const [snakeText, setSnakeText] = useState("");
 
     const customColorRef = useRef("#10b981");
     const secondaryColorRef = useRef("#047857");
     const bodyStyleRef = useRef<BodyStyle>("connected");
     const snakeEyesRef = useRef<EyeStyle>("classic");
     const snakeAccessoryRef = useRef<AccessoryStyle>("none");
-    const snakeTextRef = useRef("");
 
     const [selectedBet, setSelectedBet] = useState<SnakeBet>("0.20");
     const selectedBetRef = useRef<number>(0.2);
@@ -1096,9 +1064,6 @@ export default function SnakeGamePage() {
                 accessory: isOwnSnake
                     ? snakeAccessoryRef.current
                     : value.accessory || "none",
-                customText: isOwnSnake
-                    ? snakeTextRef.current
-                    : value.label || value.text || "",
                 baseHeadRadius: headRadius,
                 baseBodyRadius: bodyRadius,
                 scale,
@@ -1318,8 +1283,7 @@ export default function SnakeGamePage() {
                 `&secondary_color=${encodeURIComponent(secondaryColorRef.current)}` +
                 `&body_style=${encodeURIComponent(bodyStyleRef.current)}` +
                 `&eyes=${encodeURIComponent(snakeEyesRef.current)}` +
-                `&accessory=${encodeURIComponent(snakeAccessoryRef.current)}` +
-                `&label=${encodeURIComponent(snakeTextRef.current.trim())}`
+                `&accessory=${encodeURIComponent(snakeAccessoryRef.current)}`
         );
 
         let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -1742,24 +1706,6 @@ export default function SnakeGamePage() {
                                 </div>
 
                                 <div>
-                                    <label className="text-[10px] text-zinc-400 block mb-1 uppercase font-bold">
-                                        Texto sobre el cuerpo
-                                    </label>
-                                    <input
-                                        type="text"
-                                        maxLength={14}
-                                        value={snakeText}
-                                        onChange={(e) => {
-                                            setSelectedPresetId("custom");
-                                            snakeTextRef.current = e.target.value;
-                                            setSnakeText(e.target.value);
-                                        }}
-                                        placeholder="Escribe tu texto (ej. AXIOM)"
-                                        className="w-full bg-black border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-emerald-500"
-                                    />
-                                </div>
-
-                                <div>
                                     <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">
                                         Estilos
                                     </label>
@@ -1931,7 +1877,6 @@ export default function SnakeGamePage() {
                                     bodyStyle={bodyStyle}
                                     eyes={snakeEyes}
                                     accessory={snakeAccessory}
-                                    customText={snakeText}
                                     presetName={
                                         activePreset
                                             ? activePreset.name
@@ -2172,7 +2117,7 @@ export default function SnakeGamePage() {
 
             {!isInSnakeGame && (
                 <footer className="py-6 text-center text-[10px] text-zinc-600 font-bold uppercase tracking-widest">
-                    AXIOM SNAKE IO ARENA
+                    AXIOM Arena &copy; 2026. Todos los derechos reservados.
                 </footer>
             )}
         </div>
