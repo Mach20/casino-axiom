@@ -1005,7 +1005,6 @@ export default function SnakeGamePage() {
         ctx.lineWidth = 1;
         ctx.strokeRect(0.5, 0.5, cssW - 1, cssH - 1);
 
-        // Cuadrante central del minimapa
         ctx.strokeStyle = "rgba(52, 211, 153, 0.08)";
         ctx.beginPath();
         ctx.moveTo(cssW / 2, 0);
@@ -1880,6 +1879,194 @@ export default function SnakeGamePage() {
                 </div>
             )}
 
+            {!isInSnakeGame && isCustomizerOpen && (
+                <div
+                    className="fixed inset-0 bg-black/80 backdrop-blur-md z-[90] flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+                    onClick={() => setIsCustomizerOpen(false)}
+                >
+                    <div
+                        className="bg-zinc-950 border border-zinc-800 w-full max-w-md rounded-3xl p-4 sm:p-5 space-y-4 shadow-2xl my-auto"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center justify-between gap-2 border-b border-zinc-900 pb-3">
+                            <div>
+                                <h3 className="text-xs sm:text-sm font-black uppercase tracking-wider text-emerald-400">
+                                    Diseño de Serpiente
+                                </h3>
+                                <span className="text-[10px] font-mono text-zinc-400">
+                                    {customColor}
+                                </span>
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={() => setIsCustomizerOpen(false)}
+                                className="px-3 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-black text-zinc-300 hover:text-white transition-colors"
+                            >
+                                Listo
+                            </button>
+                        </div>
+
+                        <div>
+                            <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">
+                                Estilos
+                            </label>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                {SKIN_PRESETS.map((preset) => {
+                                    const active =
+                                        selectedPresetId === preset.id;
+                                    return (
+                                        <button
+                                            key={preset.id}
+                                            type="button"
+                                            onClick={() => applyPreset(preset)}
+                                            className={`flex items-center gap-2 p-2.5 rounded-xl border text-left transition-all ${
+                                                active
+                                                    ? "bg-zinc-900 border-emerald-400 text-white"
+                                                    : "bg-black/80 border-zinc-800 text-zinc-400 hover:text-white"
+                                            }`}
+                                        >
+                                            <span
+                                                className="w-3.5 h-3.5 rounded-full shrink-0 border border-white/20"
+                                                style={{
+                                                    background: `linear-gradient(135deg, ${preset.primary}, ${preset.secondary})`,
+                                                }}
+                                            />
+                                            <span className="text-[11px] font-bold truncate">
+                                                {preset.name}
+                                            </span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2.5">
+                            <div className="flex items-center justify-between bg-black border border-zinc-800 px-3 py-2 rounded-xl">
+                                <div className="min-w-0">
+                                    <span className="text-[9px] text-zinc-400 uppercase font-bold block">
+                                        Primario
+                                    </span>
+                                    <span className="text-[10px] font-mono text-emerald-400 truncate block">
+                                        {customColor}
+                                    </span>
+                                </div>
+                                <input
+                                    type="color"
+                                    value={customColor}
+                                    onChange={(e) => {
+                                        setSelectedPresetId("custom");
+                                        customColorRef.current = e.target.value;
+                                        setCustomColor(e.target.value);
+                                    }}
+                                    className="w-8 h-8 rounded-lg bg-transparent cursor-pointer border-0 shrink-0"
+                                />
+                            </div>
+
+                            <div className="flex items-center justify-between bg-black border border-zinc-800 px-3 py-2 rounded-xl">
+                                <div className="min-w-0">
+                                    <span className="text-[9px] text-zinc-400 uppercase font-bold block">
+                                        Secundario
+                                    </span>
+                                    <span className="text-[10px] font-mono text-zinc-300 truncate block">
+                                        {secondaryColor}
+                                    </span>
+                                </div>
+                                <input
+                                    type="color"
+                                    value={secondaryColor}
+                                    onChange={(e) => {
+                                        setSelectedPresetId("custom");
+                                        secondaryColorRef.current =
+                                            e.target.value;
+                                        setSecondaryColor(e.target.value);
+                                    }}
+                                    className="w-8 h-8 rounded-lg bg-transparent cursor-pointer border-0 shrink-0"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2">
+                            <div>
+                                <label className="text-[10px] text-zinc-400 block mb-1 uppercase font-bold">
+                                    Cuerpo
+                                </label>
+                                <select
+                                    value={bodyStyle}
+                                    onChange={(e) => {
+                                        setSelectedPresetId("custom");
+                                        const val = e.target.value as BodyStyle;
+                                        bodyStyleRef.current = val;
+                                        setBodyStyle(val);
+                                    }}
+                                    className="w-full bg-black border border-zinc-800 rounded-xl px-2.5 py-2 text-xs text-zinc-200 outline-none focus:border-emerald-500"
+                                >
+                                    <option value="connected">Continuo</option>
+                                    <option value="scales">Escamas</option>
+                                    <option value="pulse">Pulso</option>
+                                    <option value="trail">Estela</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="text-[10px] text-zinc-400 block mb-1 uppercase font-bold">
+                                    Ojos
+                                </label>
+                                <select
+                                    value={snakeEyes}
+                                    onChange={(e) => {
+                                        setSelectedPresetId("custom");
+                                        const val = e.target.value as EyeStyle;
+                                        snakeEyesRef.current = val;
+                                        setSnakeEyes(val);
+                                    }}
+                                    className="w-full bg-black border border-zinc-800 rounded-xl px-2.5 py-2 text-xs text-zinc-200 outline-none focus:border-emerald-500"
+                                >
+                                    <option value="classic">Clásicos</option>
+                                    <option value="laser">Láser</option>
+                                    <option value="sleepy">Dormidos</option>
+                                    <option value="angry">Enfadados</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="text-[10px] text-zinc-400 block mb-1 uppercase font-bold">
+                                    Accesorio
+                                </label>
+                                <select
+                                    value={snakeAccessory}
+                                    onChange={(e) => {
+                                        setSelectedPresetId("custom");
+                                        const val = e.target
+                                            .value as AccessoryStyle;
+                                        snakeAccessoryRef.current = val;
+                                        setSnakeAccessory(val);
+                                    }}
+                                    className="w-full bg-black border border-zinc-800 rounded-xl px-2.5 py-2 text-xs text-zinc-200 outline-none focus:border-emerald-500"
+                                >
+                                    <option value="none">Ninguno</option>
+                                    <option value="crown">Corona</option>
+                                    <option value="bandana">Bandana</option>
+                                    <option value="halo">Aureola</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <SnakeStudioPreview
+                            primaryColor={customColor}
+                            secondaryColor={secondaryColor}
+                            glowColor={customColor}
+                            bodyStyle={bodyStyle}
+                            eyes={snakeEyes}
+                            accessory={snakeAccessory}
+                            presetName={
+                                activePreset ? activePreset.name : "Personalizado"
+                            }
+                        />
+                    </div>
+                </div>
+            )}
+
             <Header />
 
             <main className="flex-1 max-w-4xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-8 flex flex-col items-center justify-center">
@@ -1896,24 +2083,14 @@ export default function SnakeGamePage() {
 
                             <button
                                 type="button"
-                                onClick={() =>
-                                    setIsCustomizerOpen((prev) => !prev)
-                                }
-                                className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black uppercase border transition-all ${
-                                    isCustomizerOpen
-                                        ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
-                                        : "bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border-zinc-700"
-                                }`}
+                                onClick={() => setIsCustomizerOpen(true)}
+                                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-700 text-xs font-black uppercase transition-all"
                             >
                                 <span
                                     className="w-3 h-3 rounded-full border border-white/30"
                                     style={{ backgroundColor: customColor }}
                                 />
-                                <span>
-                                    {isCustomizerOpen
-                                        ? "Ocultar Serpiente"
-                                        : "Modificar Serpiente"}
-                                </span>
+                                <span>Modificar Serpiente</span>
                             </button>
                         </div>
 
@@ -1925,198 +2102,6 @@ export default function SnakeGamePage() {
                                 Elige tu billetera, sala y entra a jugar.
                             </p>
                         </div>
-
-                        {isCustomizerOpen && (
-                            <div className="bg-zinc-900/45 border border-zinc-800 rounded-2xl p-3.5 sm:p-4 space-y-4">
-                                <div className="flex items-center justify-between">
-                                    <h3 className="text-xs font-black uppercase tracking-wider text-zinc-200">
-                                        Diseño de Serpiente
-                                    </h3>
-                                    <span className="text-[10px] font-mono text-zinc-400">
-                                        {customColor}
-                                    </span>
-                                </div>
-
-                                <div>
-                                    <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">
-                                        Estilos
-                                    </label>
-                                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                                        {SKIN_PRESETS.map((preset) => {
-                                            const active =
-                                                selectedPresetId === preset.id;
-                                            return (
-                                                <button
-                                                    key={preset.id}
-                                                    type="button"
-                                                    onClick={() =>
-                                                        applyPreset(preset)
-                                                    }
-                                                    className={`flex items-center gap-2 p-2.5 rounded-xl border text-left transition-all ${
-                                                        active
-                                                            ? "bg-zinc-900 border-emerald-400 text-white"
-                                                            : "bg-black/80 border-zinc-800 text-zinc-400 hover:text-white"
-                                                    }`}
-                                                >
-                                                    <span
-                                                        className="w-3.5 h-3.5 rounded-full shrink-0 border border-white/20"
-                                                        style={{
-                                                            background: `linear-gradient(135deg, ${preset.primary}, ${preset.secondary})`,
-                                                        }}
-                                                    />
-                                                    <span className="text-[11px] font-bold truncate">
-                                                        {preset.name}
-                                                    </span>
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-2.5">
-                                    <div className="flex items-center justify-between bg-black border border-zinc-800 px-3 py-2 rounded-xl">
-                                        <div className="min-w-0">
-                                            <span className="text-[9px] text-zinc-400 uppercase font-bold block">
-                                                Primario
-                                            </span>
-                                            <span className="text-[10px] font-mono text-emerald-400 truncate block">
-                                                {customColor}
-                                            </span>
-                                        </div>
-                                        <input
-                                            type="color"
-                                            value={customColor}
-                                            onChange={(e) => {
-                                                setSelectedPresetId("custom");
-                                                customColorRef.current =
-                                                    e.target.value;
-                                                setCustomColor(e.target.value);
-                                            }}
-                                            className="w-8 h-8 rounded-lg bg-transparent cursor-pointer border-0 shrink-0"
-                                        />
-                                    </div>
-
-                                    <div className="flex items-center justify-between bg-black border border-zinc-800 px-3 py-2 rounded-xl">
-                                        <div className="min-w-0">
-                                            <span className="text-[9px] text-zinc-400 uppercase font-bold block">
-                                                Secundario
-                                            </span>
-                                            <span className="text-[10px] font-mono text-zinc-300 truncate block">
-                                                {secondaryColor}
-                                            </span>
-                                        </div>
-                                        <input
-                                            type="color"
-                                            value={secondaryColor}
-                                            onChange={(e) => {
-                                                setSelectedPresetId("custom");
-                                                secondaryColorRef.current =
-                                                    e.target.value;
-                                                setSecondaryColor(
-                                                    e.target.value
-                                                );
-                                            }}
-                                            className="w-8 h-8 rounded-lg bg-transparent cursor-pointer border-0 shrink-0"
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="grid grid-cols-3 gap-2">
-                                    <div>
-                                        <label className="text-[10px] text-zinc-400 block mb-1 uppercase font-bold">
-                                            Cuerpo
-                                        </label>
-                                        <select
-                                            value={bodyStyle}
-                                            onChange={(e) => {
-                                                setSelectedPresetId("custom");
-                                                const val = e.target
-                                                    .value as BodyStyle;
-                                                bodyStyleRef.current = val;
-                                                setBodyStyle(val);
-                                            }}
-                                            className="w-full bg-black border border-zinc-800 rounded-xl px-2.5 py-2 text-xs text-zinc-200 outline-none focus:border-emerald-500"
-                                        >
-                                            <option value="connected">
-                                                Continuo
-                                            </option>
-                                            <option value="scales">
-                                                Escamas
-                                            </option>
-                                            <option value="pulse">Pulso</option>
-                                            <option value="trail">Estela</option>
-                                        </select>
-                                    </div>
-
-                                    <div>
-                                        <label className="text-[10px] text-zinc-400 block mb-1 uppercase font-bold">
-                                            Ojos
-                                        </label>
-                                        <select
-                                            value={snakeEyes}
-                                            onChange={(e) => {
-                                                setSelectedPresetId("custom");
-                                                const val = e.target
-                                                    .value as EyeStyle;
-                                                snakeEyesRef.current = val;
-                                                setSnakeEyes(val);
-                                            }}
-                                            className="w-full bg-black border border-zinc-800 rounded-xl px-2.5 py-2 text-xs text-zinc-200 outline-none focus:border-emerald-500"
-                                        >
-                                            <option value="classic">
-                                                Clásicos
-                                            </option>
-                                            <option value="laser">Láser</option>
-                                            <option value="sleepy">
-                                                Dormidos
-                                            </option>
-                                            <option value="angry">
-                                                Enfadados
-                                            </option>
-                                        </select>
-                                    </div>
-
-                                    <div>
-                                        <label className="text-[10px] text-zinc-400 block mb-1 uppercase font-bold">
-                                            Accesorio
-                                        </label>
-                                        <select
-                                            value={snakeAccessory}
-                                            onChange={(e) => {
-                                                setSelectedPresetId("custom");
-                                                const val = e.target
-                                                    .value as AccessoryStyle;
-                                                snakeAccessoryRef.current =
-                                                    val;
-                                                setSnakeAccessory(val);
-                                            }}
-                                            className="w-full bg-black border border-zinc-800 rounded-xl px-2.5 py-2 text-xs text-zinc-200 outline-none focus:border-emerald-500"
-                                        >
-                                            <option value="none">Ninguno</option>
-                                            <option value="crown">Corona</option>
-                                            <option value="bandana">
-                                                Bandana
-                                            </option>
-                                            <option value="halo">Aureola</option>
-                                        </select>
-                                    </div>
-                                </div>
-
-                                <SnakeStudioPreview
-                                    primaryColor={customColor}
-                                    secondaryColor={secondaryColor}
-                                    glowColor={customColor}
-                                    bodyStyle={bodyStyle}
-                                    eyes={snakeEyes}
-                                    accessory={snakeAccessory}
-                                    presetName={
-                                        activePreset
-                                            ? activePreset.name
-                                            : "Personalizado"
-                                    }
-                                />
-                            </div>
-                        )}
 
                         <div className="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-4 space-y-5">
                             <div>
