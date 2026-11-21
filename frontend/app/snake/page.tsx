@@ -31,7 +31,7 @@ interface SkinPreset {
 const SKIN_PRESETS: SkinPreset[] = [
     {
         id: "emerald",
-        name: "Esmeralda Pro",
+        name: "Esmeralda",
         primary: "#10b981",
         secondary: "#047857",
         glow: "#34d399",
@@ -43,7 +43,7 @@ const SKIN_PRESETS: SkinPreset[] = [
         id: "cyber",
         name: "Ciber Neón",
         primary: "#06b6d4",
-        secondary: "#6366f1",
+        secondary: "#4f46e5",
         glow: "#22d3ee",
         bodyStyle: "pulse",
         eyes: "laser",
@@ -53,7 +53,7 @@ const SKIN_PRESETS: SkinPreset[] = [
         id: "magma",
         name: "Magma",
         primary: "#f97316",
-        secondary: "#dc2626",
+        secondary: "#b91c1c",
         glow: "#fb923c",
         bodyStyle: "scales",
         eyes: "angry",
@@ -73,7 +73,7 @@ const SKIN_PRESETS: SkinPreset[] = [
         id: "phantom",
         name: "Fantasma",
         primary: "#a855f7",
-        secondary: "#4c1d95",
+        secondary: "#581c87",
         glow: "#c084fc",
         bodyStyle: "trail",
         eyes: "sleepy",
@@ -121,6 +121,7 @@ function drawSnakeVisual(
         baseHeadRadius?: number;
         baseBodyRadius?: number;
         scale?: number;
+        time?: number;
     }
 ) {
     const {
@@ -135,6 +136,7 @@ function drawSnakeVisual(
         baseHeadRadius = 12,
         baseBodyRadius = 9,
         scale = 1,
+        time = 0,
     } = options;
 
     if (!Array.isArray(body) || body.length === 0) return;
@@ -147,8 +149,8 @@ function drawSnakeVisual(
             ctx.lineTo(body[i].x, body[i].y);
         }
         ctx.strokeStyle = glowColor;
-        ctx.globalAlpha = 0.25;
-        ctx.lineWidth = Math.max(6, baseBodyRadius * 1.4);
+        ctx.globalAlpha = 0.22;
+        ctx.lineWidth = Math.max(8, baseBodyRadius * 1.7);
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
         ctx.stroke();
@@ -163,7 +165,7 @@ function drawSnakeVisual(
             ctx.lineTo(body[i].x, body[i].y);
         }
         ctx.strokeStyle = secondaryColor;
-        ctx.lineWidth = Math.max(8, baseBodyRadius * 1.85);
+        ctx.lineWidth = Math.max(9, baseBodyRadius * 1.85);
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
         ctx.stroke();
@@ -172,31 +174,34 @@ function drawSnakeVisual(
 
     for (let i = body.length - 1; i >= 1; i--) {
         const seg = body[i];
-        const taper = Math.max(0.55, 1 - (i / Math.max(body.length, 10)) * 0.35);
+        const ratio = i / Math.max(body.length, 1);
+        const taper = Math.max(0.45, 1 - ratio * 0.45);
         const radius = Math.max(
-            4,
+            4.5,
             Number(seg.radius ?? baseBodyRadius) * taper
         );
-        const isAlternate = i % 2 === 0;
-        const fill = isAlternate ? primaryColor : secondaryColor;
+        const fill = i % 2 === 0 ? primaryColor : secondaryColor;
 
         ctx.save();
         ctx.beginPath();
         ctx.arc(seg.x, seg.y, radius, 0, Math.PI * 2);
         ctx.fillStyle = fill;
         ctx.shadowColor = glowColor;
-        ctx.shadowBlur = (bodyStyle === "pulse" ? 12 : 5) / scale;
+        ctx.shadowBlur = (bodyStyle === "pulse" ? 11 : 4) / scale;
         ctx.fill();
+        ctx.shadowBlur = 0;
 
         if (bodyStyle === "scales") {
-            ctx.strokeStyle = "rgba(255,255,255,0.28)";
-            ctx.lineWidth = 1.5 / scale;
-            ctx.stroke();
-        } else if (bodyStyle === "pulse" && i % 3 === 0) {
-            ctx.strokeStyle = "#ffffff";
-            ctx.lineWidth = 1.5 / scale;
+            ctx.strokeStyle = "rgba(255,255,255,0.22)";
+            ctx.lineWidth = 1.3 / scale;
             ctx.beginPath();
-            ctx.arc(seg.x, seg.y, radius * 0.62, 0, Math.PI * 2);
+            ctx.arc(seg.x, seg.y, radius * 0.72, -Math.PI * 0.65, Math.PI * 0.65);
+            ctx.stroke();
+        } else if (bodyStyle === "pulse" && i % 2 === 0) {
+            ctx.strokeStyle = "rgba(255,255,255,0.75)";
+            ctx.lineWidth = 1.4 / scale;
+            ctx.beginPath();
+            ctx.arc(seg.x, seg.y, radius * 0.52, 0, Math.PI * 2);
             ctx.stroke();
         }
 
@@ -204,40 +209,65 @@ function drawSnakeVisual(
         ctx.arc(
             seg.x - radius * 0.25,
             seg.y - radius * 0.25,
-            Math.max(1.5, radius * 0.22),
+            Math.max(1.5, radius * 0.2),
             0,
             Math.PI * 2
         );
-        ctx.fillStyle = "rgba(255,255,255,0.32)";
+        ctx.fillStyle = "rgba(255,255,255,0.28)";
         ctx.fill();
         ctx.restore();
     }
 
     const head = body[0];
-    const headRadius = Math.max(9, Number(head.radius ?? baseHeadRadius));
+    const headRadius = Math.max(10, Number(head.radius ?? baseHeadRadius));
 
     ctx.save();
     ctx.translate(head.x, head.y);
     ctx.rotate(angle);
 
+    const tongueFlick = Math.sin(time * 0.014);
+    if (tongueFlick > 0.25) {
+        const tongueLen = headRadius * (0.55 + tongueFlick * 0.25);
+        ctx.save();
+        ctx.strokeStyle = "#fb7185";
+        ctx.lineWidth = Math.max(1.6, headRadius * 0.13) / scale;
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(headRadius * 0.85, 0);
+        ctx.lineTo(headRadius * 0.85 + tongueLen, 0);
+        ctx.lineTo(headRadius * 0.85 + tongueLen + 4, -3.5);
+        ctx.moveTo(headRadius * 0.85 + tongueLen, 0);
+        ctx.lineTo(headRadius * 0.85 + tongueLen + 4, 3.5);
+        ctx.stroke();
+        ctx.restore();
+    }
+
     ctx.beginPath();
-    ctx.arc(0, 0, headRadius, 0, Math.PI * 2);
+    ctx.ellipse(
+        headRadius * 0.08,
+        0,
+        headRadius * 1.16,
+        headRadius * 0.98,
+        0,
+        0,
+        Math.PI * 2
+    );
     ctx.fillStyle = primaryColor;
     ctx.shadowColor = glowColor;
     ctx.shadowBlur = 14 / scale;
     ctx.fill();
     ctx.shadowBlur = 0;
 
-    ctx.strokeStyle = "rgba(255,255,255,0.35)";
-    ctx.lineWidth = 1.5 / scale;
+    ctx.strokeStyle = "rgba(255,255,255,0.25)";
+    ctx.lineWidth = 1.4 / scale;
     ctx.stroke();
 
-    const eyeOffsetX = headRadius * 0.36;
-    const eyeOffsetY = headRadius * 0.42;
+    const eyeOffsetX = headRadius * 0.34;
+    const eyeOffsetY = headRadius * 0.48;
 
     if (eyes === "sleepy") {
         ctx.strokeStyle = "#09090b";
-        ctx.lineWidth = 2.5 / scale;
+        ctx.lineWidth = 2.4 / scale;
         ctx.lineCap = "round";
         ctx.beginPath();
         ctx.moveTo(eyeOffsetX - 3, -eyeOffsetY);
@@ -246,7 +276,7 @@ function drawSnakeVisual(
         ctx.lineTo(eyeOffsetX + 3, eyeOffsetY);
         ctx.stroke();
     } else {
-        const eyeRadius = Math.max(2.6, headRadius * 0.24);
+        const eyeRadius = Math.max(3, headRadius * 0.26);
         ctx.fillStyle = "#ffffff";
         ctx.beginPath();
         ctx.arc(eyeOffsetX, -eyeOffsetY, eyeRadius, 0, Math.PI * 2);
@@ -258,14 +288,14 @@ function drawSnakeVisual(
         ctx.arc(
             eyeOffsetX + eyeRadius * 0.35,
             -eyeOffsetY,
-            eyeRadius * 0.55,
+            eyeRadius * 0.56,
             0,
             Math.PI * 2
         );
         ctx.arc(
             eyeOffsetX + eyeRadius * 0.35,
             eyeOffsetY,
-            eyeRadius * 0.55,
+            eyeRadius * 0.56,
             0,
             Math.PI * 2
         );
@@ -274,11 +304,12 @@ function drawSnakeVisual(
         if (eyes === "angry") {
             ctx.strokeStyle = "#09090b";
             ctx.lineWidth = 2.2 / scale;
+            ctx.lineCap = "round";
             ctx.beginPath();
-            ctx.moveTo(eyeOffsetX - 3, -eyeOffsetY - 4);
-            ctx.lineTo(eyeOffsetX + 3, -eyeOffsetY - 1);
-            ctx.moveTo(eyeOffsetX - 3, eyeOffsetY + 4);
-            ctx.lineTo(eyeOffsetX + 3, eyeOffsetY + 1);
+            ctx.moveTo(eyeOffsetX - 3.5, -eyeOffsetY - 4);
+            ctx.lineTo(eyeOffsetX + 3.5, -eyeOffsetY - 1);
+            ctx.moveTo(eyeOffsetX - 3.5, eyeOffsetY + 4);
+            ctx.lineTo(eyeOffsetX + 3.5, eyeOffsetY + 1);
             ctx.stroke();
         }
     }
@@ -288,21 +319,29 @@ function drawSnakeVisual(
         ctx.strokeStyle = "#ca8a04";
         ctx.lineWidth = 1.2 / scale;
         ctx.beginPath();
-        ctx.moveTo(-headRadius * 0.55, -headRadius * 0.55);
-        ctx.lineTo(-headRadius * 0.75, -headRadius * 1.35);
-        ctx.lineTo(-headRadius * 0.15, -headRadius * 0.85);
-        ctx.lineTo(headRadius * 0.1, -headRadius * 1.45);
+        ctx.moveTo(-headRadius * 0.45, -headRadius * 0.55);
+        ctx.lineTo(-headRadius * 0.7, -headRadius * 1.32);
+        ctx.lineTo(-headRadius * 0.1, -headRadius * 0.82);
+        ctx.lineTo(headRadius * 0.15, -headRadius * 1.42);
         ctx.lineTo(headRadius * 0.65, -headRadius * 0.55);
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
     } else if (accessory === "bandana") {
         ctx.fillStyle = "#f43f5e";
-        ctx.fillRect(-headRadius * 0.85, -headRadius * 0.32, headRadius * 0.55, headRadius * 0.64);
         ctx.beginPath();
-        ctx.moveTo(-headRadius * 0.85, -headRadius * 0.15);
-        ctx.lineTo(-headRadius * 1.45, -headRadius * 0.5);
-        ctx.lineTo(-headRadius * 1.35, 0);
+        ctx.roundRect(
+            -headRadius * 0.72,
+            -headRadius * 0.88,
+            headRadius * 0.48,
+            headRadius * 1.76,
+            3
+        );
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(-headRadius * 0.72, -headRadius * 0.25);
+        ctx.lineTo(-headRadius * 1.45, -headRadius * 0.65);
+        ctx.lineTo(-headRadius * 1.35, -headRadius * 0.05);
         ctx.closePath();
         ctx.fill();
     } else if (accessory === "halo") {
@@ -310,10 +349,10 @@ function drawSnakeVisual(
         ctx.lineWidth = 2.4 / scale;
         ctx.beginPath();
         ctx.ellipse(
-            -headRadius * 0.15,
-            -headRadius * 1.25,
+            -headRadius * 0.1,
+            -headRadius * 1.28,
             headRadius * 0.75,
-            headRadius * 0.26,
+            headRadius * 0.24,
             0,
             0,
             Math.PI * 2
@@ -352,7 +391,7 @@ function SnakeStudioPreview({
         let frameId = 0;
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         const cssWidth = canvas.clientWidth || 320;
-        const cssHeight = canvas.clientHeight || 136;
+        const cssHeight = canvas.clientHeight || 144;
 
         canvas.width = Math.floor(cssWidth * dpr);
         canvas.height = Math.floor(cssHeight * dpr);
@@ -380,18 +419,17 @@ function SnakeStudioPreview({
             }
 
             const centerY = cssHeight * 0.56;
-            const startX = Math.min(cssWidth - 42, cssWidth * 0.76);
+            const startX = Math.min(cssWidth - 48, cssWidth * 0.74);
             const segments: { x: number; y: number }[] = [];
 
-            for (let i = 0; i < 12; i++) {
-                const x = startX - i * 16;
-                const wave =
-                    Math.sin(time * 0.0045 - i * 0.55) * 9;
+            for (let i = 0; i < 14; i++) {
+                const x = startX - i * 15;
+                const wave = Math.sin(time * 0.0045 - i * 0.5) * 10;
                 segments.push({ x, y: centerY + wave });
             }
 
             const head = segments[0];
-            const next = segments[1] || { x: head.x - 16, y: head.y };
+            const next = segments[1] || { x: head.x - 15, y: head.y };
             const angle = Math.atan2(head.y - next.y, head.x - next.x);
 
             drawSnakeVisual(ctx, {
@@ -403,9 +441,10 @@ function SnakeStudioPreview({
                 bodyStyle,
                 eyes,
                 accessory,
-                baseHeadRadius: 12,
+                baseHeadRadius: 12.5,
                 baseBodyRadius: 9.5,
                 scale: 1,
+                time,
             });
 
             frameId = requestAnimationFrame(render);
@@ -790,7 +829,7 @@ export default function SnakeGamePage() {
         } catch {}
     };
 
-    const renderCanvas = useCallback(() => {
+    const renderCanvas = useCallback((now = 0) => {
         const canvas = canvasRef.current;
         if (!canvas) return;
 
@@ -996,7 +1035,6 @@ export default function SnakeGamePage() {
             const secondaryColor = isOwnSnake
                 ? secondaryColorRef.current
                 : value.secondary_color || "#9f1239";
-            const glowColor = primaryColor;
 
             const visibleBody = value.body.filter(
                 (seg: any) =>
@@ -1012,20 +1050,17 @@ export default function SnakeGamePage() {
 
             const head = value.body[0];
             const headRadius = Math.max(
-                9,
+                10,
                 Number(head?.radius ?? value.radius ?? 12)
             );
-            const bodyRadius = Math.max(
-                6,
-                Number(value.radius ?? 8.5)
-            );
+            const bodyRadius = Math.max(6, Number(value.radius ?? 8.5));
 
             drawSnakeVisual(ctx, {
                 body: value.body,
                 angle: Number(value.angle || 0),
                 primaryColor,
                 secondaryColor,
-                glowColor,
+                glowColor: primaryColor,
                 bodyStyle: isOwnSnake
                     ? bodyStyleRef.current
                     : value.body_style || "connected",
@@ -1038,6 +1073,7 @@ export default function SnakeGamePage() {
                 baseHeadRadius: headRadius,
                 baseBodyRadius: bodyRadius,
                 scale,
+                time: now,
             });
 
             if (head) {
@@ -1088,9 +1124,9 @@ export default function SnakeGamePage() {
 
         let running = true;
 
-        const loop = () => {
+        const loop = (now: number) => {
             if (!running) return;
-            renderCanvas();
+            renderCanvas(now);
             animationFrameRef.current = requestAnimationFrame(loop);
         };
 
@@ -1665,7 +1701,7 @@ export default function SnakeGamePage() {
                                 Snake Arena P2P
                             </h2>
                             <p className="text-xs text-zinc-400 mt-1">
-                                Configura tu serpiente, elige tu billetera y entra a la partida.
+                                Personaliza tu serpiente y elige tu sala de juego.
                             </p>
                         </div>
 
@@ -1673,7 +1709,7 @@ export default function SnakeGamePage() {
                             <div className="lg:col-span-7 bg-zinc-900/40 border border-zinc-800 rounded-2xl p-4 sm:p-5 space-y-4">
                                 <div className="flex items-center justify-between">
                                     <h3 className="text-xs font-black uppercase tracking-wider text-zinc-200">
-                                        Taller de Serpiente
+                                        Diseño de Serpiente
                                     </h3>
                                     <span className="text-[10px] font-mono text-zinc-400">
                                         {customColor}
@@ -1682,7 +1718,7 @@ export default function SnakeGamePage() {
 
                                 <div>
                                     <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">
-                                        Estilos listos
+                                        Estilos
                                     </label>
                                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                                         {SKIN_PRESETS.map((preset) => {
@@ -1720,7 +1756,7 @@ export default function SnakeGamePage() {
                                     <div className="flex items-center justify-between bg-black border border-zinc-800 px-3.5 py-2.5 rounded-xl">
                                         <div>
                                             <span className="text-[10px] text-zinc-400 uppercase font-bold block">
-                                                Color principal
+                                                Color primario
                                             </span>
                                             <span className="text-[11px] font-mono text-emerald-400">
                                                 {customColor}
@@ -1922,9 +1958,9 @@ export default function SnakeGamePage() {
 
                                 <div className="bg-black/70 border border-zinc-800/80 rounded-2xl p-3.5 space-y-1.5 text-[11px] text-zinc-400">
                                     <div className="flex justify-between">
-                                        <span>Comisión de retiro</span>
+                                        <span>Sala</span>
                                         <strong className="text-zinc-200">
-                                            6%
+                                            {SNAKE_BETS[selectedBet].room}
                                         </strong>
                                     </div>
                                     <div className="flex justify-between">
