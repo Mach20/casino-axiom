@@ -83,6 +83,7 @@ const SKIN_PRESETS: SkinPreset[] = [
 
 const WORLD_WIDTH = 20000;
 const WORLD_HEIGHT = 20000;
+const MIN_BOOST_SEGMENTS = 6;
 
 const SNAKE_BETS: Record<SnakeBet, { amount: number; room: string }> = {
     "0.20": { amount: 0.2, room: "snake_020" },
@@ -116,6 +117,7 @@ function drawSnakeVisual(
         baseBodyRadius?: number;
         scale?: number;
         time?: number;
+        isBoosting?: boolean;
     }
 ) {
     const {
@@ -131,48 +133,59 @@ function drawSnakeVisual(
         baseBodyRadius = 9,
         scale = 1,
         time = 0,
+        isBoosting = false,
     } = options;
 
     if (!Array.isArray(body) || body.length === 0) return;
 
-    if (bodyStyle === "trail" && body.length > 1) {
+    // Al acelerar se contrae visualmente el grosor y el largo de la cola
+    const shrinkRatio = isBoosting ? 0.84 : 1;
+    const renderBody =
+        isBoosting && body.length > MIN_BOOST_SEGMENTS
+            ? body.slice(0, Math.max(MIN_BOOST_SEGMENTS, Math.floor(body.length * 0.88)))
+            : body;
+
+    const effectiveBodyRadius = baseBodyRadius * shrinkRatio;
+    const effectiveHeadRadius = baseHeadRadius * (isBoosting ? 0.92 : 1);
+
+    if (bodyStyle === "trail" && renderBody.length > 1) {
         ctx.save();
         ctx.beginPath();
-        ctx.moveTo(body[0].x, body[0].y);
-        for (let i = 1; i < body.length; i++) {
-            ctx.lineTo(body[i].x, body[i].y);
+        ctx.moveTo(renderBody[0].x, renderBody[0].y);
+        for (let i = 1; i < renderBody.length; i++) {
+            ctx.lineTo(renderBody[i].x, renderBody[i].y);
         }
         ctx.strokeStyle = glowColor;
-        ctx.globalAlpha = 0.22;
-        ctx.lineWidth = Math.max(8, baseBodyRadius * 1.7);
+        ctx.globalAlpha = isBoosting ? 0.35 : 0.22;
+        ctx.lineWidth = Math.max(7, effectiveBodyRadius * 1.7);
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
         ctx.stroke();
         ctx.restore();
     }
 
-    if (bodyStyle === "connected" && body.length > 1) {
+    if (bodyStyle === "connected" && renderBody.length > 1) {
         ctx.save();
         ctx.beginPath();
-        ctx.moveTo(body[0].x, body[0].y);
-        for (let i = 1; i < body.length; i++) {
-            ctx.lineTo(body[i].x, body[i].y);
+        ctx.moveTo(renderBody[0].x, renderBody[0].y);
+        for (let i = 1; i < renderBody.length; i++) {
+            ctx.lineTo(renderBody[i].x, renderBody[i].y);
         }
         ctx.strokeStyle = secondaryColor;
-        ctx.lineWidth = Math.max(9, baseBodyRadius * 1.85);
+        ctx.lineWidth = Math.max(8, effectiveBodyRadius * 1.85);
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
         ctx.stroke();
         ctx.restore();
     }
 
-    for (let i = body.length - 1; i >= 1; i--) {
-        const seg = body[i];
-        const ratio = i / Math.max(body.length, 1);
-        const taper = Math.max(0.45, 1 - ratio * 0.45);
+    for (let i = renderBody.length - 1; i >= 1; i--) {
+        const seg = renderBody[i];
+        const ratio = i / Math.max(renderBody.length, 1);
+        const taper = Math.max(0.42, 1 - ratio * 0.48);
         const radius = Math.max(
-            4.5,
-            Number(seg.radius ?? baseBodyRadius) * taper
+            4,
+            Number(seg.radius ?? baseBodyRadius) * shrinkRatio * taper
         );
         const fill = i % 2 === 0 ? primaryColor : secondaryColor;
 
@@ -181,7 +194,7 @@ function drawSnakeVisual(
         ctx.arc(seg.x, seg.y, radius, 0, Math.PI * 2);
         ctx.fillStyle = fill;
         ctx.shadowColor = glowColor;
-        ctx.shadowBlur = (bodyStyle === "pulse" ? 11 : 4) / scale;
+        ctx.shadowBlur = (isBoosting ? 14 : bodyStyle === "pulse" ? 11 : 4) / scale;
         ctx.fill();
         ctx.shadowBlur = 0;
 
@@ -212,8 +225,11 @@ function drawSnakeVisual(
         ctx.restore();
     }
 
-    const head = body[0];
-    const headRadius = Math.max(10, Number(head.radius ?? baseHeadRadius));
+    const head = renderBody[0];
+    const headRadius = Math.max(
+        9,
+        Number(head.radius ?? baseHeadRadius) * (isBoosting ? 0.92 : 1)
+    );
 
     ctx.save();
     ctx.translate(head.x, head.y);
@@ -248,7 +264,7 @@ function drawSnakeVisual(
     );
     ctx.fillStyle = primaryColor;
     ctx.shadowColor = glowColor;
-    ctx.shadowBlur = 14 / scale;
+    ctx.shadowBlur = (isBoosting ? 18 : 14) / scale;
     ctx.fill();
     ctx.shadowBlur = 0;
 
@@ -771,6 +787,11 @@ export default function SnakeGamePage() {
 
         if (!snake?.alive || !snake?.ready) return;
 
+        // No acelerar si ya se encogió hasta el mínimo de segmentos
+        if (Array.isArray(snake.body) && snake.body.length <= MIN_BOOST_SEGMENTS) {
+            return;
+        }
+
         boostActiveRef.current = true;
 
         try {
@@ -1097,6 +1118,10 @@ export default function SnakeGamePage() {
                 return;
 
             const isOwnSnake = uid === userIdRef.current;
+            const snakeBoosting = isOwnSnake
+                ? boostActiveRef.current || Boolean(value.boosting)
+                : Boolean(value.boosting);
+
             const primaryColor = isOwnSnake
                 ? customColorRef.current
                 : value.color || "#f43f5e";
@@ -1142,6 +1167,7 @@ export default function SnakeGamePage() {
                 baseBodyRadius: bodyRadius,
                 scale,
                 time: now,
+                isBoosting: snakeBoosting,
             });
 
             if (head) {
@@ -1430,6 +1456,15 @@ export default function SnakeGamePage() {
 
                             if (!(cashOutSentRef.current && !alive)) {
                                 setIsAlive(alive);
+                            }
+
+                            // Detener aceleración automáticamente si alcanzó el tamaño mínimo
+                            if (
+                                boostActiveRef.current &&
+                                Array.isArray(currentSnake.body) &&
+                                currentSnake.body.length <= MIN_BOOST_SEGMENTS
+                            ) {
+                                stopBoost();
                             }
 
                             if (!alive) {
