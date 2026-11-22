@@ -49,6 +49,7 @@ interface ParchisState {
     status: string;
     turn_seat: number;
     dice: number | null;
+    dice_pair?: [number, number] | number[] | null;
     must_move: boolean;
     pot_total: number;
     winners: string[];
@@ -271,126 +272,88 @@ function money(value: number): string {
     return `$${Number(value || 0).toFixed(2)}`;
 }
 
-const FACE_ROTATIONS: Record<number, { x: number; y: number }> = {
-    1: { x: 0, y: 0 },
-    2: { x: 0, y: -90 },
-    3: { x: 0, y: -180 },
-    4: { x: 0, y: 90 },
-    5: { x: -90, y: 0 },
-    6: { x: 90, y: 0 },
-};
+function resolveTwoDice(
+    state: ParchisState | null
+): [number | null, number | null] {
+    if (!state) return [null, null];
+    if (Array.isArray(state.dice_pair) && state.dice_pair.length >= 2) {
+        return [Number(state.dice_pair[0]), Number(state.dice_pair[1])];
+    }
+    if (typeof state.dice === "number" && state.dice > 0) {
+        const d1 = Math.min(6, Math.max(1, Math.ceil(state.dice / 2)));
+        const d2 = Math.min(6, Math.max(1, state.dice - d1 || 1));
+        return [d1, d2];
+    }
+    return [null, null];
+}
 
-const DICE_PIPS: Record<number, number[]> = {
-    1: [4],
-    2: [2, 6],
-    3: [2, 4, 6],
-    4: [0, 2, 6, 8],
-    5: [0, 2, 4, 6, 8],
-    6: [0, 2, 3, 5, 6, 8],
-};
-
-function CubeFace({ num, transform }: { num: number; transform: string }) {
-    const active = DICE_PIPS[num] || [];
+function SingleDiceBox({
+    num,
+    rolling,
+}: {
+    num: number | null;
+    rolling: boolean;
+}) {
     return (
         <div
-            style={{ transform, backfaceVisibility: "hidden" }}
-            className="absolute inset-0 rounded-2xl bg-gradient-to-br from-white via-zinc-100 to-zinc-300 border-2 border-zinc-400 shadow-inner p-2.5 grid grid-cols-3 grid-rows-3 place-items-center"
+            className={`w-12 h-12 rounded-xl bg-zinc-100 border-2 border-zinc-400 shadow-inner flex items-center justify-center transition-transform duration-150 ${
+                rolling ? "rotate-12 scale-105" : "rotate-0 scale-100"
+            }`}
         >
-            {Array.from({ length: 9 }).map((_, i) => (
-                <span
-                    key={i}
-                    className={`w-3 h-3 rounded-full ${
-                        active.includes(i)
-                            ? num === 1 || num === 6
-                                ? "bg-red-600"
-                                : "bg-zinc-900"
-                            : "bg-transparent"
-                    }`}
-                />
-            ))}
+            <span
+                className={`text-xl font-black leading-none ${
+                    num === 5 || num === 6 ? "text-red-600" : "text-zinc-950"
+                }`}
+            >
+                {num ?? "-"}
+            </span>
         </div>
     );
 }
 
-function Dice3D({
-    value,
+function ParchisDicePanel({
+    d1,
+    d2,
     rolling,
     onRoll,
     disabled,
 }: {
-    value: number | null;
+    d1: number | null;
+    d2: number | null;
     rolling: boolean;
     onRoll: () => void;
     disabled: boolean;
 }) {
-    const [spinAngle, setSpinAngle] = useState({ x: -20, y: 25 });
+    const [animDice, setAnimDice] = useState<[number, number]>([1, 1]);
 
     useEffect(() => {
-        if (rolling) {
-            const id = setInterval(() => {
-                setSpinAngle((prev) => ({
-                    x: prev.x + 145,
-                    y: prev.y + 190,
-                }));
-            }, 90);
-            return () => clearInterval(id);
-        }
-        if (value && FACE_ROTATIONS[value]) {
-            setSpinAngle(FACE_ROTATIONS[value]);
-        }
-    }, [rolling, value]);
+        if (!rolling) return;
+        const timer = setInterval(() => {
+            setAnimDice([
+                Math.floor(Math.random() * 6) + 1,
+                Math.floor(Math.random() * 6) + 1,
+            ]);
+        }, 75);
+        return () => clearInterval(timer);
+    }, [rolling]);
 
-    const half = 40;
+    const show1 = rolling ? animDice[0] : d1;
+    const show2 = rolling ? animDice[1] : d2;
 
     return (
-        <div className="flex flex-col items-center gap-3">
-            <div
-                style={{ perspective: "600px" }}
-                className="w-20 h-20 flex items-center justify-center"
-            >
-                <div
-                    style={{
-                        width: "80px",
-                        height: "80px",
-                        position: "relative",
-                        transformStyle: "preserve-3d",
-                        transform: `rotateX(${spinAngle.x}deg) rotateY(${spinAngle.y}deg)`,
-                        transition: rolling
-                            ? "transform 90ms linear"
-                            : "transform 420ms cubic-bezier(0.22, 1, 0.36, 1)",
-                    }}
-                >
-                    <CubeFace num={1} transform={`translateZ(${half}px)`} />
-                    <CubeFace
-                        num={2}
-                        transform={`rotateY(90deg) translateZ(${half}px)`}
-                    />
-                    <CubeFace
-                        num={3}
-                        transform={`rotateY(180deg) translateZ(${half}px)`}
-                    />
-                    <CubeFace
-                        num={4}
-                        transform={`rotateY(-90deg) translateZ(${half}px)`}
-                    />
-                    <CubeFace
-                        num={5}
-                        transform={`rotateX(90deg) translateZ(${half}px)`}
-                    />
-                    <CubeFace
-                        num={6}
-                        transform={`rotateX(-90deg) translateZ(${half}px)`}
-                    />
-                </div>
+        <div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-3.5 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+                <SingleDiceBox num={show1} rolling={rolling} />
+                <SingleDiceBox num={show2} rolling={rolling} />
             </div>
 
             <button
                 type="button"
                 disabled={disabled || rolling}
                 onClick={onRoll}
-                className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-black font-black text-xs uppercase rounded-xl shadow-lg active:scale-95 transition-all"
+                className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-black font-black text-xs uppercase rounded-xl active:scale-95 transition-all shrink-0"
             >
-                {rolling ? "Girando..." : "Lanzar Dado"}
+                {rolling ? "Girando..." : "Lanzar"}
             </button>
         </div>
     );
@@ -508,7 +471,8 @@ export default function ParchisGamePage() {
             setAccessToken(token);
             accessTokenRef.current = token;
 
-            const emailFallback = session.user?.email?.split("@")[0] || "Jugador";
+            const emailFallback =
+                session.user?.email?.split("@")[0] || "Jugador";
 
             const { data: profile, error } = await supabase
                 .from("profiles")
@@ -527,7 +491,9 @@ export default function ParchisGamePage() {
             if (profile) {
                 const fullName = buildFullNameFromProfile(profile, emailFallback);
                 setPlayerName(fullName);
-                setDocNumber(profile.doc_number ? String(profile.doc_number) : "");
+                setDocNumber(
+                    profile.doc_number ? String(profile.doc_number) : ""
+                );
                 setPlayBalance(Number(profile.balance ?? 0));
                 setBonusBalance(Number(profile.bonus_balance ?? 0));
             } else {
@@ -1377,6 +1343,7 @@ export default function ParchisGamePage() {
     );
     const visibleUserName = playerName.trim() || "Jugador";
     const visibleUserId = docNumber.trim() || "-";
+    const [d1, d2] = resolveTwoDice(gameState);
 
     return (
         <div className="min-h-screen bg-black text-white flex flex-col select-none font-sans overflow-x-hidden">
@@ -1412,7 +1379,7 @@ export default function ParchisGamePage() {
                                 <strong className="text-emerald-400">
                                     5
                                 </strong>{" "}
-                                en el dado saca una ficha a tu salida.
+                                saca una ficha a tu salida.
                             </li>
                             <li>
                                 <strong className="text-white">
@@ -1431,8 +1398,7 @@ export default function ParchisGamePage() {
                                 <strong className="text-white">
                                     2 jugadores:
                                 </strong>{" "}
-                                Se ubican en esquinas opuestas mostrando el
-                                nombre de cada jugador.
+                                Se ubican en esquinas opuestas.
                             </li>
                             <li>
                                 <strong className="text-white">
@@ -1474,7 +1440,7 @@ export default function ParchisGamePage() {
                 </div>
             )}
 
-            {!isInGame && <Header />}
+            <Header />
 
             <main
                 className={`flex-1 w-full mx-auto flex flex-col ${
@@ -1787,21 +1753,16 @@ export default function ParchisGamePage() {
                                 </button>
                                 <div className="min-w-0">
                                     <span className="block text-xs font-black text-emerald-400 uppercase truncate">
-                                        Anfitrión:{" "}
                                         {gameState?.host_name ||
                                             activePlayers[0]?.player_name ||
                                             visibleUserName}
                                     </span>
                                     <span className="block text-[10px] text-zinc-400 truncate">
-                                        {visibleUserName} · Sala:{" "}
-                                        {gameState?.room_id || roomId}
+                                        ID:{" "}
                                         {gameState?.host_doc_number ||
-                                        gameState?.host_cedula
-                                            ? ` · ID: ${
-                                                  gameState.host_doc_number ||
-                                                  gameState.host_cedula
-                                              }`
-                                            : ""}
+                                            gameState?.host_cedula ||
+                                            visibleUserId}{" "}
+                                        · Sala: {gameState?.room_id || roomId}
                                     </span>
                                 </div>
                             </div>
@@ -1846,56 +1807,27 @@ export default function ParchisGamePage() {
                                 </div>
 
                                 <div className="xl:col-span-4 space-y-4">
-                                    <div className="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-4 flex items-center justify-between gap-4">
-                                        <div>
-                                            <span className="text-[10px] text-zinc-400 uppercase font-bold block">
-                                                {visibleUserName}
-                                            </span>
-                                            <span className="text-sm font-black text-emerald-400 block mt-0.5">
-                                                {isMyTurn
-                                                    ? gameState.must_move
-                                                        ? "Mueve una ficha"
-                                                        : "Tu turno"
-                                                    : "Turno en curso"}
-                                            </span>
-                                            <span className="text-xs font-bold text-white block mt-1">
-                                                {gameState.dice !== null
-                                                    ? `Dado: ${gameState.dice}`
-                                                    : "Listo para tirar"}
-                                            </span>
-                                            <span className="text-[10px] text-zinc-500 block mt-1">
-                                                {isHost
-                                                    ? "Anfitrión: si sales se cierra"
-                                                    : "Activa mientras esté el anfitrión"}
-                                            </span>
-                                        </div>
-
-                                        <Dice3D
-                                            value={gameState.dice}
-                                            rolling={rollingDice}
-                                            onRoll={sendRollDice}
-                                            disabled={
-                                                !isMyTurn || gameState.must_move
-                                            }
-                                        />
-                                    </div>
+                                    <ParchisDicePanel
+                                        d1={d1}
+                                        d2={d2}
+                                        rolling={rollingDice}
+                                        onRoll={sendRollDice}
+                                        disabled={
+                                            !isMyTurn || gameState.must_move
+                                        }
+                                    />
 
                                     {gameState.status === "finished" && (
                                         <div className="bg-zinc-900/60 border border-emerald-400 rounded-2xl p-4 text-center space-y-2">
                                             <h3 className="text-base font-black uppercase text-emerald-400">
                                                 Partida Finalizada
                                             </h3>
-                                            <p className="text-xs text-zinc-200">
-                                                {gameState.winners.includes(userId)
-                                                    ? "¡Ganaste la partida!"
-                                                    : "La partida ha concluido."}
-                                            </p>
                                             <button
                                                 type="button"
                                                 onClick={exitParchisGame}
                                                 className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase rounded-xl"
                                             >
-                                                Volver a la arena
+                                                Volver
                                             </button>
                                         </div>
                                     )}
@@ -1904,10 +1836,6 @@ export default function ParchisGamePage() {
                                         {activePlayers.map(
                                             (p: ParchisPlayerState) => {
                                                 const isMe = p.user_id === userId;
-                                                const isPlayerHost =
-                                                    p.user_id ===
-                                                        gameState.host_user_id ||
-                                                    p.seat_index === 0;
                                                 const activeTurn =
                                                     gameState.status ===
                                                         "playing" &&
@@ -1931,29 +1859,16 @@ export default function ParchisGamePage() {
                                                                 : "border-zinc-800"
                                                         }`}
                                                     >
-                                                        <div className="flex items-center justify-between mb-2">
-                                                            <div className="flex items-center gap-2 min-w-0">
-                                                                <span
-                                                                    className="w-3.5 h-3.5 rounded-full border border-white/40 shrink-0"
-                                                                    style={{
-                                                                        backgroundColor:
-                                                                            pal.main,
-                                                                    }}
-                                                                />
-                                                                <span className="text-xs font-black truncate">
-                                                                    {displayName}
-                                                                    {isPlayerHost
-                                                                        ? " (Anfitrión)"
-                                                                        : ""}
-                                                                    {isMe
-                                                                        ? " · Tú"
-                                                                        : ""}
-                                                                </span>
-                                                            </div>
-                                                            <span className="text-[10px] text-zinc-400 uppercase shrink-0">
-                                                                {p.connected
-                                                                    ? "Activo"
-                                                                    : "Salió"}
+                                                        <div className="flex items-center gap-2 mb-2">
+                                                            <span
+                                                                className="w-3.5 h-3.5 rounded-full border border-white/40 shrink-0"
+                                                                style={{
+                                                                    backgroundColor:
+                                                                        pal.main,
+                                                                }}
+                                                            />
+                                                            <span className="text-xs font-black truncate">
+                                                                {displayName}
                                                             </span>
                                                         </div>
 
