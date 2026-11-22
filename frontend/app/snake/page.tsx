@@ -12,548 +12,567 @@ import { supabase } from "../lib/supabase";
 import Header from "../components/Header";
 
 type Wallet = "play" | "bonus";
-type ParchisBet = "0.25" | "1.00" | "10.00";
-type MaxPlayers = 2 | 3 | 4;
+type SnakeBet = "0.20" | "10" | "50";
+type BodyStyle = "connected" | "scales" | "pulse" | "trail";
+type EyeStyle = "classic" | "laser" | "sleepy" | "angry";
+type AccessoryStyle = "none" | "crown" | "bandana" | "halo";
 
-interface ParchisPiece {
-    id: number;
-    stage: number;
-    pos: number;
-    steps_walked: number;
+interface SkinPreset {
+    id: string;
+    name: string;
+    primary: string;
+    secondary: string;
+    glow: string;
+    bodyStyle: BodyStyle;
+    eyes: EyeStyle;
+    accessory: AccessoryStyle;
 }
 
-interface ParchisPlayerState {
-    user_id: string;
-    player_name?: string;
-    doc_number?: string;
-    cedula?: string;
-    seat_index: number;
-    team: string | null;
-    wallet: string;
-    connected: boolean;
-    pieces: ParchisPiece[];
-}
-
-interface ParchisState {
-    type: string;
-    room_id: string;
-    host_user_id?: string;
-    host_name?: string;
-    host_doc_number?: string;
-    host_cedula?: string;
-    bet: number;
-    max_players: number;
-    team_mode: "ffa" | "2v2";
-    is_private: boolean;
-    room_code: string | null;
-    status: string;
-    turn_seat: number;
-    dice: number | null;
-    dice_pair?: [number, number] | number[] | null;
-    dice_remaining?: number[];
-    must_move: boolean;
-    pot_total: number;
-    winners: string[];
-    last_event: string;
-    players: ParchisPlayerState[];
-}
-
-interface PublicRoomItem {
-    room_id: string;
-    host_name?: string;
-    host_doc_number?: string;
-    host_cedula?: string;
-    bet: number;
-    max_players: number;
-    players_count: number;
-    team_mode: string;
-    is_private: boolean;
-}
-
-interface ProfileRow {
-    first_name: string | null;
-    doc_number: string | null;
-    balance: number | null;
-    bonus_balance: number | null;
-}
-
-const API_BASE =
-    process.env.NEXT_PUBLIC_API_URL || "https://casino-axiom.ethiodeploy.app";
-
-const PARCHIS_BETS: Record<ParchisBet, number> = {
-    "0.25": 0.25,
-    "1.00": 1.0,
-    "10.00": 10.0,
-};
-
-const CORNER_PALETTE = [
+const SKIN_PRESETS: SkinPreset[] = [
     {
-        name: "Verde",
-        main: "#289c3e",
-        light: "#4ade80",
-        dark: "#14532d",
-        ring: "#bbf7d0",
+        id: "emerald",
+        name: "Esmeralda",
+        primary: "#10b981",
+        secondary: "#047857",
+        glow: "#34d399",
+        bodyStyle: "connected",
+        eyes: "classic",
+        accessory: "none",
     },
     {
-        name: "Rojo",
-        main: "#e03131",
-        light: "#ff6b6b",
-        dark: "#7f1d1d",
-        ring: "#fecaca",
+        id: "cyber",
+        name: "Ciber Neón",
+        primary: "#06b6d4",
+        secondary: "#4f46e5",
+        glow: "#22d3ee",
+        bodyStyle: "pulse",
+        eyes: "laser",
+        accessory: "bandana",
     },
     {
-        name: "Azul",
-        main: "#1971c2",
-        light: "#4dabf7",
-        dark: "#1e3a8a",
-        ring: "#bfdbfe",
+        id: "magma",
+        name: "Magma",
+        primary: "#f97316",
+        secondary: "#b91c1c",
+        glow: "#fb923c",
+        bodyStyle: "scales",
+        eyes: "angry",
+        accessory: "none",
     },
     {
-        name: "Amarillo",
-        main: "#f59f00",
-        light: "#ffd43b",
-        dark: "#78350f",
-        ring: "#fef08a",
+        id: "royal",
+        name: "Dorado Real",
+        primary: "#eab308",
+        secondary: "#a16207",
+        glow: "#facc15",
+        bodyStyle: "trail",
+        eyes: "classic",
+        accessory: "crown",
+    },
+    {
+        id: "phantom",
+        name: "Fantasma",
+        primary: "#a855f7",
+        secondary: "#581c87",
+        glow: "#c084fc",
+        bodyStyle: "trail",
+        eyes: "sleepy",
+        accessory: "halo",
     },
 ];
 
-const TRACK_LEN = 68;
-const SAFE_SPOTS = new Set([0, 5, 12, 17, 22, 29, 34, 39, 46, 51, 56, 63]);
-const START_SPOTS: Record<number, number> = { 0: 0, 1: 17, 2: 34, 3: 51 };
+const WORLD_WIDTH = 20000;
+const WORLD_HEIGHT = 20000;
+const MIN_VISIBLE_SEGMENTS = 4;
 
-function getMainName(
-    profile: Partial<ProfileRow> | null,
-    fallback = "Jugador"
-): string {
-    const raw = (profile?.first_name || "").trim();
-    if (!raw) return fallback;
-    return raw.split(/\s+/)[0] || fallback;
-}
-
-function getCleanPlayerLabel(
-    player: ParchisPlayerState | null | undefined,
-    fallback: string
-): string {
-    const raw = (player?.player_name || "").trim();
-    if (!raw) return fallback;
-    return raw.split(/\s+/)[0] || fallback;
-}
-
-function getPlayerVisualCorner(
-    playerSeat: number,
-    mySeat: number | null,
-    totalPlayers: number
-): number {
-    if (totalPlayers <= 2) {
-        if (mySeat !== null) {
-            return playerSeat === mySeat ? 3 : 1;
-        }
-        return playerSeat === 0 ? 3 : 1;
-    }
-    if (mySeat !== null) {
-        const rel = (((playerSeat - mySeat) % 4) + 4) % 4;
-        const order = [3, 2, 1, 0];
-        return order[rel];
-    }
-    return playerSeat % 4;
-}
-
-function getHomeCenter(corner: number): { x: number; y: number } {
-    switch (corner) {
-        case 0:
-            return { x: 0.21, y: 0.21 };
-        case 1:
-            return { x: 0.79, y: 0.21 };
-        case 2:
-            return { x: 0.79, y: 0.79 };
-        default:
-            return { x: 0.21, y: 0.79 };
-    }
-}
-
-function getHomeSlotOffset(
-    pieceId: number,
-    cellSize: number
-): { dx: number; dy: number } {
-    const d = cellSize * 0.72;
-    const slots = [
-        { dx: -d, dy: -d },
-        { dx: d, dy: -d },
-        { dx: -d, dy: d },
-        { dx: d, dy: d },
-    ];
-    return slots[pieceId % 4];
-}
-
-function buildTrackGridCoords(): Array<{ gx: number; gy: number }> {
-    const perimeter: Array<{ gx: number; gy: number }> = [];
-    for (let y = 0; y < 6; y++) perimeter.push({ gx: 6, gy: y });
-    for (let x = 5; x >= 0; x--) perimeter.push({ gx: x, gy: 6 });
-    perimeter.push({ gx: 0, gy: 7 });
-    for (let x = 0; x < 6; x++) perimeter.push({ gx: x, gy: 8 });
-    for (let y = 9; y <= 14; y++) perimeter.push({ gx: 6, gy: y });
-    perimeter.push({ gx: 7, gy: 14 });
-    for (let y = 14; y > 8; y--) perimeter.push({ gx: 8, gy: y });
-    for (let x = 9; x <= 14; x++) perimeter.push({ gx: x, gy: 8 });
-    perimeter.push({ gx: 14, gy: 7 });
-    for (let x = 14; x > 8; x--) perimeter.push({ gx: x, gy: 6 });
-    for (let y = 5; y >= 0; y--) perimeter.push({ gx: 8, gy: y });
-    perimeter.push({ gx: 7, gy: 0 });
-
-    const result: Array<{ gx: number; gy: number }> = [];
-    const totalPts = perimeter.length;
-    for (let i = 0; i < TRACK_LEN; i++) {
-        const idx = Math.floor((i * totalPts) / TRACK_LEN) % totalPts;
-        result.push(perimeter[idx]);
-    }
-    return result;
-}
-
-const TRACK_GRID = buildTrackGridCoords();
-
-function getGoalLanePoint(
-    corner: number,
-    pos: number,
-    boardSize: number
-): { x: number; y: number } {
-    const pad = boardSize * 0.036;
-    const inner = boardSize - pad * 2;
-    const cell = inner / 15;
-    const step = Math.max(0, Math.min(7, pos)) / 7;
-
-    switch (corner) {
-        case 0:
-            return {
-                x: pad + 7.5 * cell,
-                y: pad + (1.5 + step * 5.2) * cell,
-            };
-        case 1:
-            return {
-                x: pad + (13.5 - step * 5.2) * cell,
-                y: pad + 7.5 * cell,
-            };
-        case 2:
-            return {
-                x: pad + 7.5 * cell,
-                y: pad + (13.5 - step * 5.2) * cell,
-            };
-        default:
-            return {
-                x: pad + (1.5 + step * 5.2) * cell,
-                y: pad + 7.5 * cell,
-            };
-    }
-}
-
-function getPieceBoardPoint(
-    piece: ParchisPiece,
-    corner: number,
-    boardSize: number
-): { x: number; y: number } {
-    const pad = boardSize * 0.036;
-    const inner = boardSize - pad * 2;
-    const cell = inner / 15;
-
-    if (piece.stage === -1) {
-        const home = getHomeCenter(corner);
-        const slot = getHomeSlotOffset(piece.id, cell);
-        return {
-            x: home.x * boardSize + slot.dx,
-            y: home.y * boardSize + slot.dy,
-        };
-    }
-
-    if (piece.stage === 100) {
-        const pt = getGoalLanePoint(corner, piece.pos, boardSize);
-        const jitter = (piece.id % 2 === 0 ? -1 : 1) * (cell * 0.14);
-        return {
-            x: pt.x + (corner % 2 === 0 ? jitter : 0),
-            y: pt.y + (corner % 2 === 1 ? jitter : 0),
-        };
-    }
-
-    const spot = ((piece.pos % TRACK_LEN) + TRACK_LEN) % TRACK_LEN;
-    const g = TRACK_GRID[spot];
-    const baseX = pad + (g.gx + 0.5) * cell;
-    const baseY = pad + (g.gy + 0.5) * cell;
-    const angle = (piece.id % 4) * (Math.PI / 2);
-    const offset = cell * 0.12;
-
-    return {
-        x: baseX + Math.cos(angle) * offset,
-        y: baseY + Math.sin(angle) * offset,
-    };
-}
-
-function canPieceMove(piece: ParchisPiece, diceValue: number | null): boolean {
-    if (diceValue === null || diceValue < 1 || diceValue > 6) return false;
-    if (piece.stage === -1) return diceValue === 5;
-    if (piece.stage === 0) return piece.steps_walked + diceValue <= 70;
-    if (piece.stage === 100) return piece.pos + diceValue <= 7;
-    return false;
-}
-
-function getMovableDice(
-    piece: ParchisPiece,
-    diceValues: number[] | null | undefined
-): number[] {
-    if (!Array.isArray(diceValues)) return [];
-    return diceValues.filter((value) => canPieceMove(piece, value));
-}
+const SNAKE_BETS: Record<SnakeBet, { amount: number; room: string }> = {
+    "0.20": { amount: 0.2, room: "snake_020" },
+    "10": { amount: 10, room: "snake_1000" },
+    "50": { amount: 50, room: "snake_5000" },
+};
 
 function money(value: number): string {
     return `$${Number(value || 0).toFixed(2)}`;
 }
 
-function clampDieFace(val: unknown, fallback = 1): number {
-    const n = Number(val);
-    if (!Number.isFinite(n) || n < 1) return fallback;
-    return Math.min(6, Math.max(1, Math.round(n)));
+function getCoinValue(item: any): number {
+    if (typeof item?.value_micros === "number") {
+        return item.value_micros / 1000000;
+    }
+    return Number(item?.value ?? 0);
 }
 
-function randomDieFace(exclude?: number): number {
-    const candidates = [1, 2, 3, 4, 5, 6].filter((n) => n !== exclude);
-    return candidates[Math.floor(Math.random() * candidates.length)];
+/**
+ * Recoge cada segmento del cuerpo hacia la cabeza según `sizeFactor` y limita
+ * la cantidad de nodos para que la serpiente se haga pequeña en largo y grosor
+ * sin estirarse al acelerar o perder monedas.
+ */
+function contractBodyTowardHead(
+    rawBody: { x: number; y: number; radius?: number }[],
+    sizeFactor: number,
+    maxSegments: number
+): { x: number; y: number; radius?: number }[] {
+    if (!Array.isArray(rawBody) || rawBody.length === 0) return [];
+
+    const head = rawBody[0];
+    if (typeof head?.x !== "number" || typeof head?.y !== "number") return [];
+
+    const segLimit = Math.max(
+        MIN_VISIBLE_SEGMENTS,
+        Math.min(rawBody.length, maxSegments)
+    );
+    const slice = rawBody.slice(0, segLimit);
+
+    return slice.map((seg, idx) => {
+        if (idx === 0) {
+            return { x: head.x, y: head.y, radius: seg.radius };
+        }
+        const sx = typeof seg?.x === "number" ? seg.x : head.x;
+        const sy = typeof seg?.y === "number" ? seg.y : head.y;
+        return {
+            x: head.x + (sx - head.x) * sizeFactor,
+            y: head.y + (sy - head.y) * sizeFactor,
+            radius: seg.radius,
+        };
+    });
 }
 
-function randomDiePair(prev?: [number, number]): [number, number] {
-    return [randomDieFace(prev?.[0]), randomDieFace(prev?.[1])];
-}
+function drawSnakeVisual(
+    ctx: CanvasRenderingContext2D,
+    options: {
+        body: { x: number; y: number; radius?: number }[];
+        angle: number;
+        primaryColor: string;
+        secondaryColor: string;
+        glowColor: string;
+        bodyStyle: BodyStyle;
+        eyes: EyeStyle;
+        accessory: AccessoryStyle;
+        baseHeadRadius?: number;
+        baseBodyRadius?: number;
+        scale?: number;
+        time?: number;
+        sizeFactor?: number;
+        maxSegments?: number;
+    }
+) {
+    const {
+        body,
+        angle,
+        primaryColor,
+        secondaryColor,
+        glowColor,
+        bodyStyle,
+        eyes,
+        accessory,
+        baseHeadRadius = 12,
+        baseBodyRadius = 9,
+        scale = 1,
+        time = 0,
+        sizeFactor = 1,
+        maxSegments,
+    } = options;
 
-function randomPairForSum(
-    totalValue: number,
-    prev?: [number, number]
-): [number, number] {
-    const t = Math.round(totalValue);
-    const validPairs: Array<[number, number]> = [];
-    for (let a = 1; a <= 6; a++) {
-        for (let b = 1; b <= 6; b++) {
-            if (a + b === t) validPairs.push([a, b]);
+    if (!Array.isArray(body) || body.length === 0) return;
+
+    const clampedSize = Math.max(0.38, Math.min(1.4, sizeFactor));
+    const segLimit =
+        typeof maxSegments === "number"
+            ? Math.max(MIN_VISIBLE_SEGMENTS, Math.min(body.length, maxSegments))
+            : body.length;
+
+    const drawBody = contractBodyTowardHead(body, clampedSize, segLimit);
+    if (drawBody.length === 0) return;
+
+    const effectiveBodyRadius = baseBodyRadius * clampedSize;
+
+    if (bodyStyle === "trail" && drawBody.length > 1) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(drawBody[0].x, drawBody[0].y);
+        for (let i = 1; i < drawBody.length; i++) {
+            ctx.lineTo(drawBody[i].x, drawBody[i].y);
+        }
+        ctx.strokeStyle = glowColor;
+        ctx.globalAlpha = 0.22;
+        ctx.lineWidth = Math.max(4, effectiveBodyRadius * 1.65);
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    if (bodyStyle === "connected" && drawBody.length > 1) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(drawBody[0].x, drawBody[0].y);
+        for (let i = 1; i < drawBody.length; i++) {
+            ctx.lineTo(drawBody[i].x, drawBody[i].y);
+        }
+        ctx.strokeStyle = secondaryColor;
+        ctx.lineWidth = Math.max(5, effectiveBodyRadius * 1.8);
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    for (let i = drawBody.length - 1; i >= 1; i--) {
+        const seg = drawBody[i];
+        const ratio = i / Math.max(drawBody.length, 1);
+        const taper = Math.max(0.45, 1 - ratio * 0.42);
+        const radius = Math.max(
+            2.5,
+            Number(seg.radius ?? baseBodyRadius) * clampedSize * taper
+        );
+        const fill = i % 2 === 0 ? primaryColor : secondaryColor;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(seg.x, seg.y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = fill;
+        ctx.shadowColor = glowColor;
+        ctx.shadowBlur = (bodyStyle === "pulse" ? 11 : 4) / scale;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        if (bodyStyle === "scales") {
+            ctx.strokeStyle = "rgba(255,255,255,0.22)";
+            ctx.lineWidth = 1.3 / scale;
+            ctx.beginPath();
+            ctx.arc(seg.x, seg.y, radius * 0.72, -Math.PI * 0.65, Math.PI * 0.65);
+            ctx.stroke();
+        } else if (bodyStyle === "pulse" && i % 2 === 0) {
+            ctx.strokeStyle = "rgba(255,255,255,0.75)";
+            ctx.lineWidth = 1.4 / scale;
+            ctx.beginPath();
+            ctx.arc(seg.x, seg.y, radius * 0.52, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+
+        ctx.beginPath();
+        ctx.arc(
+            seg.x - radius * 0.25,
+            seg.y - radius * 0.25,
+            Math.max(1.2, radius * 0.2),
+            0,
+            Math.PI * 2
+        );
+        ctx.fillStyle = "rgba(255,255,255,0.28)";
+        ctx.fill();
+        ctx.restore();
+    }
+
+    const head = drawBody[0];
+    const headRadius = Math.max(
+        6.5,
+        Number(head.radius ?? baseHeadRadius) * clampedSize
+    );
+
+    ctx.save();
+    ctx.translate(head.x, head.y);
+    ctx.rotate(angle);
+
+    const tongueFlick = Math.sin(time * 0.014);
+    if (tongueFlick > 0.25) {
+        const tongueLen = headRadius * (0.55 + tongueFlick * 0.25);
+        ctx.save();
+        ctx.strokeStyle = "#fb7185";
+        ctx.lineWidth = Math.max(1.6, headRadius * 0.13) / scale;
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(headRadius * 0.85, 0);
+        ctx.lineTo(headRadius * 0.85 + tongueLen, 0);
+        ctx.lineTo(headRadius * 0.85 + tongueLen + 4, -3.5);
+        ctx.moveTo(headRadius * 0.85 + tongueLen, 0);
+        ctx.lineTo(headRadius * 0.85 + tongueLen + 4, 3.5);
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    ctx.beginPath();
+    ctx.ellipse(
+        headRadius * 0.08,
+        0,
+        headRadius * 1.16,
+        headRadius * 0.98,
+        0,
+        0,
+        Math.PI * 2
+    );
+    ctx.fillStyle = primaryColor;
+    ctx.shadowColor = glowColor;
+    ctx.shadowBlur = 14 / scale;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    ctx.strokeStyle = "rgba(255,255,255,0.25)";
+    ctx.lineWidth = 1.4 / scale;
+    ctx.stroke();
+
+    const eyeOffsetX = headRadius * 0.34;
+    const eyeOffsetY = headRadius * 0.48;
+
+    if (eyes === "sleepy") {
+        ctx.strokeStyle = "#09090b";
+        ctx.lineWidth = 2.4 / scale;
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(eyeOffsetX - 3, -eyeOffsetY);
+        ctx.lineTo(eyeOffsetX + 3, -eyeOffsetY);
+        ctx.moveTo(eyeOffsetX - 3, eyeOffsetY);
+        ctx.lineTo(eyeOffsetX + 3, eyeOffsetY);
+        ctx.stroke();
+    } else {
+        const eyeRadius = Math.max(3, headRadius * 0.26);
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath();
+        ctx.arc(eyeOffsetX, -eyeOffsetY, eyeRadius, 0, Math.PI * 2);
+        ctx.arc(eyeOffsetX, eyeOffsetY, eyeRadius, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = eyes === "laser" ? "#ef4444" : "#09090b";
+        ctx.beginPath();
+        ctx.arc(
+            eyeOffsetX + eyeRadius * 0.35,
+            -eyeOffsetY,
+            eyeRadius * 0.56,
+            0,
+            Math.PI * 2
+        );
+        ctx.arc(
+            eyeOffsetX + eyeRadius * 0.35,
+            eyeOffsetY,
+            eyeRadius * 0.56,
+            0,
+            Math.PI * 2
+        );
+        ctx.fill();
+
+        if (eyes === "angry") {
+            ctx.strokeStyle = "#09090b";
+            ctx.lineWidth = 2.2 / scale;
+            ctx.lineCap = "round";
+            ctx.beginPath();
+            ctx.moveTo(eyeOffsetX - 3.5, -eyeOffsetY - 4);
+            ctx.lineTo(eyeOffsetX + 3.5, -eyeOffsetY - 1);
+            ctx.moveTo(eyeOffsetX - 3.5, eyeOffsetY + 4);
+            ctx.lineTo(eyeOffsetX + 3.5, eyeOffsetY + 1);
+            ctx.stroke();
         }
     }
-    if (validPairs.length > 0) {
-        const filtered = prev
-            ? validPairs.filter(
-                ([a, b]) => !(a === prev[0] && b === prev[1])
-            )
-            : validPairs;
-        const pool = filtered.length > 0 ? filtered : validPairs;
-        return pool[Math.floor(Math.random() * pool.length)];
+
+    if (accessory === "crown") {
+        ctx.fillStyle = "#facc15";
+        ctx.strokeStyle = "#ca8a04";
+        ctx.lineWidth = 1.2 / scale;
+        ctx.beginPath();
+        ctx.moveTo(-headRadius * 0.45, -headRadius * 0.55);
+        ctx.lineTo(-headRadius * 0.7, -headRadius * 1.32);
+        ctx.lineTo(-headRadius * 0.1, -headRadius * 0.82);
+        ctx.lineTo(headRadius * 0.15, -headRadius * 1.42);
+        ctx.lineTo(headRadius * 0.65, -headRadius * 0.55);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+    } else if (accessory === "bandana") {
+        ctx.fillStyle = "#f43f5e";
+        ctx.beginPath();
+        ctx.roundRect(
+            -headRadius * 0.72,
+            -headRadius * 0.88,
+            headRadius * 0.48,
+            headRadius * 1.76,
+            3
+        );
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(-headRadius * 0.72, -headRadius * 0.25);
+        ctx.lineTo(-headRadius * 1.45, -headRadius * 0.65);
+        ctx.lineTo(-headRadius * 1.35, -headRadius * 0.05);
+        ctx.closePath();
+        ctx.fill();
+    } else if (accessory === "halo") {
+        ctx.strokeStyle = "#fde047";
+        ctx.lineWidth = 2.4 / scale;
+        ctx.beginPath();
+        ctx.ellipse(
+            -headRadius * 0.1,
+            -headRadius * 1.28,
+            headRadius * 0.75,
+            headRadius * 0.24,
+            0,
+            0,
+            Math.PI * 2
+        );
+        ctx.stroke();
     }
-    if (t >= 1 && t <= 6) {
-        const other = randomDieFace(prev?.[1]);
-        return Math.random() < 0.5 ? [t, other] : [other, t];
-    }
-    return randomDiePair(prev);
+
+    ctx.restore();
 }
 
-const PIP_COORDS: Record<number, Array<[number, number]>> = {
-    1: [[50, 50]],
-    2: [
-        [28, 28],
-        [72, 72],
-    ],
-    3: [
-        [28, 28],
-        [50, 50],
-        [72, 72],
-    ],
-    4: [
-        [28, 28],
-        [72, 28],
-        [28, 72],
-        [72, 72],
-    ],
-    5: [
-        [28, 28],
-        [72, 28],
-        [50, 50],
-        [28, 72],
-        [72, 72],
-    ],
-    6: [
-        [28, 26],
-        [72, 26],
-        [28, 50],
-        [72, 50],
-        [28, 74],
-        [72, 74],
-    ],
-};
-
-function PipDieBox({
-    num,
-    rolling,
+function SnakeStudioPreview({
+    primaryColor,
+    secondaryColor,
+    glowColor,
+    bodyStyle,
+    eyes,
+    accessory,
+    presetName,
 }: {
-    num: number;
-    rolling: boolean;
+    primaryColor: string;
+    secondaryColor: string;
+    glowColor: string;
+    bodyStyle: BodyStyle;
+    eyes: EyeStyle;
+    accessory: AccessoryStyle;
+    presetName: string;
 }) {
-    const face = clampDieFace(num, 1);
-    const dots = PIP_COORDS[face] || PIP_COORDS[1];
-
-    return (
-        <div
-            className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-zinc-100 border-2 border-zinc-500 p-1 flex items-center justify-center shadow-md transition-transform duration-150 ${rolling ? "rotate-12 scale-105" : "rotate-0 scale-100"
-                }`}
-        >
-            <svg viewBox="0 0 100 100" className="w-full h-full block">
-                <rect
-                    x="2"
-                    y="2"
-                    width="96"
-                    height="96"
-                    rx="18"
-                    fill="#f4f4f5"
-                />
-                {dots.map(([cx, cy], idx) => (
-                    <circle key={idx} cx={cx} cy={cy} r="10.5" fill="#18181b" />
-                ))}
-            </svg>
-        </div>
-    );
-}
-
-function PlayerTurnRow({
-    playerName,
-    colorName,
-    accentColor,
-    d1,
-    d2,
-    rolling,
-    isActiveTurn,
-    canRoll,
-    mustMove,
-    onRoll,
-    position,
-}: {
-    playerName: string;
-    colorName: string;
-    accentColor: string;
-    d1: number;
-    d2: number;
-    rolling: boolean;
-    isActiveTurn: boolean;
-    canRoll: boolean;
-    mustMove: boolean;
-    onRoll: () => void;
-    position: "top" | "bottom";
-}) {
-    const [spinDice, setSpinDice] = useState<[number, number]>([3, 5]);
+    const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
     useEffect(() => {
-        if (!rolling) return;
-        const timer = setInterval(() => {
-            setSpinDice((prev) => randomDiePair(prev));
-        }, 75);
-        return () => clearInterval(timer);
-    }, [rolling]);
+        const canvas = previewCanvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
 
-    const show1 = rolling ? spinDice[0] : d1;
-    const show2 = rolling ? spinDice[1] : d2;
+        let frameId = 0;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const cssWidth = canvas.clientWidth || 320;
+        const cssHeight = canvas.clientHeight || 136;
 
-    const badge = (
-        <div className="flex items-center gap-1.5">
-            <span
-                className="w-3 h-3 rounded-full border border-white/40 shadow"
-                style={{ backgroundColor: accentColor }}
-            />
-            <span className="text-xs sm:text-sm font-black text-white">
-                {playerName}
-            </span>
-            <span
-                className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full text-black"
-                style={{ backgroundColor: accentColor }}
-            >
-                {colorName}
-            </span>
-            {isActiveTurn && (
-                <span className="text-[10px] font-bold uppercase text-emerald-400">
-                    {mustMove ? "· Mueve ficha" : "· Su turno"}
-                </span>
-            )}
-        </div>
-    );
+        canvas.width = Math.floor(cssWidth * dpr);
+        canvas.height = Math.floor(cssHeight * dpr);
 
-    const diceBox = (
-        <div className="flex items-center gap-2">
-            <button
-                type="button"
-                disabled={!canRoll || rolling}
-                onClick={onRoll}
-                aria-label="Lanzar dados"
-                style={{
-                    borderColor: isActiveTurn ? accentColor : "#3f3f46",
-                }}
-                className="bg-zinc-900 border-2 rounded-2xl p-1.5 flex items-center gap-1.5 shadow-lg active:scale-95 transition-all disabled:cursor-default disabled:active:scale-100"
-            >
-                <PipDieBox num={show1} rolling={rolling} />
-                <PipDieBox num={show2} rolling={rolling} />
-            </button>
-            {canRoll && (
-                <button
-                    type="button"
-                    disabled={rolling}
-                    onClick={onRoll}
-                    className="px-3.5 py-2.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-black font-black text-[11px] uppercase rounded-xl shadow-md active:scale-95 transition-all"
-                >
-                    {rolling ? "..." : "Lanzar"}
-                </button>
-            )}
-        </div>
-    );
+        const render = (time: number) => {
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, cssWidth, cssHeight);
 
-    if (position === "top") {
-        return (
-            <div className="w-full flex flex-col items-end gap-1">
-                {diceBox}
-                {badge}
-            </div>
-        );
-    }
+            ctx.fillStyle = "#060a08";
+            ctx.fillRect(0, 0, cssWidth, cssHeight);
+
+            ctx.strokeStyle = "rgba(52, 211, 153, 0.08)";
+            ctx.lineWidth = 1;
+            for (let x = 0; x <= cssWidth; x += 24) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, cssHeight);
+                ctx.stroke();
+            }
+            for (let y = 0; y <= cssHeight; y += 24) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(cssWidth, y);
+                ctx.stroke();
+            }
+
+            const centerY = cssHeight * 0.56;
+            const startX = Math.min(cssWidth - 44, cssWidth * 0.78);
+            const segments: { x: number; y: number }[] = [];
+
+            for (let i = 0; i < 14; i++) {
+                const x = startX - i * 14;
+                const wave = Math.sin(time * 0.0045 - i * 0.5) * 9;
+                segments.push({ x, y: centerY + wave });
+            }
+
+            const head = segments[0];
+            const next = segments[1] || { x: head.x - 14, y: head.y };
+            const angle = Math.atan2(head.y - next.y, head.x - next.x);
+
+            drawSnakeVisual(ctx, {
+                body: segments,
+                angle,
+                primaryColor,
+                secondaryColor,
+                glowColor,
+                bodyStyle,
+                eyes,
+                accessory,
+                baseHeadRadius: 12,
+                baseBodyRadius: 9,
+                scale: 1,
+                time,
+                sizeFactor: 1,
+            });
+
+            frameId = requestAnimationFrame(render);
+        };
+
+        frameId = requestAnimationFrame(render);
+        return () => cancelAnimationFrame(frameId);
+    }, [
+        primaryColor,
+        secondaryColor,
+        glowColor,
+        bodyStyle,
+        eyes,
+        accessory,
+    ]);
 
     return (
-        <div className="w-full flex flex-col items-start gap-1">
-            {badge}
-            {diceBox}
+        <div className="bg-black border border-zinc-800 rounded-2xl p-3">
+            <div className="flex items-center justify-between gap-2 mb-2">
+                <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400">
+                    Vista previa en vivo
+                </span>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-full">
+                    {presetName}
+                </span>
+            </div>
+
+            <canvas
+                ref={previewCanvasRef}
+                className="w-full h-28 sm:h-32 rounded-xl border border-zinc-900 block"
+            />
         </div>
     );
 }
 
-export default function ParchisGamePage() {
+export default function SnakeGamePage() {
     const [userId, setUserId] = useState<string | null>(null);
     const [accessToken, setAccessToken] = useState("");
     const [isAuthLoading, setIsAuthLoading] = useState(true);
-
-    const [playerName, setPlayerName] = useState("");
-    const [docNumber, setDocNumber] = useState("");
-    const [searchId, setSearchId] = useState("");
 
     const [playBalance, setPlayBalance] = useState(0);
     const [bonusBalance, setBonusBalance] = useState(0);
     const [selectedWallet, setSelectedWallet] = useState<Wallet>("play");
 
-    const [selectedBet, setSelectedBet] = useState<ParchisBet>("0.25");
-    const [maxPlayers, setMaxPlayers] = useState<MaxPlayers>(2);
-    const [isPrivate, setIsPrivate] = useState(false);
-    const [roomPassword, setRoomPassword] = useState("");
-    const [joinRoomId, setJoinRoomId] = useState("");
-    const [joinPassword, setJoinPassword] = useState("");
+    const [isCustomizerOpen, setIsCustomizerOpen] = useState(false);
 
-    const [publicRooms, setPublicRooms] = useState<PublicRoomItem[]>([]);
-    const [roomsUnavailable, setRoomsUnavailable] = useState(false);
-    const [isInGame, setIsInGame] = useState(false);
-    const [roomId, setRoomId] = useState("");
+    const [selectedPresetId, setSelectedPresetId] = useState<string>("emerald");
+    const [customColor, setCustomColor] = useState("#10b981");
+    const [secondaryColor, setSecondaryColor] = useState("#047857");
+    const [bodyStyle, setBodyStyle] = useState<BodyStyle>("connected");
+    const [snakeEyes, setSnakeEyes] = useState<EyeStyle>("classic");
+    const [snakeAccessory, setSnakeAccessory] =
+        useState<AccessoryStyle>("none");
+
+    const customColorRef = useRef("#10b981");
+    const secondaryColorRef = useRef("#047857");
+    const bodyStyleRef = useRef<BodyStyle>("connected");
+    const snakeEyesRef = useRef<EyeStyle>("classic");
+    const snakeAccessoryRef = useRef<AccessoryStyle>("none");
+
+    const [selectedBet, setSelectedBet] = useState<SnakeBet>("0.20");
+    const selectedBetRef = useRef<number>(0.2);
+
+    const [isInSnakeGame, setIsInSnakeGame] = useState(false);
+    const [snakeRoomId, setSnakeRoomId] = useState("");
+
+    const [isAlive, setIsAlive] = useState(true);
+    const [cashedOut, setCashedOut] = useState(false);
+    const [finalPayout, setFinalPayout] = useState(0);
+    const [score, setScore] = useState(0);
+    const [snakeBalance, setSnakeBalance] = useState(0.2);
     const [isConnected, setIsConnected] = useState(false);
     const [connectionMessage, setConnectionMessage] = useState(
         "Preparando arena..."
     );
-    const [gameState, setGameState] = useState<ParchisState | null>(null);
-    const [displayedDice, setDisplayedDice] = useState<[number, number]>([
-        3, 5,
-    ]);
-    const [busyAction, setBusyAction] = useState(false);
-    const [rollingDice, setRollingDice] = useState(false);
-    const [isConnecting, setIsConnecting] = useState(false);
+    const [cashOutProcessing, setCashOutProcessing] = useState(false);
+    const [cashOutSeconds, setCashOutSeconds] = useState(0);
+    const [joystickKnob, setJoystickKnob] = useState({ x: 0, y: 0 });
+    const [joystickActive, setJoystickActive] = useState(false);
 
     const [modal, setModal] = useState({
         isOpen: false,
@@ -561,32 +580,44 @@ export default function ParchisGamePage() {
         message: "",
     });
 
-    const boardCanvasRef = useRef<HTMLCanvasElement | null>(null);
-    const socketRef = useRef<WebSocket | null>(null);
-    const gameStateRef = useRef<ParchisState | null>(null);
+    const canvasRef = useRef<HTMLCanvasElement | null>(null);
+    const minimapCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const joystickBaseRef = useRef<HTMLDivElement | null>(null);
+    const snakeSocketRef = useRef<WebSocket | null>(null);
+    const gameStateRef = useRef<any>(null);
+
     const userIdRef = useRef<string | null>(null);
-    const accessTokenRef = useRef<string>("");
-    const roomIdRef = useRef<string>("");
+    const accessTokenRef = useRef("");
+
     const animationFrameRef = useRef<number | null>(null);
-    const connectedRef = useRef<boolean>(false);
-    const closingByUserRef = useRef<boolean>(false);
-    const connectingRef = useRef<boolean>(false);
-    const rollCounterRef = useRef<number>(0);
-    const appliedRollCounterRef = useRef<number>(0);
-    const displayedDiceRef = useRef<[number, number]>([3, 5]);
-    const pieceCoordsMapRef = useRef<Map<string, { x: number; y: number }>>(
-        new Map()
-    );
 
-    const setConnectingFlag = useCallback((flag: boolean) => {
-        connectingRef.current = flag;
-        setIsConnecting(flag);
-    }, []);
+    const connectedRef = useRef(false);
+    const aliveRef = useRef(true);
+    const readySentRef = useRef(false);
+    const closingByUserRef = useRef(false);
+    const cashOutSentRef = useRef(false);
+    const boostActiveRef = useRef(false);
+    const startingRef = useRef(false);
+    const lastSteerSentRef = useRef(0);
+    const boostPointerIdRef = useRef<number | null>(null);
+    const joystickPointerIdRef = useRef<number | null>(null);
+    const minimapPointerIdRef = useRef<number | null>(null);
+    const peakBalanceRef = useRef<number>(0.2);
 
-    const setDicePair = useCallback((pair: [number, number]) => {
-        displayedDiceRef.current = pair;
-        setDisplayedDice(pair);
-    }, []);
+    const applyPreset = (preset: SkinPreset) => {
+        setSelectedPresetId(preset.id);
+        setCustomColor(preset.primary);
+        setSecondaryColor(preset.secondary);
+        setBodyStyle(preset.bodyStyle);
+        setSnakeEyes(preset.eyes);
+        setSnakeAccessory(preset.accessory);
+
+        customColorRef.current = preset.primary;
+        secondaryColorRef.current = preset.secondary;
+        bodyStyleRef.current = preset.bodyStyle;
+        snakeEyesRef.current = preset.eyes;
+        snakeAccessoryRef.current = preset.accessory;
+    };
 
     const showAlert = useCallback((title: string, message: string) => {
         setModal({ isOpen: true, title, message });
@@ -599,7 +630,6 @@ export default function ParchisGamePage() {
     const getWebSocketUrl = useCallback((endpoint: string) => {
         const configuredUrl =
             process.env.NEXT_PUBLIC_WS_URL ||
-            API_BASE ||
             "wss://casino-axiom.ethiodeploy.app";
 
         let backendUrl = configuredUrl.trim().replace(/\/+$/, "");
@@ -637,8 +667,6 @@ export default function ParchisGamePage() {
                 accessTokenRef.current = "";
                 setPlayBalance(0);
                 setBonusBalance(0);
-                setPlayerName("");
-                setDocNumber("");
                 return;
             }
 
@@ -649,30 +677,20 @@ export default function ParchisGamePage() {
             setAccessToken(token);
             accessTokenRef.current = token;
 
-            const emailFallback =
-                session.user?.email?.split("@")[0] || "Jugador";
-
             const { data: profile, error } = await supabase
                 .from("profiles")
-                .select("first_name, doc_number, balance, bonus_balance")
+                .select("balance, bonus_balance")
                 .eq("id", currentUserId)
                 .maybeSingle();
 
             if (error) {
                 console.error("Error cargando perfil:", error);
-                setPlayerName((prev) => prev || emailFallback);
                 return;
             }
 
             if (profile) {
-                setPlayerName(getMainName(profile, emailFallback));
-                setDocNumber(
-                    profile.doc_number ? String(profile.doc_number) : ""
-                );
                 setPlayBalance(Number(profile.balance ?? 0));
                 setBonusBalance(Number(profile.bonus_balance ?? 0));
-            } else {
-                setPlayerName((prev) => prev || emailFallback);
             }
         } catch (error) {
             console.error("Error cargando saldos:", error);
@@ -712,8 +730,6 @@ export default function ParchisGamePage() {
                 accessTokenRef.current = "";
                 setPlayBalance(0);
                 setBonusBalance(0);
-                setPlayerName("");
-                setDocNumber("");
             }
         });
 
@@ -723,872 +739,1144 @@ export default function ParchisGamePage() {
         };
     }, [loadUserBalances]);
 
-    const fetchPublicRooms = useCallback(async () => {
+    const sendSteerAngle = useCallback((angle: number, throttleMs = 20) => {
+        if (!Number.isFinite(angle)) return;
+        const now = performance.now();
+        if (now - lastSteerSentRef.current < throttleMs) return;
+        lastSteerSentRef.current = now;
+
+        const ws = snakeSocketRef.current;
+        if (!connectedRef.current || !aliveRef.current) return;
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
         try {
-            const amount = PARCHIS_BETS[selectedBet];
-            const idParam = searchId.trim()
-                ? `&doc_number=${encodeURIComponent(searchId.trim())}&cedula=${encodeURIComponent(searchId.trim())}`
-                : "";
-            const res = await fetch(
-                `${API_BASE}/parchis/rooms?bet=${encodeURIComponent(
-                    String(amount)
-                )}${idParam}`
-            );
-            if (!res.ok) {
-                setRoomsUnavailable(true);
-                setPublicRooms([]);
-                return;
-            }
-            const data = await res.json();
-            setRoomsUnavailable(false);
-            setPublicRooms(Array.isArray(data.rooms) ? data.rooms : []);
-        } catch {
-            setRoomsUnavailable(true);
-            setPublicRooms([]);
+            ws.send(JSON.stringify({ type: "STEER", angle }));
+        } catch (error) {
+            console.error("Error enviando dirección:", error);
         }
-    }, [selectedBet, searchId]);
+    }, []);
 
-    useEffect(() => {
-        if (isInGame || !userId) return;
-        void fetchPublicRooms();
-        const timer = setInterval(() => {
-            void fetchPublicRooms();
-        }, 6000);
-        return () => clearInterval(timer);
-    }, [isInGame, userId, fetchPublicRooms]);
+    const steerTowardsClientPoint = useCallback(
+        (clientX: number, clientY: number) => {
+            if (!connectedRef.current || !aliveRef.current) return;
 
-    const exitParchisGame = useCallback(async () => {
-        closingByUserRef.current = true;
-        setConnectingFlag(false);
-        connectedRef.current = false;
-        setRollingDice(false);
+            const canvas = canvasRef.current;
+            const state = gameStateRef.current;
+            const uid = userIdRef.current;
 
-        const activeRoomId =
-            gameStateRef.current?.room_id || roomIdRef.current || roomId;
-        const currentState = gameStateRef.current;
-        const currentUid = userIdRef.current;
-        const mySeat = currentState?.players?.find(
-            (pl) => pl.user_id === currentUid
-        );
-        const hostClosing = Boolean(
-            currentState &&
-            currentUid &&
-            (currentState.host_user_id === currentUid ||
-                mySeat?.seat_index === 0)
-        );
+            if (!canvas || !state || !uid) return;
 
-        const ws = socketRef.current;
-        socketRef.current = null;
+            const snake = state.snakes?.[uid];
+            if (
+                !snake?.alive ||
+                !Array.isArray(snake.body) ||
+                !snake.body.length
+            )
+                return;
+
+            const head = snake.body[0];
+            if (typeof head?.x !== "number" || typeof head?.y !== "number")
+                return;
+
+            const rect = canvas.getBoundingClientRect();
+            const pointerX = clientX - rect.left;
+            const pointerY = clientY - rect.top;
+
+            const scale = Math.min(
+                1.25,
+                Math.max(0.55, Math.min(rect.width, rect.height) / 720)
+            );
+
+            const worldX = head.x + (pointerX - rect.width / 2) / scale;
+            const worldY = head.y + (pointerY - rect.height / 2) / scale;
+            const angle = Math.atan2(worldY - head.y, worldX - head.x);
+
+            sendSteerAngle(angle, 20);
+        },
+        [sendSteerAngle]
+    );
+
+    const stopBoost = useCallback(() => {
+        const ws = snakeSocketRef.current;
+
+        if (!boostActiveRef.current) return;
+
+        boostActiveRef.current = false;
 
         if (ws && ws.readyState === WebSocket.OPEN) {
             try {
-                ws.send(
-                    JSON.stringify({
-                        type: hostClosing ? "CLOSE_ROOM" : "LEAVE_ROOM",
-                        room_id: activeRoomId,
-                    })
-                );
-            } catch { }
+                ws.send(JSON.stringify({ type: "BOOST_STOP" }));
+            } catch (error) {
+                console.error("Error deteniendo aceleración:", error);
+            }
+        }
+    }, []);
+
+    const startBoost = useCallback(() => {
+        const ws = snakeSocketRef.current;
+
+        if (
+            !connectedRef.current ||
+            !aliveRef.current ||
+            !ws ||
+            ws.readyState !== WebSocket.OPEN ||
+            boostActiveRef.current ||
+            cashOutSentRef.current
+        ) {
+            return;
         }
 
-        if (hostClosing && activeRoomId && accessTokenRef.current) {
-            try {
-                await fetch(
-                    `${API_BASE}/parchis/rooms/${encodeURIComponent(
-                        String(activeRoomId)
-                    )}/close`,
-                    {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json",
-                            Authorization: `Bearer ${accessTokenRef.current}`,
-                        },
-                    }
-                );
-            } catch { }
+        const state = gameStateRef.current;
+        const snake = state?.snakes?.[userIdRef.current || ""];
+
+        if (!snake?.alive || !snake?.ready) return;
+
+        boostActiveRef.current = true;
+
+        try {
+            ws.send(JSON.stringify({ type: "BOOST_START" }));
+        } catch (error) {
+            boostActiveRef.current = false;
+            console.error("Error iniciando aceleración:", error);
+        }
+    }, []);
+
+    const updateJoystickFromClientPoint = (clientX: number, clientY: number) => {
+        const base = joystickBaseRef.current;
+        if (!base) return;
+
+        const rect = base.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const maxRadius = Math.max(24, rect.width * 0.34);
+
+        const dx = clientX - cx;
+        const dy = clientY - cy;
+        const dist = Math.hypot(dx, dy);
+
+        if (dist < 4) {
+            setJoystickKnob({ x: 0, y: 0 });
+            return;
         }
 
+        const clampedDist = Math.min(dist, maxRadius);
+        const angle = Math.atan2(dy, dx);
+        const knobX = Math.cos(angle) * clampedDist;
+        const knobY = Math.sin(angle) * clampedDist;
+
+        setJoystickKnob({ x: knobX, y: knobY });
+        sendSteerAngle(angle, 20);
+    };
+
+    const handleJoystickPointerDown = (e: PointerEvent<HTMLDivElement>) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        joystickPointerIdRef.current = e.pointerId;
+
+        try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {}
+
+        setJoystickActive(true);
+        updateJoystickFromClientPoint(e.clientX, e.clientY);
+    };
+
+    const handleJoystickPointerMove = (e: PointerEvent<HTMLDivElement>) => {
+        if (!joystickActive) return;
+        if (
+            joystickPointerIdRef.current !== null &&
+            e.pointerId !== joystickPointerIdRef.current
+        ) {
+            return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        updateJoystickFromClientPoint(e.clientX, e.clientY);
+    };
+
+    const handleJoystickPointerUp = (e: PointerEvent<HTMLDivElement>) => {
+        if (
+            joystickPointerIdRef.current !== null &&
+            e.pointerId !== joystickPointerIdRef.current
+        ) {
+            return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        joystickPointerIdRef.current = null;
+        setJoystickActive(false);
+        setJoystickKnob({ x: 0, y: 0 });
+
+        try {
+            if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                e.currentTarget.releasePointerCapture(e.pointerId);
+            }
+        } catch {}
+    };
+
+    const steerFromMinimapPoint = useCallback(
+        (clientX: number, clientY: number) => {
+            const mini = minimapCanvasRef.current;
+            const state = gameStateRef.current;
+            const uid = userIdRef.current;
+            if (!mini || !state || !uid) return;
+
+            const snake = state.snakes?.[uid];
+            const head = snake?.body?.[0];
+            if (!snake?.alive || typeof head?.x !== "number" || typeof head?.y !== "number") {
+                return;
+            }
+
+            const worldWidth = Number(state.world?.width || WORLD_WIDTH);
+            const worldHeight = Number(state.world?.height || WORLD_HEIGHT);
+            const rect = mini.getBoundingClientRect();
+            if (!rect.width || !rect.height) return;
+
+            const nx = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+            const ny = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+
+            const targetWorldX = nx * worldWidth;
+            const targetWorldY = ny * worldHeight;
+            const angle = Math.atan2(targetWorldY - head.y, targetWorldX - head.x);
+            sendSteerAngle(angle, 20);
+        },
+        [sendSteerAngle]
+    );
+
+    const handleMinimapPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
+        e.preventDefault();
+        e.stopPropagation();
+        minimapPointerIdRef.current = e.pointerId;
+        try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {}
+        steerFromMinimapPoint(e.clientX, e.clientY);
+    };
+
+    const handleMinimapPointerMove = (e: PointerEvent<HTMLCanvasElement>) => {
+        if (
+            minimapPointerIdRef.current === null ||
+            e.pointerId !== minimapPointerIdRef.current
+        ) {
+            return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        steerFromMinimapPoint(e.clientX, e.clientY);
+    };
+
+    const handleMinimapPointerUp = (e: PointerEvent<HTMLCanvasElement>) => {
+        if (
+            minimapPointerIdRef.current !== null &&
+            e.pointerId !== minimapPointerIdRef.current
+        ) {
+            return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        minimapPointerIdRef.current = null;
+        try {
+            if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                e.currentTarget.releasePointerCapture(e.pointerId);
+            }
+        } catch {}
+    };
+
+    const handleCanvasPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
+        if (e.pointerType === "mouse" && e.button !== 0) return;
+
+        e.preventDefault();
+        boostPointerIdRef.current = e.pointerId;
+
+        try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {}
+
+        if (e.pointerType === "mouse") {
+            steerTowardsClientPoint(e.clientX, e.clientY);
+        }
+
+        startBoost();
+    };
+
+    const handleCanvasPointerMove = (e: PointerEvent<HTMLCanvasElement>) => {
+        if (e.pointerType !== "mouse") return;
+        steerTowardsClientPoint(e.clientX, e.clientY);
+    };
+
+    const handleCanvasPointerUp = (e: PointerEvent<HTMLCanvasElement>) => {
+        if (
+            boostPointerIdRef.current !== null &&
+            e.pointerId !== boostPointerIdRef.current
+        ) {
+            return;
+        }
+
+        boostPointerIdRef.current = null;
+        stopBoost();
+
+        try {
+            if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                e.currentTarget.releasePointerCapture(e.pointerId);
+            }
+        } catch {}
+    };
+
+    const renderMinimap = useCallback(() => {
+        const mini = minimapCanvasRef.current;
+        if (!mini) return;
+
+        const ctx = mini.getContext("2d");
+        if (!ctx) return;
+
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const cssW = mini.clientWidth || 128;
+        const cssH = mini.clientHeight || 128;
+
+        if (mini.width !== Math.floor(cssW * dpr) || mini.height !== Math.floor(cssH * dpr)) {
+            mini.width = Math.floor(cssW * dpr);
+            mini.height = Math.floor(cssH * dpr);
+        }
+
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, cssW, cssH);
+
+        ctx.fillStyle = "rgba(6, 12, 9, 0.92)";
+        ctx.fillRect(0, 0, cssW, cssH);
+
+        ctx.strokeStyle = "rgba(52, 211, 153, 0.25)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(0.5, 0.5, cssW - 1, cssH - 1);
+
+        ctx.strokeStyle = "rgba(52, 211, 153, 0.08)";
+        ctx.beginPath();
+        ctx.moveTo(cssW / 2, 0);
+        ctx.lineTo(cssW / 2, cssH);
+        ctx.moveTo(0, cssH / 2);
+        ctx.lineTo(cssW, cssH / 2);
+        ctx.stroke();
+
+        const state = gameStateRef.current;
+        if (!state || !state.snakes) return;
+
+        const worldWidth = Number(state.world?.width || WORLD_WIDTH);
+        const worldHeight = Number(state.world?.height || WORLD_HEIGHT);
+
+        Object.entries(state.snakes).forEach(([uid, value]: [string, any]) => {
+            if (!value?.alive || !Array.isArray(value.body) || !value.body.length) {
+                return;
+            }
+            const head = value.body[0];
+            if (typeof head?.x !== "number" || typeof head?.y !== "number") {
+                return;
+            }
+
+            const mx = Math.max(2, Math.min(cssW - 2, (head.x / worldWidth) * cssW));
+            const my = Math.max(2, Math.min(cssH - 2, (head.y / worldHeight) * cssH));
+            const isOwn = uid === userIdRef.current;
+
+            ctx.beginPath();
+            ctx.arc(mx, my, isOwn ? 4 : 3, 0, Math.PI * 2);
+            ctx.fillStyle = isOwn
+                ? customColorRef.current
+                : value.color || "#f43f5e";
+            ctx.fill();
+
+            if (isOwn) {
+                ctx.strokeStyle = "#ffffff";
+                ctx.lineWidth = 1.4;
+                ctx.stroke();
+            }
+        });
+    }, []);
+
+    const renderCanvas = useCallback((now = 0) => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+
+        const width = canvas.clientWidth;
+        const height = canvas.clientHeight;
+
+        if (!width || !height) return;
+
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = "#050505";
+        ctx.fillRect(0, 0, width, height);
+
+        if (!connectedRef.current) {
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillStyle = "#10b981";
+            ctx.font = "bold 16px Arial";
+            ctx.fillText(
+                "CONECTANDO CON AXIOM ARENA",
+                width / 2,
+                height / 2 - 14
+            );
+
+            ctx.fillStyle = "#a1a1aa";
+            ctx.font = "12px Arial";
+            ctx.fillText(
+                "Esperando respuesta del servidor",
+                width / 2,
+                height / 2 + 14
+            );
+            return;
+        }
+
+        const state = gameStateRef.current;
+
+        if (!state || !state.snakes) {
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillStyle = "#10b981";
+            ctx.font = "bold 14px Arial";
+            ctx.fillText("ESPERANDO JUGADORES", width / 2, height / 2);
+            return;
+        }
+
+        const worldWidth = Number(state.world?.width || WORLD_WIDTH);
+        const worldHeight = Number(state.world?.height || WORLD_HEIGHT);
+
+        const ownSnake = state.snakes[userIdRef.current || ""];
+        const ownHead = ownSnake?.body?.[0];
+
+        const cameraX =
+            typeof ownHead?.x === "number" ? ownHead.x : worldWidth / 2;
+
+        const cameraY =
+            typeof ownHead?.y === "number" ? ownHead.y : worldHeight / 2;
+
+        const scale = Math.min(
+            1.25,
+            Math.max(0.55, Math.min(width, height) / 720)
+        );
+
+        const viewWorldWidth = width / scale;
+        const viewWorldHeight = height / scale;
+
+        const left = cameraX - viewWorldWidth / 2;
+        const top = cameraY - viewWorldHeight / 2;
+        const right = left + viewWorldWidth;
+        const bottom = top + viewWorldHeight;
+
+        ctx.save();
+
+        ctx.translate(
+            width / 2 - cameraX * scale,
+            height / 2 - cameraY * scale
+        );
+
+        ctx.scale(scale, scale);
+
+        ctx.fillStyle = "#080d0b";
+        ctx.fillRect(left, top, viewWorldWidth, viewWorldHeight);
+
+        ctx.strokeStyle = "rgba(52,211,153,0.10)";
+        ctx.lineWidth = 1 / scale;
+
+        const gridStartX = Math.max(0, Math.floor(left / 60) * 60);
+        const gridEndX = Math.min(worldWidth, right);
+        const gridStartY = Math.max(0, Math.floor(top / 60) * 60);
+        const gridEndY = Math.min(worldHeight, bottom);
+
+        for (let x = gridStartX; x <= gridEndX; x += 60) {
+            ctx.beginPath();
+            ctx.moveTo(x, Math.max(0, top));
+            ctx.lineTo(x, Math.min(worldHeight, bottom));
+            ctx.stroke();
+        }
+
+        for (let y = gridStartY; y <= gridEndY; y += 60) {
+            ctx.beginPath();
+            ctx.moveTo(Math.max(0, left), y);
+            ctx.lineTo(Math.min(worldWidth, right), y);
+            ctx.stroke();
+        }
+
+        ctx.strokeStyle = "#166534";
+        ctx.lineWidth = 5 / scale;
+        ctx.strokeRect(0, 0, worldWidth, worldHeight);
+
+        if (Array.isArray(state.foods)) {
+            for (const food of state.foods) {
+                if (typeof food?.x !== "number" || typeof food?.y !== "number")
+                    continue;
+
+                const radius = Number(food.radius || 9);
+
+                if (
+                    food.x < left - radius ||
+                    food.x > right + radius ||
+                    food.y < top - radius ||
+                    food.y > bottom + radius
+                )
+                    continue;
+
+                const color = food.color || "#ffffff";
+
+                ctx.beginPath();
+                ctx.arc(food.x, food.y, radius + 4, 0, Math.PI * 2);
+                ctx.fillStyle = color;
+                ctx.shadowColor = color;
+                ctx.shadowBlur = 12 / scale;
+                ctx.fill();
+
+                ctx.shadowBlur = 0;
+
+                ctx.beginPath();
+                ctx.arc(
+                    food.x,
+                    food.y,
+                    Math.max(2, radius - 3),
+                    0,
+                    Math.PI * 2
+                );
+                ctx.fillStyle = "#ffffff";
+                ctx.fill();
+            }
+        }
+
+        if (Array.isArray(state.coins)) {
+            for (const coin of state.coins) {
+                if (typeof coin?.x !== "number" || typeof coin?.y !== "number")
+                    continue;
+
+                if (
+                    coin.x < left - 30 ||
+                    coin.x > right + 30 ||
+                    coin.y < top - 30 ||
+                    coin.y > bottom + 30
+                )
+                    continue;
+
+                const value = getCoinValue(coin);
+
+                ctx.beginPath();
+                ctx.arc(coin.x, coin.y, 15, 0, Math.PI * 2);
+                ctx.fillStyle = "#facc15";
+                ctx.shadowColor = "#facc15";
+                ctx.shadowBlur = 15 / scale;
+                ctx.fill();
+
+                ctx.shadowBlur = 0;
+
+                ctx.beginPath();
+                ctx.arc(coin.x, coin.y, 10, 0, Math.PI * 2);
+                ctx.fillStyle = "#fef3c7";
+                ctx.fill();
+
+                ctx.fillStyle = "#713f12";
+                ctx.font = "bold 11px Arial";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText("$", coin.x, coin.y);
+
+                ctx.fillStyle = "#fde68a";
+                ctx.font = "bold 11px Arial";
+                ctx.fillText(money(value), coin.x, coin.y - 23);
+            }
+        }
+
+        Object.entries(state.snakes).forEach(([uid, value]: [string, any]) => {
+            if (
+                !value?.alive ||
+                !Array.isArray(value.body) ||
+                value.body.length === 0
+            )
+                return;
+
+            const isOwnSnake = uid === userIdRef.current;
+            const snakeBoosting = isOwnSnake
+                ? boostActiveRef.current || Boolean(value.boosting)
+                : Boolean(value.boosting);
+
+            const balance = Number(
+                value.balance ??
+                    (typeof value.balance_micros === "number"
+                        ? value.balance_micros / 1000000
+                        : selectedBetRef.current)
+            );
+
+            if (isOwnSnake && balance > peakBalanceRef.current) {
+                peakBalanceRef.current = balance;
+            }
+
+            const referenceBalance = Math.max(
+                selectedBetRef.current || 0.2,
+                peakBalanceRef.current
+            );
+
+            // Escala por monedas (baja al soltar monedas, sube al ganar)
+            const coinScale =
+                referenceBalance > 0
+                    ? Math.max(0.52, Math.min(1.35, balance / referenceBalance))
+                    : 1;
+
+            // Al acelerar se recoge y se hace más pequeña sin estirarse
+            const boostShrink = snakeBoosting ? 0.7 : 1;
+            const sizeFactor = isOwnSnake
+                ? Math.max(0.4, Math.min(1.35, coinScale * boostShrink))
+                : boostShrink;
+
+            const maxSegments = isOwnSnake
+                ? Math.max(
+                      MIN_VISIBLE_SEGMENTS,
+                      Math.round(
+                          value.body.length *
+                              Math.max(0.45, Math.min(1.2, coinScale * (snakeBoosting ? 0.75 : 1)))
+                      )
+                  )
+                : value.body.length;
+
+            const primaryColor = isOwnSnake
+                ? customColorRef.current
+                : value.color || "#f43f5e";
+            const secondaryColor = isOwnSnake
+                ? secondaryColorRef.current
+                : value.secondary_color || "#9f1239";
+
+            const visibleBody = value.body.filter(
+                (seg: any) =>
+                    typeof seg?.x === "number" &&
+                    typeof seg?.y === "number" &&
+                    seg.x >= left - 80 &&
+                    seg.x <= right + 80 &&
+                    seg.y >= top - 80 &&
+                    seg.y <= bottom + 80
+            );
+
+            if (visibleBody.length === 0) return;
+
+            const head = value.body[0];
+            const headRadius = Math.max(
+                10,
+                Number(head?.radius ?? value.radius ?? 12)
+            );
+            const bodyRadius = Math.max(6, Number(value.radius ?? 8.5));
+
+            drawSnakeVisual(ctx, {
+                body: value.body,
+                angle: Number(value.angle || 0),
+                primaryColor,
+                secondaryColor,
+                glowColor: primaryColor,
+                bodyStyle: isOwnSnake
+                    ? bodyStyleRef.current
+                    : value.body_style || "connected",
+                eyes: isOwnSnake
+                    ? snakeEyesRef.current
+                    : value.eyes || "classic",
+                accessory: isOwnSnake
+                    ? snakeAccessoryRef.current
+                    : value.accessory || "none",
+                baseHeadRadius: headRadius,
+                baseBodyRadius: bodyRadius,
+                scale,
+                time: now,
+                sizeFactor,
+                maxSegments,
+            });
+
+            if (head) {
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillStyle = "#ffffff";
+                ctx.font = "bold 13px Arial";
+                ctx.shadowColor = "#000000";
+                ctx.shadowBlur = 5 / scale;
+                ctx.fillText(
+                    money(balance),
+                    head.x,
+                    head.y - headRadius * sizeFactor - 16
+                );
+                ctx.shadowBlur = 0;
+            }
+        });
+
+        ctx.restore();
+
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 13px Arial";
+        ctx.fillText(`PUNTOS: ${Number(ownSnake?.score || 0)}`, 20, height - 20);
+
+        renderMinimap();
+    }, [renderMinimap]);
+
+    useEffect(() => {
+        if (!isInSnakeGame) return;
+
+        let running = true;
+
+        const loop = (now: number) => {
+            if (!running) return;
+            renderCanvas(now);
+            animationFrameRef.current = requestAnimationFrame(loop);
+        };
+
+        animationFrameRef.current = requestAnimationFrame(loop);
+
+        return () => {
+            running = false;
+
+            if (animationFrameRef.current !== null) {
+                cancelAnimationFrame(animationFrameRef.current);
+                animationFrameRef.current = null;
+            }
+        };
+    }, [isInSnakeGame, renderCanvas]);
+
+    useEffect(() => {
+        if (!isInSnakeGame) return;
+
+        const resizeCanvas = () => {
+            const canvas = canvasRef.current;
+            if (!canvas) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+            const width = Math.max(1, Math.floor(rect.width * dpr));
+            const height = Math.max(1, Math.floor(rect.height * dpr));
+
+            if (canvas.width !== width || canvas.height !== height) {
+                canvas.width = width;
+                canvas.height = height;
+            }
+
+            const ctx = canvas.getContext("2d");
+            if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        };
+
+        resizeCanvas();
+
+        const observer = new ResizeObserver(resizeCanvas);
+        if (canvasRef.current) observer.observe(canvasRef.current);
+
+        window.addEventListener("resize", resizeCanvas);
+
+        return () => {
+            observer.disconnect();
+            window.removeEventListener("resize", resizeCanvas);
+        };
+    }, [isInSnakeGame]);
+
+    const exitSnakeGame = useCallback(() => {
+        stopBoost();
+        boostPointerIdRef.current = null;
+        joystickPointerIdRef.current = null;
+        minimapPointerIdRef.current = null;
+        peakBalanceRef.current = selectedBetRef.current || 0.2;
+
+        closingByUserRef.current = true;
+        startingRef.current = false;
+
+        connectedRef.current = false;
+        aliveRef.current = false;
+        readySentRef.current = false;
+        cashOutSentRef.current = false;
+
+        setJoystickActive(false);
+        setJoystickKnob({ x: 0, y: 0 });
+        setCashOutProcessing(false);
+        setCashOutSeconds(0);
         setIsConnected(false);
-        setIsInGame(false);
-        setGameState(null);
+        setIsInSnakeGame(false);
+        setIsAlive(false);
+
         gameStateRef.current = null;
-        pieceCoordsMapRef.current.clear();
-        roomIdRef.current = "";
-        setRoomId("");
-        rollCounterRef.current = 0;
-        appliedRollCounterRef.current = 0;
 
         if (animationFrameRef.current !== null) {
             cancelAnimationFrame(animationFrameRef.current);
             animationFrameRef.current = null;
         }
 
+        const ws = snakeSocketRef.current;
+        snakeSocketRef.current = null;
+
         if (ws) {
             ws.onclose = null;
             ws.onerror = null;
             ws.onmessage = null;
+
             if (
                 ws.readyState === WebSocket.OPEN ||
                 ws.readyState === WebSocket.CONNECTING
             ) {
-                ws.close(
-                    1000,
-                    hostClosing
-                        ? "Anfitrión cerró la sala"
-                        : "Jugador salió de la partida"
-                );
+                ws.close(1000, "Jugador salió de la partida");
             }
         }
 
-        await loadUserBalances();
-        await fetchPublicRooms();
-    }, [fetchPublicRooms, loadUserBalances, roomId, setConnectingFlag]);
+        void loadUserBalances();
+    }, [loadUserBalances, stopBoost]);
 
-    const connectToRoom = useCallback(
-        (
-            targetRoomId: string,
-            pwd = "",
-            overrideBet?: number,
-            overridePlayers?: MaxPlayers
-        ) => {
-            if (connectingRef.current || socketRef.current) {
-                showAlert(
-                    "Partida activa",
-                    "Ya existe una conexión activa en Parchís."
-                );
-                return;
-            }
+    const startSnakeGame = () => {
+        if (startingRef.current || snakeSocketRef.current) {
+            showAlert("Partida activa", "Ya existe una conexión de juego activa.");
+            return;
+        }
 
-            if (!userIdRef.current || !accessTokenRef.current) {
-                showAlert(
-                    "Error de sesión",
-                    "No se detectó una sesión válida. Vuelve a iniciar sesión."
-                );
-                return;
-            }
+        const betConfig = SNAKE_BETS[selectedBet];
+        const parsedBet = betConfig.amount;
+        const generatedRoomId = betConfig.room;
 
-            const betAmount = overrideBet ?? PARCHIS_BETS[selectedBet];
-            const playersCount = overridePlayers ?? maxPlayers;
-            const available =
-                selectedWallet === "play" ? playBalance : bonusBalance;
+        if (!userIdRef.current || !accessTokenRef.current) {
+            showAlert(
+                "Error de sesión",
+                "No se detectó una sesión válida. Vuelve a iniciar sesión."
+            );
+            return;
+        }
 
-            if (available < betAmount) {
-                showAlert(
-                    "Saldo insuficiente",
-                    `Necesitas al menos ${money(betAmount)} en la billetera seleccionada.`
-                );
-                return;
-            }
+        const available =
+            selectedWallet === "play" ? playBalance : bonusBalance;
 
-            setConnectingFlag(true);
-            closingByUserRef.current = false;
-            connectedRef.current = false;
-            rollCounterRef.current = 0;
-            appliedRollCounterRef.current = 0;
-            pieceCoordsMapRef.current.clear();
+        if (available < parsedBet) {
+            showAlert(
+                "Saldo insuficiente",
+                `Necesitas al menos ${money(parsedBet)} en la billetera seleccionada.`
+            );
+            return;
+        }
 
-            roomIdRef.current = targetRoomId;
-            setRoomId(targetRoomId);
-            setIsInGame(true);
-            setIsConnected(false);
-            setGameState(null);
-            gameStateRef.current = null;
-            setDicePair(randomDiePair());
-            setConnectionMessage("Conectando con el servidor...");
+        startingRef.current = true;
+        selectedBetRef.current = parsedBet;
+        peakBalanceRef.current = parsedBet;
 
-            const cleanName = (playerName.trim() || "Jugador").split(/\s+/)[0];
-            const cleanId = docNumber.trim();
+        setSnakeRoomId(generatedRoomId);
+        setIsInSnakeGame(true);
+        setIsAlive(true);
+        aliveRef.current = true;
 
-            const wsUrl = getWebSocketUrl(
-                `/ws/parchis/${encodeURIComponent(targetRoomId)}` +
+        setCashedOut(false);
+        setFinalPayout(0);
+        setScore(0);
+        setSnakeBalance(parsedBet);
+
+        setCashOutProcessing(false);
+        setCashOutSeconds(0);
+        setIsConnected(false);
+        connectedRef.current = false;
+
+        setConnectionMessage("Conectando con el servidor...");
+
+        gameStateRef.current = null;
+        readySentRef.current = false;
+        cashOutSentRef.current = false;
+        closingByUserRef.current = false;
+        boostPointerIdRef.current = null;
+        joystickPointerIdRef.current = null;
+        minimapPointerIdRef.current = null;
+
+        boostActiveRef.current = false;
+
+        const wsUrl = getWebSocketUrl(
+            `/ws/snake/${encodeURIComponent(generatedRoomId)}` +
                 `?user_id=${encodeURIComponent(userIdRef.current)}` +
                 `&access_token=${encodeURIComponent(accessTokenRef.current)}` +
-                `&player_name=${encodeURIComponent(cleanName)}` +
-                `&doc_number=${encodeURIComponent(cleanId)}` +
-                `&cedula=${encodeURIComponent(cleanId)}` +
-                `&bet=${encodeURIComponent(String(betAmount))}` +
-                `&max_players=${encodeURIComponent(String(playersCount))}` +
+                `&bet=${encodeURIComponent(String(parsedBet))}` +
                 `&wallet=${encodeURIComponent(selectedWallet)}` +
-                `&password=${encodeURIComponent(pwd)}`
-            );
+                `&color=${encodeURIComponent(customColorRef.current)}` +
+                `&secondary_color=${encodeURIComponent(secondaryColorRef.current)}` +
+                `&body_style=${encodeURIComponent(bodyStyleRef.current)}` +
+                `&eyes=${encodeURIComponent(snakeEyesRef.current)}` +
+                `&accessory=${encodeURIComponent(snakeAccessoryRef.current)}`
+        );
 
-            let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+        let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
-            try {
-                const ws = new WebSocket(wsUrl);
-                socketRef.current = ws;
+        try {
+            const ws = new WebSocket(wsUrl);
+            snakeSocketRef.current = ws;
 
-                ws.onopen = () => {
-                    if (socketRef.current !== ws) return;
-                    if (heartbeatTimer) clearInterval(heartbeatTimer);
-                    heartbeatTimer = setInterval(() => {
-                        if (ws.readyState === WebSocket.OPEN) {
-                            try {
-                                ws.send(JSON.stringify({ type: "PING" }));
-                            } catch { }
+            ws.onopen = () => {
+                if (snakeSocketRef.current !== ws) return;
+
+                if (heartbeatTimer) clearInterval(heartbeatTimer);
+
+                heartbeatTimer = setInterval(() => {
+                    if (ws.readyState === WebSocket.OPEN) {
+                        try {
+                            ws.send(JSON.stringify({ type: "PING" }));
+                        } catch (heartbeatError) {
+                            console.error(
+                                "Error enviando heartbeat Snake:",
+                                heartbeatError
+                            );
                         }
-                    }, 20000);
-                    setConnectionMessage("Esperando estado de la partida...");
-                };
+                    }
+                }, 20000);
 
-                ws.onmessage = (event) => {
-                    if (socketRef.current !== ws) return;
+                setConnectionMessage("Esperando estado de la partida...");
+            };
 
-                    try {
-                        const data = JSON.parse(event.data);
+            ws.onmessage = (event) => {
+                if (snakeSocketRef.current !== ws) return;
+
+                try {
+                    const data = JSON.parse(event.data);
+
+                    if (data.type === "GAME_STATE") {
+                        if (!data.snakes || typeof data.snakes !== "object") {
+                            return;
+                        }
+
+                        gameStateRef.current = data;
+
+                        if (data.room_id) {
+                            setSnakeRoomId(String(data.room_id));
+                        }
+
+                        if (!connectedRef.current) {
+                            connectedRef.current = true;
+                            setIsConnected(true);
+                            setConnectionMessage("Partida conectada");
+                        }
 
                         if (
-                            data.type === "HOST_LEFT" ||
-                            data.type === "ROOM_CLOSED" ||
-                            data.status === "closed_by_host"
+                            !readySentRef.current &&
+                            ws.readyState === WebSocket.OPEN
                         ) {
-                            void exitParchisGame();
-                            showAlert(
-                                "Sala cerrada",
-                                data.message ||
-                                "El anfitrión salió de la sala y esta se cerró."
-                            );
-                            return;
+                            readySentRef.current = true;
+                            ws.send(JSON.stringify({ type: "READY" }));
                         }
 
-                        if (data.type === "PARCHIS_STATE") {
-                            setRollingDice(false);
-                            gameStateRef.current = data;
-                            setGameState(data);
+                        const currentSnake =
+                            data.snakes[userIdRef.current || ""];
 
-                            if (
-                                Array.isArray(data.dice_pair) &&
-                                data.dice_pair.length === 2
+                        if (currentSnake) {
+                            const alive = Boolean(currentSnake.alive);
+                            aliveRef.current = alive;
+
+                            if (!(cashOutSentRef.current && !alive)) {
+                                setIsAlive(alive);
+                            }
+
+                            if (!alive) {
+                                stopBoost();
+
+                                if (!currentSnake.cashed_out) {
+                                    setCashOutProcessing(false);
+                                    setCashOutSeconds(0);
+                                    cashOutSentRef.current = false;
+                                }
+                            }
+
+                            setScore(Number(currentSnake.score || 0));
+
+                            const currentBalance = Number(
+                                currentSnake.balance ??
+                                    (typeof currentSnake.balance_micros ===
+                                    "number"
+                                        ? currentSnake.balance_micros / 1000000
+                                        : selectedBetRef.current)
+                            );
+
+                            setSnakeBalance(currentBalance);
+
+                            if (currentSnake.cashout_pending) {
+                                setCashOutProcessing(true);
+                                setCashOutSeconds(
+                                    Math.max(
+                                        0,
+                                        Math.ceil(
+                                            Number(
+                                                currentSnake.cashout_seconds ?? 0
+                                            )
+                                        )
+                                    )
+                                );
+                            } else if (
+                                cashOutSentRef.current &&
+                                currentSnake.alive &&
+                                Number(currentSnake.cashout_seconds ?? 0) <= 0
                             ) {
-                                setDicePair([
-                                    clampDieFace(data.dice_pair[0], 1),
-                                    clampDieFace(data.dice_pair[1], 1),
-                                ]);
-                            }
-
-                            if (data.room_id) {
-                                const nextId = String(data.room_id);
-                                roomIdRef.current = nextId;
-                                setRoomId(nextId);
-                            }
-                            if (!connectedRef.current) {
-                                connectedRef.current = true;
-                                setIsConnected(true);
-                                setConnectionMessage("Partida conectada");
-                            }
-                            if (data.status === "finished") {
-                                void loadUserBalances();
-                            }
-                            return;
-                        }
-
-                        if (data.type === "ERROR") {
-                            setRollingDice(false);
-                            setConnectingFlag(false);
-                            showAlert(
-                                "Error del servidor",
-                                data.message || "No se pudo completar la acción."
-                            );
-                            if (!connectedRef.current) {
-                                void exitParchisGame();
+                                setCashOutSeconds(0);
                             }
                         }
-                    } catch (error) {
-                        console.error("Error procesando mensaje Parchís:", error);
-                    }
-                };
 
-                ws.onerror = () => {
-                    if (heartbeatTimer) {
-                        clearInterval(heartbeatTimer);
-                        heartbeatTimer = null;
+                        return;
                     }
-                    if (socketRef.current === ws) {
-                        setRollingDice(false);
-                        setConnectionMessage("Reintentando enlace...");
+
+                    if (data.type === "CASHOUT_PENDING") {
+                        cashOutSentRef.current = true;
+                        setCashOutProcessing(true);
+                        setCashOutSeconds(
+                            Math.max(0, Number(data.seconds ?? 20))
+                        );
+                        stopBoost();
+                        return;
                     }
-                };
 
-                ws.onclose = (event) => {
-                    if (heartbeatTimer) {
-                        clearInterval(heartbeatTimer);
-                        heartbeatTimer = null;
-                    }
-                    if (socketRef.current !== ws) return;
+                    if (data.type === "CASHOUT_CANCELLED") {
+                        cashOutSentRef.current = false;
+                        setCashOutProcessing(false);
+                        setCashOutSeconds(0);
 
-                    setConnectingFlag(false);
-                    socketRef.current = null;
-                    connectedRef.current = false;
-                    setRollingDice(false);
-                    setIsConnected(false);
-
-                    if (!closingByUserRef.current) {
-                        setIsInGame(false);
-                        if (event.code !== 1000) {
-                            showAlert(
-                                "Partida interrumpida",
-                                event.reason ||
-                                `Se cerró la sesión de juego (${event.code}).`
-                            );
+                        if (data.message) {
+                            setConnectionMessage(String(data.message));
                         }
+
+                        return;
                     }
 
-                    void loadUserBalances();
-                };
-            } catch (error) {
+                    if (
+                        data.type === "CASHOUT_SUCCESS" ||
+                        data.type === "CASH_OUT_SUCCESS"
+                    ) {
+                        stopBoost();
+
+                        const payout = Number(
+                            data.payout ?? data.amount ?? 0
+                        );
+
+                        setCashedOut(true);
+                        setFinalPayout(payout);
+
+                        aliveRef.current = false;
+                        setIsAlive(false);
+
+                        cashOutSentRef.current = false;
+                        setCashOutProcessing(false);
+                        setCashOutSeconds(0);
+
+                        void loadUserBalances();
+                        return;
+                    }
+
+                    if (data.type === "ERROR") {
+                        stopBoost();
+
+                        cashOutSentRef.current = false;
+                        setCashOutProcessing(false);
+                        setCashOutSeconds(0);
+                        startingRef.current = false;
+
+                        showAlert(
+                            "Error del servidor",
+                            data.message || "No se pudo iniciar la partida."
+                        );
+
+                        exitSnakeGame();
+                        return;
+                    }
+                } catch (error) {
+                    console.error(
+                        "Error procesando mensaje WebSocket:",
+                        error
+                    );
+                }
+            };
+
+            ws.onerror = () => {
                 if (heartbeatTimer) {
                     clearInterval(heartbeatTimer);
                     heartbeatTimer = null;
                 }
-                console.error("Error creando WebSocket Parchís:", error);
-                setConnectingFlag(false);
-                socketRef.current = null;
-                setIsInGame(false);
-                showAlert(
-                    "Error de conexión",
-                    "No se pudo conectar con el servidor de Parchís."
-                );
-            }
-        },
-        [
-            bonusBalance,
-            docNumber,
-            exitParchisGame,
-            getWebSocketUrl,
-            loadUserBalances,
-            maxPlayers,
-            playBalance,
-            playerName,
-            selectedBet,
-            selectedWallet,
-            setConnectingFlag,
-            setDicePair,
-            showAlert,
-        ]
-    );
 
-    const handleCreatePrivateOrCustomRoom = async () => {
-        if (!accessTokenRef.current) {
-            showAlert("Sesión requerida", "Inicia sesión para crear una sala.");
-            return;
-        }
-        if (!docNumber.trim()) {
-            showAlert(
-                "ID requerido",
-                "Tu perfil no tiene ID registrado o está vacío."
-            );
-            return;
-        }
-
-        const betAmount = PARCHIS_BETS[selectedBet];
-        const available =
-            selectedWallet === "play" ? playBalance : bonusBalance;
-
-        if (available < betAmount) {
-            showAlert(
-                "Saldo insuficiente",
-                `Necesitas al menos ${money(betAmount)} en la billetera seleccionada.`
-            );
-            return;
-        }
-
-        setBusyAction(true);
-        try {
-            const cleanName = (playerName.trim() || "Jugador").split(/\s+/)[0];
-            const res = await fetch(`${API_BASE}/parchis/rooms/create`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${accessTokenRef.current}`,
-                },
-                body: JSON.stringify({
-                    bet: betAmount,
-                    max_players: maxPlayers,
-                    wallet: selectedWallet,
-                    is_private: isPrivate,
-                    password: isPrivate ? roomPassword.trim() : "",
-                    host_name: cleanName,
-                    host_doc_number: docNumber.trim(),
-                    host_cedula: docNumber.trim(),
-                }),
-            });
-
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok || !data.room_id) {
-                showAlert(
-                    "No se pudo crear la sala",
-                    data.detail || "Revisa los datos e intenta nuevamente."
-                );
-                return;
-            }
-
-            connectToRoom(
-                String(data.room_id),
-                String(data.room_code || roomPassword.trim()),
-                betAmount,
-                maxPlayers
-            );
-        } catch {
-            showAlert("Error de red", "No se pudo contactar al servidor.");
-        } finally {
-            setBusyAction(false);
-        }
-    };
-
-    const sendRollDice = () => {
-        const ws = socketRef.current;
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        rollCounterRef.current += 1;
-        setRollingDice(true);
-        ws.send(JSON.stringify({ type: "ROLL_DICE" }));
-    };
-
-    const sendMovePiece = (pieceId: number, diceValue: number) => {
-        const ws = socketRef.current;
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        ws.send(JSON.stringify({
-            type: "MOVE_PIECE",
-            piece_id: pieceId,
-            dice_value: diceValue,
-        }));
-    };
-
-    const renderBoard = useCallback(() => {
-        const canvas = boardCanvasRef.current;
-        if (!canvas) return;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-
-        const rect = canvas.getBoundingClientRect();
-        const dpr = Math.min(window.devicePixelRatio || 1, 2);
-        const size = Math.max(
-            240,
-            Math.floor(Math.min(rect.width, rect.height || rect.width))
-        );
-
-        if (
-            canvas.width !== Math.floor(size * dpr) ||
-            canvas.height !== Math.floor(size * dpr)
-        ) {
-            canvas.width = Math.floor(size * dpr);
-            canvas.height = Math.floor(size * dpr);
-        }
-
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.clearRect(0, 0, size, size);
-
-        const woodGrad = ctx.createLinearGradient(0, 0, size, size);
-        woodGrad.addColorStop(0, "#6f472b");
-        woodGrad.addColorStop(0.5, "#53331d");
-        woodGrad.addColorStop(1, "#3b2212");
-        ctx.fillStyle = woodGrad;
-        ctx.beginPath();
-        ctx.roundRect(0, 0, size, size, 18);
-        ctx.fill();
-
-        ctx.strokeStyle = "#8c5b38";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.roundRect(1.5, 1.5, size - 3, size - 3, 17);
-        ctx.stroke();
-
-        const pad = size * 0.036;
-        const inner = size - pad * 2;
-        const cell = inner / 15;
-
-        ctx.fillStyle = "#f6f0e2";
-        ctx.fillRect(pad, pad, inner, inner);
-
-        for (let y = 1; y <= 6; y++) {
-            ctx.fillStyle = CORNER_PALETTE[0].main;
-            ctx.fillRect(pad + 7 * cell, pad + y * cell, cell, cell);
-        }
-        for (let x = 8; x <= 13; x++) {
-            ctx.fillStyle = CORNER_PALETTE[1].main;
-            ctx.fillRect(pad + x * cell, pad + 7 * cell, cell, cell);
-        }
-        for (let y = 8; y <= 13; y++) {
-            ctx.fillStyle = CORNER_PALETTE[2].main;
-            ctx.fillRect(pad + 7 * cell, pad + y * cell, cell, cell);
-        }
-        for (let x = 1; x <= 6; x++) {
-            ctx.fillStyle = CORNER_PALETTE[3].main;
-            ctx.fillRect(pad + x * cell, pad + 7 * cell, cell, cell);
-        }
-
-        ctx.strokeStyle = "rgba(39, 39, 42, 0.38)";
-        ctx.lineWidth = 1;
-        for (let r = 0; r < 15; r++) {
-            for (let c = 0; c < 15; c++) {
-                const inHome =
-                    (r < 6 && c < 6) ||
-                    (r < 6 && c > 8) ||
-                    (r > 8 && c > 8) ||
-                    (r > 8 && c < 6);
-                const inCenter = r >= 6 && r <= 8 && c >= 6 && c <= 8;
-                if (inHome || inCenter) continue;
-                ctx.strokeRect(pad + c * cell, pad + r * cell, cell, cell);
-            }
-        }
-
-        for (let i = 0; i < TRACK_LEN; i++) {
-            const g = TRACK_GRID[i];
-            const px = pad + (g.gx + 0.5) * cell;
-            const py = pad + (g.gy + 0.5) * cell;
-
-            const startEntry = Object.entries(START_SPOTS).find(
-                ([, spot]) => spot === i
-            );
-            if (startEntry) {
-                const sIdx = Number(startEntry[0]);
-                ctx.fillStyle = CORNER_PALETTE[sIdx % 4].main;
-                ctx.fillRect(
-                    pad + g.gx * cell + 1,
-                    pad + g.gy * cell + 1,
-                    cell - 2,
-                    cell - 2
-                );
-            }
-
-            if (SAFE_SPOTS.has(i)) {
-                if (!startEntry) {
-                    ctx.fillStyle = "#b8bec8";
-                    ctx.fillRect(
-                        pad + g.gx * cell + 1.2,
-                        pad + g.gy * cell + 1.2,
-                        cell - 2.4,
-                        cell - 2.4
-                    );
+                if (snakeSocketRef.current === ws) {
+                    setConnectionMessage("Reintentando enlace...");
                 }
-                ctx.save();
-                ctx.beginPath();
-                const starR = Math.max(4, cell * 0.22);
-                for (let s = 0; s < 10; s++) {
-                    const r = s % 2 === 0 ? starR : starR * 0.45;
-                    const ang = (s * Math.PI) / 5 - Math.PI / 2;
-                    const sx = px + Math.cos(ang) * r;
-                    const sy = py + Math.sin(ang) * r;
-                    if (s === 0) ctx.moveTo(sx, sy);
-                    else ctx.lineTo(sx, sy);
+            };
+
+            ws.onclose = (event) => {
+                if (heartbeatTimer) {
+                    clearInterval(heartbeatTimer);
+                    heartbeatTimer = null;
                 }
-                ctx.closePath();
-                ctx.fillStyle = startEntry ? "#ffffff" : "#3f3f46";
-                ctx.fill();
-                ctx.restore();
-            } else {
-                ctx.fillStyle = "rgba(24, 24, 27, 0.55)";
-                ctx.font = `700 ${Math.max(7, Math.floor(cell * 0.27))}px sans-serif`;
-                ctx.textAlign = "center";
-                ctx.textBaseline = "middle";
-                ctx.fillText(String(i + 1), px, py);
-            }
-        }
 
-        const state = gameStateRef.current;
-        const players: ParchisPlayerState[] =
-            state && Array.isArray(state.players) ? state.players : [];
-        const currentUid = userIdRef.current;
-        const me = players.find(
-            (pl: ParchisPlayerState) => pl.user_id === currentUid
-        );
-        const mySeat = me ? me.seat_index : null;
+                if (snakeSocketRef.current !== ws) return;
 
-        const activeCorners = new Set(
-            players.map((pl: ParchisPlayerState) =>
-                getPlayerVisualCorner(pl.seat_index, mySeat, players.length)
-            )
-        );
+                startingRef.current = false;
+                boostActiveRef.current = false;
 
-        const homes = [
-            { corner: 0, gx: 0, gy: 0 },
-            { corner: 1, gx: 9, gy: 0 },
-            { corner: 2, gx: 9, gy: 9 },
-            { corner: 3, gx: 0, gy: 9 },
-        ];
+                snakeSocketRef.current = null;
 
-        for (const h of homes) {
-            const isActive = activeCorners.has(h.corner);
-            const pal = CORNER_PALETTE[h.corner];
-            const hx0 = pad + h.gx * cell;
-            const hy0 = pad + h.gy * cell;
-            const hSize = cell * 6;
+                connectedRef.current = false;
+                setIsConnected(false);
 
-            const hGrad = ctx.createLinearGradient(
-                hx0,
-                hy0,
-                hx0 + hSize,
-                hy0 + hSize
-            );
-            if (isActive) {
-                hGrad.addColorStop(0, pal.light);
-                hGrad.addColorStop(0.35, pal.main);
-                hGrad.addColorStop(1, pal.dark);
-            } else {
-                hGrad.addColorStop(0, "#52525b");
-                hGrad.addColorStop(1, "#27272a");
-            }
+                readySentRef.current = false;
 
-            ctx.fillStyle = hGrad;
-            ctx.fillRect(hx0, hy0, hSize, hSize);
-            ctx.strokeStyle = "#18181b";
-            ctx.lineWidth = 2;
-            ctx.strokeRect(hx0, hy0, hSize, hSize);
+                setCashOutProcessing(false);
+                setCashOutSeconds(0);
 
-            const inset = cell * 0.42;
-            ctx.strokeStyle = isActive
-                ? "rgba(255,255,255,0.45)"
-                : "rgba(255,255,255,0.12)";
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.roundRect(
-                hx0 + inset,
-                hy0 + inset,
-                hSize - inset * 2,
-                hSize - inset * 2,
-                12
-            );
-            ctx.stroke();
+                if (!closingByUserRef.current) {
+                    setIsInSnakeGame(false);
 
-            const center = getHomeCenter(h.corner);
-            for (let pid = 0; pid < 4; pid++) {
-                const slot = getHomeSlotOffset(pid, cell);
-                const sx = center.x * size + slot.dx;
-                const sy = center.y * size + slot.dy;
-
-                ctx.beginPath();
-                ctx.arc(sx, sy, cell * 0.44, 0, Math.PI * 2);
-                ctx.fillStyle = isActive ? pal.dark : "#18181b";
-                ctx.fill();
-                ctx.lineWidth = 1.8;
-                ctx.strokeStyle = isActive ? pal.ring : "#52525b";
-                ctx.stroke();
-            }
-        }
-
-        const cLeft = pad + 6 * cell;
-        const cTop = pad + 6 * cell;
-        const cSize = cell * 3;
-        const midX = cLeft + cSize / 2;
-        const midY = cTop + cSize / 2;
-
-        const triangles = [
-            {
-                pts: [
-                    [cLeft, cTop],
-                    [cLeft + cSize, cTop],
-                    [midX, midY],
-                ],
-                color: CORNER_PALETTE[0].main,
-            },
-            {
-                pts: [
-                    [cLeft + cSize, cTop],
-                    [cLeft + cSize, cTop + cSize],
-                    [midX, midY],
-                ],
-                color: CORNER_PALETTE[1].main,
-            },
-            {
-                pts: [
-                    [cLeft, cTop + cSize],
-                    [cLeft + cSize, cTop + cSize],
-                    [midX, midY],
-                ],
-                color: CORNER_PALETTE[2].main,
-            },
-            {
-                pts: [
-                    [cLeft, cTop],
-                    [cLeft, cTop + cSize],
-                    [midX, midY],
-                ],
-                color: CORNER_PALETTE[3].main,
-            },
-        ];
-
-        for (const tri of triangles) {
-            ctx.beginPath();
-            ctx.moveTo(tri.pts[0][0], tri.pts[0][1]);
-            ctx.lineTo(tri.pts[1][0], tri.pts[1][1]);
-            ctx.lineTo(tri.pts[2][0], tri.pts[2][1]);
-            ctx.closePath();
-            ctx.fillStyle = tri.color;
-            ctx.fill();
-            ctx.lineWidth = 1.5;
-            ctx.strokeStyle = "#18181b";
-            ctx.stroke();
-        }
-
-        if (!state || players.length === 0) return;
-
-        const isMyTurn =
-            state.status === "playing" &&
-            me &&
-            state.turn_seat === me.seat_index &&
-            state.must_move &&
-            (state.dice_remaining?.length || 0) > 0;
-
-        const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.009);
-
-        for (const p of players) {
-            const corner = getPlayerVisualCorner(
-                p.seat_index,
-                mySeat,
-                players.length
-            );
-            const pal = CORNER_PALETTE[corner];
-
-            for (const piece of p.pieces || []) {
-                const target = getPieceBoardPoint(piece, corner, size);
-                const key = `${p.user_id}-${piece.id}`;
-                const prev = pieceCoordsMapRef.current.get(key);
-                const cur = prev
-                    ? {
-                        x: prev.x + (target.x - prev.x) * 0.28,
-                        y: prev.y + (target.y - prev.y) * 0.28,
+                    if (event.code !== 1000) {
+                        showAlert(
+                            "Partida interrumpida",
+                            event.reason ||
+                                `Se cerró la sesión de juego (${event.code}).`
+                        );
                     }
-                    : target;
-                pieceCoordsMapRef.current.set(key, cur);
-
-                const movable = Boolean(
-                    isMyTurn &&
-                    p.user_id === currentUid &&
-                    getMovableDice(piece, state.dice_remaining).length > 0
-                );
-
-                const radius = Math.max(8.5, cell * 0.37);
-
-                if (movable) {
-                    ctx.save();
-                    ctx.beginPath();
-                    ctx.arc(
-                        cur.x,
-                        cur.y,
-                        radius + 3.5 + pulse * 3,
-                        0,
-                        Math.PI * 2
-                    );
-                    ctx.strokeStyle = "#10b981";
-                    ctx.lineWidth = 2.8;
-                    ctx.stroke();
-                    ctx.restore();
                 }
 
-                ctx.save();
-                ctx.beginPath();
-                ctx.arc(cur.x + 1.4, cur.y + 2.2, radius, 0, Math.PI * 2);
-                ctx.fillStyle = "rgba(0,0,0,0.48)";
-                ctx.fill();
-
-                const pieceGrad = ctx.createRadialGradient(
-                    cur.x - radius * 0.3,
-                    cur.y - radius * 0.3,
-                    radius * 0.15,
-                    cur.x,
-                    cur.y,
-                    radius
-                );
-                pieceGrad.addColorStop(0, pal.light);
-                pieceGrad.addColorStop(0.65, pal.main);
-                pieceGrad.addColorStop(1, pal.dark);
-
-                ctx.beginPath();
-                ctx.arc(cur.x, cur.y, radius, 0, Math.PI * 2);
-                ctx.fillStyle = pieceGrad;
-                ctx.fill();
-                ctx.lineWidth = movable ? 2.4 : 1.6;
-                ctx.strokeStyle = movable ? "#ffffff" : "#111827";
-                ctx.stroke();
-
-                ctx.beginPath();
-                ctx.arc(cur.x, cur.y, radius * 0.52, 0, Math.PI * 2);
-                ctx.fillStyle = "#ffffff";
-                ctx.fill();
-
-                ctx.beginPath();
-                ctx.arc(cur.x, cur.y, radius * 0.24, 0, Math.PI * 2);
-                ctx.fillStyle = pal.main;
-                ctx.fill();
-                ctx.restore();
+                void loadUserBalances();
+            };
+        } catch (error) {
+            if (heartbeatTimer) {
+                clearInterval(heartbeatTimer);
+                heartbeatTimer = null;
             }
-        }
-    }, []);
 
-    useEffect(() => {
-        if (!isInGame) return;
-        let running = true;
-        const loop = () => {
-            if (!running) return;
-            renderBoard();
-            animationFrameRef.current = requestAnimationFrame(loop);
-        };
-        animationFrameRef.current = requestAnimationFrame(loop);
-        return () => {
-            running = false;
-            if (animationFrameRef.current !== null) {
-                cancelAnimationFrame(animationFrameRef.current);
-                animationFrameRef.current = null;
-            }
-        };
-    }, [isInGame, renderBoard]);
+            console.error("No se pudo crear WebSocket:", error);
 
-    const handleBoardPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
-        const state = gameStateRef.current;
-        const currentUid = userIdRef.current;
-        if (!state || !currentUid || state.status !== "playing") return;
+            startingRef.current = false;
+            snakeSocketRef.current = null;
 
-        const players: ParchisPlayerState[] = Array.isArray(state.players)
-            ? state.players
-            : [];
-        const me = players.find(
-            (pl: ParchisPlayerState) => pl.user_id === currentUid
-        );
-        if (
-            !me ||
-            state.turn_seat !== me.seat_index ||
-            !state.must_move ||
-            !(state.dice_remaining?.length)
-        ) {
-            return;
-        }
+            setIsInSnakeGame(false);
 
-        const canvas = boardCanvasRef.current;
-        if (!canvas) return;
-        const rect = canvas.getBoundingClientRect();
-        const size = Math.max(
-            240,
-            Math.floor(Math.min(rect.width, rect.height || rect.width))
-        );
-        const clickX = e.clientX - rect.left;
-        const clickY = e.clientY - rect.top;
-        const corner = getPlayerVisualCorner(
-            me.seat_index,
-            me.seat_index,
-            players.length
-        );
-
-        let closestId = -1;
-        let minDist = 30;
-
-        for (const piece of me.pieces || []) {
-            const availableDice = getMovableDice(piece, state.dice_remaining);
-            if (availableDice.length === 0) continue;
-            const pt = getPieceBoardPoint(piece, corner, size);
-            const dist = Math.hypot(clickX - pt.x, clickY - pt.y);
-            if (dist < minDist) {
-                minDist = dist;
-                closestId = piece.id;
-            }
-        }
-
-        if (closestId >= 0) {
-            const selectedPiece = me.pieces.find((piece) => piece.id === closestId);
-            const die = selectedPiece
-                ? getMovableDice(selectedPiece, state.dice_remaining)[0]
-                : undefined;
-            if (die !== undefined) sendMovePiece(closestId, die);
+            showAlert(
+                "Error de conexión",
+                "No se pudo establecer una conexión con AXIOM Arena."
+            );
         }
     };
+
+    const triggerCashOut = () => {
+        const ws = snakeSocketRef.current;
+
+        if (
+            !connectedRef.current ||
+            !aliveRef.current ||
+            !ws ||
+            ws.readyState !== WebSocket.OPEN ||
+            cashOutSentRef.current
+        )
+            return;
+
+        stopBoost();
+
+        cashOutSentRef.current = true;
+        setCashOutProcessing(true);
+        setCashOutSeconds(20);
+
+        try {
+            ws.send(JSON.stringify({ type: "CASH_OUT" }));
+        } catch (error) {
+            cashOutSentRef.current = false;
+            setCashOutProcessing(false);
+            setCashOutSeconds(0);
+            console.error("Error enviando retiro:", error);
+
+            showAlert(
+                "Error de retiro",
+                "No se pudo enviar la solicitud al servidor."
+            );
+        }
+    };
+
+    const activePreset =
+        SKIN_PRESETS.find((p) => p.id === selectedPresetId) || null;
 
     if (isAuthLoading) {
         return (
@@ -1607,14 +1895,17 @@ export default function ParchisGamePage() {
         return (
             <div className="min-h-screen bg-black text-white flex flex-col">
                 <Header />
+
                 <main className="flex-1 flex items-center justify-center p-4">
                     <div className="max-w-md w-full bg-zinc-950 border border-zinc-800 rounded-3xl p-6 sm:p-8 text-center space-y-6 shadow-2xl">
                         <h2 className="text-xl font-black uppercase">
                             Acceso restringido
                         </h2>
+
                         <p className="text-xs text-zinc-400 leading-relaxed">
                             Inicia sesión para entrar a las arenas.
                         </p>
+
                         <Link
                             href="/"
                             className="block w-full py-3.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase rounded-2xl transition-all"
@@ -1627,92 +1918,6 @@ export default function ParchisGamePage() {
         );
     }
 
-    const activePlayers: ParchisPlayerState[] = gameState?.players || [];
-    const myPlayer: ParchisPlayerState | null =
-        activePlayers.find((pl: ParchisPlayerState) => pl.user_id === userId) ||
-        null;
-    const mySeatIndex = myPlayer ? myPlayer.seat_index : null;
-
-    const isMyTurn = Boolean(
-        gameState &&
-        gameState.status === "playing" &&
-        myPlayer &&
-        gameState.turn_seat === myPlayer.seat_index
-    );
-    const isHost = Boolean(
-        gameState &&
-        (gameState.host_user_id === userId || myPlayer?.seat_index === 0)
-    );
-    const mainName = (playerName.trim() || "Jugador").split(/\s+/)[0];
-    const visibleUserId = docNumber.trim() || "-";
-    const [d1, d2] = displayedDice;
-
-    const bottomPlayer =
-        myPlayer ||
-        activePlayers.find(
-            (p) =>
-                getPlayerVisualCorner(
-                    p.seat_index,
-                    mySeatIndex,
-                    activePlayers.length
-                ) === 3
-        ) ||
-        activePlayers[0] ||
-        null;
-
-    const topPlayer =
-        activePlayers.find((p) => p.user_id !== bottomPlayer?.user_id) ||
-        null;
-
-    const extraPlayers = activePlayers.filter(
-        (p) =>
-            p.user_id !== bottomPlayer?.user_id &&
-            p.user_id !== topPlayer?.user_id
-    );
-
-    const bottomCorner = bottomPlayer
-        ? getPlayerVisualCorner(
-            bottomPlayer.seat_index,
-            mySeatIndex,
-            activePlayers.length
-        )
-        : 3;
-    const topCorner = topPlayer
-        ? getPlayerVisualCorner(
-            topPlayer.seat_index,
-            mySeatIndex,
-            activePlayers.length
-        )
-        : 1;
-
-    const topIsTurn = Boolean(
-        gameState &&
-        gameState.status === "playing" &&
-        topPlayer &&
-        gameState.turn_seat === topPlayer.seat_index
-    );
-    const bottomIsTurn = Boolean(
-        gameState &&
-        gameState.status === "playing" &&
-        bottomPlayer &&
-        gameState.turn_seat === bottomPlayer.seat_index
-    );
-
-    const bottomName =
-        bottomPlayer?.user_id === userId
-            ? getCleanPlayerLabel(bottomPlayer, mainName)
-            : getCleanPlayerLabel(bottomPlayer, "Jugador");
-    const topName = topPlayer
-        ? getCleanPlayerLabel(topPlayer, "Rival")
-        : "Esperando rival...";
-
-    const movablePieces =
-        isMyTurn && gameState?.must_move && myPlayer
-            ? (myPlayer.pieces || []).filter((pc) =>
-                getMovableDice(pc, gameState.dice_remaining).length > 0
-            )
-            : [];
-
     return (
         <div className="min-h-screen bg-black text-white flex flex-col select-none font-sans overflow-x-hidden">
             {modal.isOpen && (
@@ -1721,11 +1926,12 @@ export default function ParchisGamePage() {
                         <h3 className="text-lg font-black uppercase text-emerald-400">
                             {modal.title}
                         </h3>
+
                         <p className="text-xs text-zinc-300 leading-relaxed">
                             {modal.message}
                         </p>
+
                         <button
-                            type="button"
                             onClick={closeModal}
                             className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase rounded-2xl transition-all"
                         >
@@ -1735,260 +1941,464 @@ export default function ParchisGamePage() {
                 </div>
             )}
 
+            {!isInSnakeGame && isCustomizerOpen && (
+                <div
+                    className="fixed inset-0 bg-black/80 backdrop-blur-md z-[90] flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+                    onClick={() => setIsCustomizerOpen(false)}
+                >
+                    <div
+                        className="bg-zinc-950 border border-zinc-800 w-full max-w-md rounded-3xl p-4 sm:p-5 space-y-4 shadow-2xl my-auto"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center justify-between gap-2 border-b border-zinc-900 pb-3">
+                            <div>
+                                <h3 className="text-xs sm:text-sm font-black uppercase tracking-wider text-emerald-400">
+                                    Diseño de Serpiente
+                                </h3>
+                                <span className="text-[10px] font-mono text-zinc-400">
+                                    {customColor}
+                                </span>
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={() => setIsCustomizerOpen(false)}
+                                className="px-3 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-black text-zinc-300 hover:text-white transition-colors"
+                            >
+                                Listo
+                            </button>
+                        </div>
+
+                        <div>
+                            <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">
+                                Estilos
+                            </label>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                {SKIN_PRESETS.map((preset) => {
+                                    const active =
+                                        selectedPresetId === preset.id;
+                                    return (
+                                        <button
+                                            key={preset.id}
+                                            type="button"
+                                            onClick={() => applyPreset(preset)}
+                                            className={`flex items-center gap-2 p-2.5 rounded-xl border text-left transition-all ${
+                                                active
+                                                    ? "bg-zinc-900 border-emerald-400 text-white"
+                                                    : "bg-black/80 border-zinc-800 text-zinc-400 hover:text-white"
+                                            }`}
+                                        >
+                                            <span
+                                                className="w-3.5 h-3.5 rounded-full shrink-0 border border-white/20"
+                                                style={{
+                                                    background: `linear-gradient(135deg, ${preset.primary}, ${preset.secondary})`,
+                                                }}
+                                            />
+                                            <span className="text-[11px] font-bold truncate">
+                                                {preset.name}
+                                            </span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2.5">
+                            <div className="flex items-center justify-between bg-black border border-zinc-800 px-3 py-2 rounded-xl">
+                                <div className="min-w-0">
+                                    <span className="text-[9px] text-zinc-400 uppercase font-bold block">
+                                        Primario
+                                    </span>
+                                    <span className="text-[10px] font-mono text-emerald-400 truncate block">
+                                        {customColor}
+                                    </span>
+                                </div>
+                                <input
+                                    type="color"
+                                    value={customColor}
+                                    onChange={(e) => {
+                                        setSelectedPresetId("custom");
+                                        customColorRef.current = e.target.value;
+                                        setCustomColor(e.target.value);
+                                    }}
+                                    className="w-8 h-8 rounded-lg bg-transparent cursor-pointer border-0 shrink-0"
+                                />
+                            </div>
+
+                            <div className="flex items-center justify-between bg-black border border-zinc-800 px-3 py-2 rounded-xl">
+                                <div className="min-w-0">
+                                    <span className="text-[9px] text-zinc-400 uppercase font-bold block">
+                                        Secundario
+                                    </span>
+                                    <span className="text-[10px] font-mono text-zinc-300 truncate block">
+                                        {secondaryColor}
+                                    </span>
+                                </div>
+                                <input
+                                    type="color"
+                                    value={secondaryColor}
+                                    onChange={(e) => {
+                                        setSelectedPresetId("custom");
+                                        secondaryColorRef.current =
+                                            e.target.value;
+                                        setSecondaryColor(e.target.value);
+                                    }}
+                                    className="w-8 h-8 rounded-lg bg-transparent cursor-pointer border-0 shrink-0"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2">
+                            <div>
+                                <label className="text-[10px] text-zinc-400 block mb-1 uppercase font-bold">
+                                    Cuerpo
+                                </label>
+                                <select
+                                    value={bodyStyle}
+                                    onChange={(e) => {
+                                        setSelectedPresetId("custom");
+                                        const val = e.target.value as BodyStyle;
+                                        bodyStyleRef.current = val;
+                                        setBodyStyle(val);
+                                    }}
+                                    className="w-full bg-black border border-zinc-800 rounded-xl px-2.5 py-2 text-xs text-zinc-200 outline-none focus:border-emerald-500"
+                                >
+                                    <option value="connected">Continuo</option>
+                                    <option value="scales">Escamas</option>
+                                    <option value="pulse">Pulso</option>
+                                    <option value="trail">Estela</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="text-[10px] text-zinc-400 block mb-1 uppercase font-bold">
+                                    Ojos
+                                </label>
+                                <select
+                                    value={snakeEyes}
+                                    onChange={(e) => {
+                                        setSelectedPresetId("custom");
+                                        const val = e.target.value as EyeStyle;
+                                        snakeEyesRef.current = val;
+                                        setSnakeEyes(val);
+                                    }}
+                                    className="w-full bg-black border border-zinc-800 rounded-xl px-2.5 py-2 text-xs text-zinc-200 outline-none focus:border-emerald-500"
+                                >
+                                    <option value="classic">Clásicos</option>
+                                    <option value="laser">Láser</option>
+                                    <option value="sleepy">Dormidos</option>
+                                    <option value="angry">Enfadados</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="text-[10px] text-zinc-400 block mb-1 uppercase font-bold">
+                                    Accesorio
+                                </label>
+                                <select
+                                    value={snakeAccessory}
+                                    onChange={(e) => {
+                                        setSelectedPresetId("custom");
+                                        const val = e.target
+                                            .value as AccessoryStyle;
+                                        snakeAccessoryRef.current = val;
+                                        setSnakeAccessory(val);
+                                    }}
+                                    className="w-full bg-black border border-zinc-800 rounded-xl px-2.5 py-2 text-xs text-zinc-200 outline-none focus:border-emerald-500"
+                                >
+                                    <option value="none">Ninguno</option>
+                                    <option value="crown">Corona</option>
+                                    <option value="bandana">Bandana</option>
+                                    <option value="halo">Aureola</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <SnakeStudioPreview
+                            primaryColor={customColor}
+                            secondaryColor={secondaryColor}
+                            glowColor={customColor}
+                            bodyStyle={bodyStyle}
+                            eyes={snakeEyes}
+                            accessory={snakeAccessory}
+                            presetName={
+                                activePreset ? activePreset.name : "Personalizado"
+                            }
+                        />
+                    </div>
+                </div>
+            )}
+
             <Header />
 
-            <main
-                className={`flex-1 w-full mx-auto flex flex-col ${isInGame
-                        ? "max-w-xl px-2.5 sm:px-6 py-2 sm:py-4 items-center justify-center"
-                        : "max-w-3xl px-2 sm:px-4 py-3 sm:py-5 items-center justify-center"
-                    }`}
-            >
-                {!isInGame ? (
-                    <div className="w-full max-w-md mx-auto rounded-2xl border border-zinc-800 bg-zinc-950 p-3 sm:p-4 space-y-3">
-                        <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                            <Link href="/" className="rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1.5 text-[11px] font-bold text-zinc-300">&lsaquo; Volver</Link>
-                            <h2 className="text-sm font-black uppercase tracking-wide text-emerald-400">Parchís P2P</h2>
-                            <span className="w-14" />
+            <main className="flex-1 max-w-4xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-8 flex flex-col items-center justify-center">
+                {!isInSnakeGame ? (
+                    <div className="w-full max-w-xl bg-zinc-950 border border-zinc-800 rounded-3xl p-4 sm:p-6 space-y-5 shadow-2xl">
+                        <div className="flex items-center justify-between gap-2 border-b border-zinc-900 pb-3.5">
+                            <Link
+                                href="/"
+                                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 hover:text-emerald-400 font-bold uppercase transition-colors"
+                            >
+                                <span>&lsaquo;</span>
+                                <span>Volver</span>
+                            </Link>
+
+                            <button
+                                type="button"
+                                onClick={() => setIsCustomizerOpen(true)}
+                                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-700 text-xs font-black uppercase transition-all"
+                            >
+                                <span
+                                    className="w-3 h-3 rounded-full border border-white/30"
+                                    style={{ backgroundColor: customColor }}
+                                />
+                                <span>Modificar Serpiente</span>
+                            </button>
                         </div>
 
-                        <div className="space-y-2">
-                            <label className="block text-[10px] font-bold uppercase text-zinc-500">Billetera</label>
-                            <div className="grid grid-cols-2 gap-2">
-                                <button type="button" onClick={() => setSelectedWallet("play")} className={`rounded-lg border px-2 py-2 text-xs font-bold ${selectedWallet === "play" ? "border-emerald-400 bg-emerald-500 text-black" : "border-zinc-800 bg-black text-zinc-400"}`}>Jugar · {money(playBalance)}</button>
-                                <button type="button" onClick={() => setSelectedWallet("bonus")} className={`rounded-lg border px-2 py-2 text-xs font-bold ${selectedWallet === "bonus" ? "border-yellow-300 bg-yellow-400 text-black" : "border-zinc-800 bg-black text-zinc-400"}`}>Bono · {money(bonusBalance)}</button>
-                            </div>
+                        <div className="text-center">
+                            <h2 className="text-xl sm:text-2xl font-black text-emerald-400 uppercase tracking-wider">
+                                Snake Arena P2P
+                            </h2>
+                            <p className="text-xs text-zinc-400 mt-1">
+                                Elige tu billetera, sala y entra a jugar.
+                            </p>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-2">
-                                <label className="block text-[10px] font-bold uppercase text-zinc-500">Apuesta</label>
-                                <div className="grid grid-cols-3 gap-1.5">
-                                    {(["0.25", "1.00", "10.00"] as ParchisBet[]).map((amt) => (
-                                        <button key={amt} type="button" onClick={() => setSelectedBet(amt)} className={`rounded-lg border py-2 text-[11px] font-bold ${selectedBet === amt ? "border-emerald-400 bg-emerald-500 text-black" : "border-zinc-800 bg-black text-zinc-400"}`}>${amt}</button>
-                                    ))}
+                        <div className="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-4 space-y-5">
+                            <div>
+                                <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">
+                                    Billetera
+                                </label>
+
+                                <div className="grid grid-cols-2 gap-2.5">
+                                    <button
+                                        type="button"
+                                        onClick={() => setSelectedWallet("play")}
+                                        className={`py-3 px-2 rounded-xl text-xs font-black uppercase border transition-all ${
+                                            selectedWallet === "play"
+                                                ? "bg-emerald-500 text-black border-emerald-400"
+                                                : "bg-black text-zinc-400 hover:text-white border-zinc-800"
+                                        }`}
+                                    >
+                                        Jugar (${playBalance.toFixed(2)})
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            setSelectedWallet("bonus")
+                                        }
+                                        className={`py-3 px-2 rounded-xl text-xs font-black uppercase border transition-all ${
+                                            selectedWallet === "bonus"
+                                                ? "bg-yellow-400 text-black border-yellow-300"
+                                                : "bg-black text-zinc-400 hover:text-white border-zinc-800"
+                                        }`}
+                                    >
+                                        Bono (${bonusBalance.toFixed(2)})
+                                    </button>
                                 </div>
                             </div>
-                            <div className="space-y-2">
-                                <label className="block text-[10px] font-bold uppercase text-zinc-500">Jugadores</label>
-                                <div className="grid grid-cols-3 gap-1.5">
-                                    {([2, 3, 4] as MaxPlayers[]).map((cnt) => (
-                                        <button key={cnt} type="button" onClick={() => setMaxPlayers(cnt)} className={`rounded-lg border py-2 text-[11px] font-bold ${maxPlayers === cnt ? "border-emerald-400 bg-emerald-500 text-black" : "border-zinc-800 bg-black text-zinc-400"}`}>{cnt}</button>
-                                    ))}
+
+                            <div>
+                                <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">
+                                    Sala
+                                </label>
+
+                                <div className="grid grid-cols-3 gap-2">
+                                    {(["0.20", "10", "50"] as SnakeBet[]).map(
+                                        (bet) => (
+                                            <button
+                                                key={bet}
+                                                type="button"
+                                                onClick={() => setSelectedBet(bet)}
+                                                className={`py-3 rounded-xl text-sm font-black border transition-all ${
+                                                    selectedBet === bet
+                                                        ? "bg-emerald-500 text-black border-emerald-400"
+                                                        : "bg-black text-zinc-400 border-zinc-800 hover:border-emerald-500"
+                                                }`}
+                                            >
+                                                ${Number(bet).toFixed(2)}
+                                            </button>
+                                        )
+                                    )}
                                 </div>
                             </div>
-                        </div>
 
-                        <div className="flex items-center gap-2">
-                            <input id="parchis-private" type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} className="h-4 w-4 accent-emerald-500" />
-                            <label htmlFor="parchis-private" className="text-xs text-zinc-300">Sala privada</label>
-                            {isPrivate && <input type="text" value={roomPassword} onChange={(e) => setRoomPassword(e.target.value)} placeholder="Contraseña" className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-black px-2.5 py-2 text-xs text-white outline-none focus:border-emerald-500" />}
-                        </div>
-
-                        <button type="button" disabled={isConnecting || busyAction} onClick={handleCreatePrivateOrCustomRoom} className="w-full rounded-xl bg-emerald-500 py-3 text-xs font-black uppercase text-black hover:bg-emerald-400 disabled:opacity-50">
-                            {busyAction || isConnecting ? "Preparando..." : "Crear sala"}
-                        </button>
-
-                        <div className="border-t border-zinc-800 pt-3 space-y-2">
-                            <div className="flex items-center justify-between">
-                                <span className="text-xs font-bold text-white">Salas disponibles</span>
-                                <button type="button" onClick={() => void fetchPublicRooms()} className="text-[10px] font-bold text-emerald-400">Actualizar</button>
-                            </div>
-                            <input type="text" value={searchId} onChange={(e) => setSearchId(e.target.value)} placeholder="Buscar por ID de jugador" className="w-full rounded-lg border border-zinc-800 bg-black px-3 py-2 text-xs text-white outline-none focus:border-emerald-500" />
-                            {publicRooms.length === 0 ? (
-                                <p className="py-3 text-center text-[11px] text-zinc-500">{roomsUnavailable ? "Salas no disponibles" : "No hay salas públicas"}</p>
-                            ) : (
-                                <div className="max-h-40 space-y-1.5 overflow-y-auto">
-                                    {publicRooms.filter((item) => {
-                                        const hostId = String(item.host_doc_number || item.host_cedula || "");
-                                        return !searchId.trim() || hostId.toLowerCase().includes(searchId.trim().toLowerCase());
-                                    }).map((item) => {
-                                        const itemId = item.host_doc_number || item.host_cedula;
-                                        const itemName = (item.host_name || "Jugador").split(/\s+/)[0];
-                                        return (
-                                            <div key={item.room_id} className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-black px-2.5 py-2">
-                                                <div className="min-w-0">
-                                                    <p className="truncate text-[11px] font-bold text-white">{itemName}</p>
-                                                    <p className="text-[10px] text-zinc-500">{itemId ? `${itemId} · ` : ""}{item.players_count}/{item.max_players} · ${item.bet.toFixed(2)}</p>
-                                                </div>
-                                                <button type="button" onClick={() => connectToRoom(item.room_id, "", item.bet, item.max_players as MaxPlayers)} className="rounded-md bg-emerald-500 px-3 py-1.5 text-[10px] font-black uppercase text-black">Entrar</button>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-                        </div>
-
-                        <div className="flex gap-2 border-t border-zinc-800 pt-3">
-                            <input type="text" value={joinRoomId} onChange={(e) => setJoinRoomId(e.target.value)} placeholder="ID de sala" className="min-w-0 w-full rounded-lg border border-zinc-800 bg-black px-2.5 py-2 text-xs text-white outline-none focus:border-emerald-500" />
-                            <input type="text" value={joinPassword} onChange={(e) => setJoinPassword(e.target.value)} placeholder="Clave" className="min-w-0 w-full rounded-lg border border-zinc-800 bg-black px-2.5 py-2 text-xs text-white outline-none focus:border-emerald-500" />
-                            <button type="button" disabled={!joinRoomId.trim() || isConnecting} onClick={() => connectToRoom(joinRoomId.trim(), joinPassword.trim())} className="rounded-lg bg-zinc-800 px-3 py-2 text-[10px] font-bold text-white disabled:opacity-40">Unirse</button>
+                            <button
+                                type="button"
+                                onClick={startSnakeGame}
+                                disabled={startingRef.current}
+                                className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-black text-xs uppercase tracking-wider rounded-2xl shadow-lg active:scale-95 transition-all"
+                            >
+                                Entrar a la Arena
+                            </button>
                         </div>
                     </div>
                 ) : (
-                    <div className="w-full max-w-[min(100%,42rem)] bg-[#090d0b] border border-white/10 rounded-3xl p-2.5 sm:p-4 flex flex-col gap-2.5 shadow-2xl overflow-hidden">
-                        <div className="flex items-center justify-between gap-2 border-b border-zinc-900 pb-2">
-                            <button
-                                type="button"
-                                onClick={() => void exitParchisGame()}
-                                className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-red-400 text-[11px] font-bold uppercase rounded-xl border border-zinc-800"
-                            >
-                                &lsaquo; {isHost ? "Cerrar Sala" : "Salir"}
-                            </button>
+                    <div className="fixed inset-x-0 top-[68px] bottom-0 z-20 bg-black overflow-hidden">
+                        <div className="absolute top-3 left-3 right-3 sm:top-4 sm:left-4 sm:right-4 z-30 flex justify-between items-center gap-2 bg-zinc-950/90 backdrop-blur-md px-3 py-2.5 sm:p-3.5 rounded-2xl border border-zinc-800">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                                <button
+                                    type="button"
+                                    onClick={exitSnakeGame}
+                                    className="px-3 py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-red-400 text-xs font-bold uppercase rounded-xl border border-zinc-800 shrink-0"
+                                >
+                                    &lsaquo; Salir
+                                </button>
 
-                            <div className="text-center">
-                                <span className="text-xs font-black text-emerald-400 block">
-                                    Pozo: {money(gameState?.pot_total ?? 0)}
-                                </span>
-                                {gameState?.room_id && (
-                                    <span className="text-[10px] text-zinc-400 font-bold">
-                                        Sala #{gameState.room_id}
+                                <div className="min-w-0">
+                                    <span className="block text-xs font-black text-emerald-400 uppercase truncate">
+                                        Snake Arena
                                     </span>
+                                    <span className="block text-[10px] text-zinc-400 truncate">
+                                        {snakeRoomId}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
+                                <div className="text-right">
+                                    <span className="block text-[9px] text-zinc-500 uppercase">
+                                        Saldo
+                                    </span>
+                                    <span className="text-xs sm:text-sm font-black text-emerald-400">
+                                        {money(snakeBalance)}
+                                    </span>
+                                </div>
+
+                                <span
+                                    className={`hidden md:inline text-[10px] font-bold uppercase ${
+                                        isConnected
+                                            ? "text-emerald-400"
+                                            : "text-yellow-400"
+                                    }`}
+                                >
+                                    {isConnected ? "Activo" : "Enlazando"}
+                                </span>
+
+                                {isConnected && isAlive && !cashedOut && (
+                                    <button
+                                        type="button"
+                                        onClick={triggerCashOut}
+                                        disabled={cashOutProcessing}
+                                        className="px-3.5 py-2 bg-yellow-400 hover:bg-yellow-300 disabled:opacity-50 text-black font-black text-[10px] uppercase rounded-xl"
+                                    >
+                                        {cashOutProcessing
+                                            ? `${cashOutSeconds}s`
+                                            : "Retirarse"}
+                                    </button>
                                 )}
                             </div>
                         </div>
 
-                        {!isConnected || !gameState ? (
-                            <div className="py-20 text-center text-xs text-yellow-400 uppercase font-bold tracking-wider">
-                                {connectionMessage}
+                        <canvas
+                            ref={canvasRef}
+                            onPointerDown={handleCanvasPointerDown}
+                            onPointerMove={handleCanvasPointerMove}
+                            onPointerUp={handleCanvasPointerUp}
+                            onPointerCancel={handleCanvasPointerUp}
+                            onLostPointerCapture={handleCanvasPointerUp}
+                            onContextMenu={(e) => e.preventDefault()}
+                            className="absolute inset-0 w-full h-full block cursor-crosshair touch-none select-none"
+                            style={{ touchAction: "none" }}
+                        />
+
+                        {isConnected && isAlive && !cashedOut && (
+                            <div
+                                ref={joystickBaseRef}
+                                onPointerDown={handleJoystickPointerDown}
+                                onPointerMove={handleJoystickPointerMove}
+                                onPointerUp={handleJoystickPointerUp}
+                                onPointerCancel={handleJoystickPointerUp}
+                                onLostPointerCapture={handleJoystickPointerUp}
+                                onContextMenu={(e) => e.preventDefault()}
+                                className="md:hidden fixed bottom-6 left-4 z-30 w-24 h-24 rounded-full bg-zinc-900/75 border-2 border-emerald-500/40 backdrop-blur-sm flex items-center justify-center touch-none select-none shadow-2xl"
+                                style={{ touchAction: "none" }}
+                            >
+                                <div
+                                    className="w-10 h-10 rounded-full bg-emerald-400 border-2 border-emerald-200 shadow-lg transition-transform duration-75"
+                                    style={{
+                                        transform: `translate(${joystickKnob.x}px, ${joystickKnob.y}px)`,
+                                    }}
+                                />
                             </div>
-                        ) : (
-                            <>
-                                {extraPlayers.length > 0 && (
-                                    <div className="flex flex-wrap items-center justify-between gap-1.5 px-1">
-                                        {extraPlayers.map((ep) => {
-                                            const c = getPlayerVisualCorner(
-                                                ep.seat_index,
-                                                mySeatIndex,
-                                                activePlayers.length
-                                            );
-                                            const pal = CORNER_PALETTE[c];
-                                            return (
-                                                <div
-                                                    key={ep.user_id}
-                                                    className="flex items-center gap-1.5 bg-zinc-900/80 border border-zinc-800 rounded-full px-2.5 py-1"
-                                                >
-                                                    <span
-                                                        className="w-2.5 h-2.5 rounded-full"
-                                                        style={{
-                                                            backgroundColor:
-                                                                pal.main,
-                                                        }}
-                                                    />
-                                                    <span className="text-[11px] font-bold text-white">
-                                                        {getCleanPlayerLabel(
-                                                            ep,
-                                                            "Jugador"
-                                                        )}
-                                                    </span>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                )}
+                        )}
 
-                                <PlayerTurnRow
-                                    playerName={topName}
-                                    colorName={CORNER_PALETTE[topCorner].name}
-                                    accentColor={CORNER_PALETTE[topCorner].main}
-                                    d1={d1}
-                                    d2={d2}
-                                    rolling={rollingDice && topIsTurn}
-                                    isActiveTurn={topIsTurn}
-                                    canRoll={Boolean(
-                                        topPlayer &&
-                                        topPlayer.user_id === userId &&
-                                        isMyTurn &&
-                                        !gameState.must_move
-                                    )}
-                                    mustMove={Boolean(
-                                        topIsTurn && gameState.must_move
-                                    )}
-                                    onRoll={sendRollDice}
-                                    position="top"
+                        {isConnected && (
+                            <div className="fixed bottom-6 right-4 sm:bottom-7 sm:right-6 z-30 bg-zinc-950/85 border border-zinc-800 rounded-2xl p-2 shadow-2xl backdrop-blur-md">
+                                <canvas
+                                    ref={minimapCanvasRef}
+                                    onPointerDown={handleMinimapPointerDown}
+                                    onPointerMove={handleMinimapPointerMove}
+                                    onPointerUp={handleMinimapPointerUp}
+                                    onPointerCancel={handleMinimapPointerUp}
+                                    onLostPointerCapture={handleMinimapPointerUp}
+                                    className="w-24 h-24 sm:w-28 sm:h-28 rounded-xl block cursor-pointer touch-none"
+                                    style={{ touchAction: "none" }}
                                 />
+                            </div>
+                        )}
 
-                                <div className="w-full min-w-0 flex items-center justify-center overflow-hidden">
-                                    <canvas
-                                        ref={boardCanvasRef}
-                                        onPointerDown={handleBoardPointerDown}
-                                        className="block w-full aspect-square max-h-[min(92vw,68vh)] rounded-2xl border border-emerald-500/20 bg-[#090d0b] shadow-2xl cursor-pointer touch-none"
-                                        style={{ touchAction: "none", maxWidth: "min(100%, 68vh)" }}
-                                    />
-                                </div>
+                        {cashOutProcessing && isAlive && (
+                            <div className="absolute top-24 left-1/2 -translate-x-1/2 z-30 bg-yellow-400 text-black px-5 py-3 rounded-2xl text-center shadow-xl">
+                                <span className="block text-[10px] font-black uppercase">
+                                    Retiro en proceso
+                                </span>
+                                <span className="block text-2xl font-black">
+                                    {cashOutSeconds}s
+                                </span>
+                            </div>
+                        )}
 
-                                <PlayerTurnRow
-                                    playerName={bottomName}
-                                    colorName={
-                                        CORNER_PALETTE[bottomCorner].name
-                                    }
-                                    accentColor={
-                                        CORNER_PALETTE[bottomCorner].main
-                                    }
-                                    d1={d1}
-                                    d2={d2}
-                                    rolling={rollingDice && bottomIsTurn}
-                                    isActiveTurn={bottomIsTurn}
-                                    canRoll={Boolean(
-                                        bottomPlayer &&
-                                        bottomPlayer.user_id === userId &&
-                                        isMyTurn &&
-                                        !gameState.must_move
-                                    )}
-                                    mustMove={Boolean(
-                                        bottomIsTurn && gameState.must_move
-                                    )}
-                                    onRoll={sendRollDice}
-                                    position="bottom"
-                                />
+                        {!isConnected && (
+                            <div className="absolute bottom-5 left-0 right-0 text-center z-30 pointer-events-none px-4">
+                                <span className="text-[10px] text-yellow-400 bg-black/80 border border-yellow-500/20 px-4 py-2 rounded-full">
+                                    {connectionMessage}
+                                </span>
+                            </div>
+                        )}
 
-                                {movablePieces.length > 0 && (
-                                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                                        <span className="text-[10px] font-bold uppercase text-zinc-400">
-                                            Mover:
-                                        </span>
-                                        {movablePieces.map((pc) => (
-                                            <div key={pc.id} className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/10 bg-black/30 p-2">
-                                                <span className="px-1 text-[10px] font-black uppercase text-white">Ficha #{pc.id + 1}</span>
-                                                {getMovableDice(pc, gameState.dice_remaining).map((die, dieIndex) => (
-                                                    <button
-                                                        key={`${pc.id}-${dieIndex}-${die}`}
-                                                        type="button"
-                                                        onClick={() => sendMovePiece(pc.id, die)}
-                                                        className="min-w-9 rounded-lg bg-emerald-400 px-2.5 py-2 text-[10px] font-black text-black transition hover:bg-emerald-300 active:scale-95"
-                                                    >
-                                                        Dado: {die}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
+                        {(!isAlive || cashedOut) && (
+                            <div className="absolute inset-0 bg-black/90 backdrop-blur-md z-40 flex flex-col items-center justify-center p-6 text-center space-y-4">
+                                <h3 className="text-3xl font-black uppercase text-emerald-400">
+                                    {cashedOut
+                                        ? "Retiro exitoso"
+                                        : "GAME OVER"}
+                                </h3>
 
-                                {gameState.status === "finished" && (
-                                    <div className="bg-zinc-900/70 border border-emerald-400 rounded-2xl p-3.5 text-center space-y-2">
-                                        <h3 className="text-sm font-black uppercase text-emerald-400">
-                                            Partida Finalizada
-                                        </h3>
-                                        <button
-                                            type="button"
-                                            onClick={() =>
-                                                void exitParchisGame()
-                                            }
-                                            className="px-5 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase rounded-xl"
-                                        >
-                                            Volver
-                                        </button>
-                                    </div>
-                                )}
-                            </>
+                                <p className="text-xs text-zinc-300 max-w-xs">
+                                    {cashedOut
+                                        ? `Acreditado ${money(finalPayout)} a tu billetera.`
+                                        : "Tu serpiente quedó eliminada."}
+                                </p>
+
+                                <p className="text-sm text-zinc-400">
+                                    Saldo final: {money(snakeBalance)}
+                                </p>
+
+                                <p className="text-sm text-zinc-400">
+                                    Puntuación: {score}
+                                </p>
+
+                                <button
+                                    type="button"
+                                    onClick={exitSnakeGame}
+                                    className="px-8 py-3.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase rounded-2xl transition-all"
+                                >
+                                    Volver a la arena
+                                </button>
+                            </div>
                         )}
                     </div>
                 )}
             </main>
 
-            <footer className="py-4 text-center text-[10px] text-zinc-600 font-bold uppercase tracking-widest">
-                AXIOM PARCHIS ARENA
-            </footer>
+            {!isInSnakeGame && (
+                <footer className="py-6 text-center text-[10px] text-zinc-600 font-bold uppercase tracking-widest">
+                    AXIOM SNAKE IO ARENA
+                </footer>
+            )}
         </div>
     );
 }
