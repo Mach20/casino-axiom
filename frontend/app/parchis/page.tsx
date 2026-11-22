@@ -450,14 +450,17 @@ export default function ParchisGamePage() {
 
             if (!session) {
                 const { data, error } = await supabase.auth.getSession();
+
                 if (error) {
                     console.error("Error obteniendo sesión:", error);
                     return;
                 }
+
                 session = data.session;
             }
 
             const currentUserId = session?.user?.id;
+
             if (!currentUserId) {
                 setUserId(null);
                 userIdRef.current = null;
@@ -469,6 +472,7 @@ export default function ParchisGamePage() {
             }
 
             const token = session.access_token || "";
+
             setUserId(currentUserId);
             userIdRef.current = currentUserId;
             setAccessToken(token);
@@ -482,7 +486,7 @@ export default function ParchisGamePage() {
 
             const { data: profile, error } = await supabase
                 .from("profiles")
-                .select("balance, bonus_balance, full_name, cedula")
+                .select("balance, bonus_balance")
                 .eq("id", currentUserId)
                 .maybeSingle();
 
@@ -494,8 +498,6 @@ export default function ParchisGamePage() {
             if (profile) {
                 setPlayBalance(Number(profile.balance ?? 0));
                 setBonusBalance(Number(profile.bonus_balance ?? 0));
-                if (profile.full_name) setPlayerName(String(profile.full_name));
-                if (profile.cedula) setCedula(String(profile.cedula));
             }
         } catch (error) {
             console.error("Error cargando saldos:", error);
@@ -507,11 +509,15 @@ export default function ParchisGamePage() {
 
         const initialize = async () => {
             const { data, error } = await supabase.auth.getSession();
+
             if (error) {
                 console.error("Error de autenticación:", error);
             }
+
             if (!mounted) return;
+
             await loadUserBalances(data.session);
+
             if (mounted) setIsAuthLoading(false);
         };
 
@@ -521,6 +527,7 @@ export default function ParchisGamePage() {
             data: { subscription },
         } = supabase.auth.onAuthStateChange((_event, session) => {
             if (!mounted) return;
+
             if (session) {
                 void loadUserBalances(session);
             } else {
