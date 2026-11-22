@@ -105,7 +105,6 @@ const TRACK_LEN = 68;
 const SAFE_SPOTS = new Set([0, 5, 12, 17, 22, 29, 34, 39, 46, 51, 56, 63]);
 const START_SPOTS: Record<number, number> = { 0: 0, 1: 17, 2: 34, 3: 51 };
 
-// Si son 2 jugadores, se ubican en esquinas opuestas (0 y 2)
 function getVisualCorner(seatIndex: number, totalPlayers: number): number {
     if (totalPlayers === 2) {
         return seatIndex === 0 ? 0 : 2;
@@ -360,7 +359,7 @@ function Dice3D({
                 type="button"
                 disabled={disabled || rolling}
                 onClick={onRoll}
-                className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-black font-black text-xs uppercase rounded-xl shadow-lg transition-all"
+                className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-black font-black text-xs uppercase rounded-xl shadow-lg active:scale-95 transition-all"
             >
                 {rolling ? "Girando..." : "Lanzar Dado"}
             </button>
@@ -396,7 +395,7 @@ export default function ParchisGamePage() {
     const [roomId, setRoomId] = useState("");
     const [isConnected, setIsConnected] = useState(false);
     const [connectionMessage, setConnectionMessage] = useState(
-        "Preparando tablero..."
+        "Preparando arena..."
     );
     const [gameState, setGameState] = useState<ParchisState | null>(null);
     const [busyAction, setBusyAction] = useState(false);
@@ -480,6 +479,7 @@ export default function ParchisGamePage() {
 
             const fallbackName =
                 session.user?.user_metadata?.full_name ||
+                session.user?.user_metadata?.name ||
                 session.user?.email?.split("@")[0] ||
                 "Jugador";
             setPlayerName((prev) => prev || fallbackName);
@@ -660,7 +660,7 @@ export default function ParchisGamePage() {
             setIsConnected(false);
             setGameState(null);
             gameStateRef.current = null;
-            setConnectionMessage("Conectando con la mesa de Parchís...");
+            setConnectionMessage("Conectando con el servidor...");
 
             const cleanName = playerName.trim() || "Jugador";
             const cleanCedula = cedula.trim();
@@ -693,7 +693,7 @@ export default function ParchisGamePage() {
                             } catch {}
                         }
                     }, 20000);
-                    setConnectionMessage("Esperando estado del tablero...");
+                    setConnectionMessage("Esperando estado de la partida...");
                 };
 
                 ws.onmessage = (event) => {
@@ -726,7 +726,7 @@ export default function ParchisGamePage() {
                             if (!connectedRef.current) {
                                 connectedRef.current = true;
                                 setIsConnected(true);
-                                setConnectionMessage("Conectado");
+                                setConnectionMessage("Partida conectada");
                             }
                             if (data.status === "finished") {
                                 void loadUserBalances();
@@ -738,7 +738,7 @@ export default function ParchisGamePage() {
                             setRollingDice(false);
                             startingRef.current = false;
                             showAlert(
-                                "Error de partida",
+                                "Error del servidor",
                                 data.message || "No se pudo completar la acción."
                             );
                             if (!connectedRef.current) {
@@ -778,9 +778,9 @@ export default function ParchisGamePage() {
                         setIsInGame(false);
                         if (event.code !== 1000) {
                             showAlert(
-                                "Conexión cerrada",
+                                "Partida interrumpida",
                                 event.reason ||
-                                    `Se cerró la conexión (${event.code}).`
+                                    `Se cerró la sesión de juego (${event.code}).`
                             );
                         }
                     }
@@ -920,7 +920,7 @@ export default function ParchisGamePage() {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, size, size);
 
-        ctx.fillStyle = "#090d0b";
+        ctx.fillStyle = "#080d0b";
         ctx.fillRect(0, 0, size, size);
 
         const pad = size * 0.03;
@@ -930,7 +930,6 @@ export default function ParchisGamePage() {
         ctx.fillStyle = "#f4efe2";
         ctx.fillRect(pad, pad, inner, inner);
 
-        // Pasillos de llegada
         for (let y = 1; y <= 6; y++) {
             ctx.fillStyle = SEAT_PALETTE[0].main;
             ctx.fillRect(pad + 7 * cell, pad + y * cell, cell, cell);
@@ -948,7 +947,6 @@ export default function ParchisGamePage() {
             ctx.fillRect(pad + x * cell, pad + 7 * cell, cell, cell);
         }
 
-        // Cuadrícula de casillas
         ctx.strokeStyle = "rgba(24, 24, 27, 0.35)";
         ctx.lineWidth = 1;
         for (let r = 0; r < 15; r++) {
@@ -964,7 +962,6 @@ export default function ParchisGamePage() {
             }
         }
 
-        // Seguros y salidas
         for (let i = 0; i < TRACK_LEN; i++) {
             const g = TRACK_GRID[i];
             const px = pad + (g.gx + 0.5) * cell;
@@ -1093,7 +1090,6 @@ export default function ParchisGamePage() {
             }
         }
 
-        // Meta central
         const cLeft = pad + 6 * cell;
         const cTop = pad + 6 * cell;
         const cSize = cell * 3;
@@ -1296,7 +1292,7 @@ export default function ParchisGamePage() {
                 <Header />
                 <main className="flex-1 flex items-center justify-center p-4">
                     <p className="text-xs uppercase tracking-widest text-emerald-400 font-bold">
-                        Cargando AXIOM Parchís
+                        Cargando AXIOM Arena
                     </p>
                 </main>
             </div>
@@ -1313,7 +1309,7 @@ export default function ParchisGamePage() {
                             Acceso restringido
                         </h2>
                         <p className="text-xs text-zinc-400 leading-relaxed">
-                            Inicia sesión para jugar en las mesas de Parchís.
+                            Inicia sesión para entrar a las arenas.
                         </p>
                         <Link
                             href="/"
@@ -1341,22 +1337,23 @@ export default function ParchisGamePage() {
         gameState &&
             (gameState.host_user_id === userId || myPlayer?.seat_index === 0)
     );
+    const visibleUserName = playerName.trim() || "Jugador";
 
     return (
         <div className="min-h-screen bg-black text-white flex flex-col select-none font-sans overflow-x-hidden">
             {rulesOpen && (
                 <div className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
                     <div className="bg-zinc-950 border border-zinc-800 max-w-lg w-full rounded-3xl p-6 space-y-4 shadow-2xl">
-                        <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                            <h3 className="text-base font-black uppercase text-emerald-400">
-                                Reglas Clásicas del Parchís
+                        <div className="flex items-center justify-between border-b border-zinc-900 pb-3.5">
+                            <h3 className="text-sm sm:text-base font-black uppercase tracking-wider text-emerald-400">
+                                Reglas del Parchís
                             </h3>
                             <button
                                 type="button"
                                 onClick={() => setRulesOpen(false)}
-                                className="px-3 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-xs font-bold text-zinc-300"
+                                className="px-3 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-black text-zinc-300 hover:text-white transition-colors"
                             >
-                                Cerrar
+                                Listo
                             </button>
                         </div>
 
@@ -1366,19 +1363,17 @@ export default function ParchisGamePage() {
                                     Objetivo:
                                 </strong>{" "}
                                 Llevar tus 4 fichas desde casa hasta la meta
-                                central recorriendo el tablero y subiendo por tu
-                                pasillo de color.
+                                central por tu pasillo de color.
                             </li>
                             <li>
                                 <strong className="text-white">
-                                    Sacar ficha:
+                                    Salida con 5:
                                 </strong>{" "}
                                 Sacar{" "}
                                 <strong className="text-emerald-400">
                                     5
                                 </strong>{" "}
-                                en el dado permite sacar una ficha a tu casilla
-                                de salida.
+                                en el dado saca una ficha a tu salida.
                             </li>
                             <li>
                                 <strong className="text-white">
@@ -1391,14 +1386,14 @@ export default function ParchisGamePage() {
                                     Capturas:
                                 </strong>{" "}
                                 Caer en una casilla no segura ocupada por un
-                                rival envía su ficha de vuelta a casa.
+                                rival envía su ficha a casa.
                             </li>
                             <li>
                                 <strong className="text-white">
                                     2 jugadores:
                                 </strong>{" "}
-                                Se ubican en esquinas opuestas con el nombre de
-                                cada jugador en su esquina.
+                                Se ubican en esquinas opuestas mostrando el
+                                nombre de cada jugador.
                             </li>
                             <li>
                                 <strong className="text-white">
@@ -1412,7 +1407,7 @@ export default function ParchisGamePage() {
                         <button
                             type="button"
                             onClick={() => setRulesOpen(false)}
-                            className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase rounded-2xl transition-all"
+                            className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase rounded-2xl transition-all"
                         >
                             Entendido
                         </button>
@@ -1446,11 +1441,11 @@ export default function ParchisGamePage() {
                 className={`flex-1 w-full mx-auto flex flex-col ${
                     isInGame
                         ? "max-w-[1440px] px-2 sm:px-4 py-2 sm:py-3"
-                        : "max-w-3xl px-3 sm:px-6 py-4 sm:py-8 items-center justify-center"
+                        : "max-w-4xl px-3 sm:px-6 py-4 sm:py-8 items-center justify-center"
                 }`}
             >
                 {!isInGame ? (
-                    <div className="w-full bg-zinc-950 border border-zinc-800 rounded-3xl p-4 sm:p-6 space-y-5 shadow-2xl">
+                    <div className="w-full max-w-xl bg-zinc-950 border border-zinc-800 rounded-3xl p-4 sm:p-6 space-y-5 shadow-2xl">
                         <div className="flex items-center justify-between gap-2 border-b border-zinc-900 pb-3.5">
                             <Link
                                 href="/"
@@ -1463,50 +1458,58 @@ export default function ParchisGamePage() {
                             <button
                                 type="button"
                                 onClick={() => setRulesOpen(true)}
-                                className="px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-emerald-400 font-bold uppercase transition-colors"
+                                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-700 text-xs font-black uppercase transition-all"
                             >
-                                Reglas del Parchís
+                                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
+                                <span>Reglas</span>
                             </button>
                         </div>
 
                         <div className="text-center">
                             <h2 className="text-xl sm:text-2xl font-black text-emerald-400 uppercase tracking-wider">
-                                Parchís Arena
+                                Parchís Arena P2P
                             </h2>
                             <p className="text-xs text-zinc-400 mt-1">
-                                Elige billetera, apuesta, modalidad y busca
-                                salas por cédula.
+                                Jugador:{" "}
+                                <span className="text-white font-bold">
+                                    {visibleUserName}
+                                </span>
                             </p>
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-zinc-900/40 border border-zinc-800 rounded-2xl p-4">
-                            <div>
-                                <label className="text-[10px] text-zinc-400 block mb-1.5 uppercase font-bold">
-                                    Tu Nombre
-                                </label>
-                                <input
-                                    type="text"
-                                    value={playerName}
-                                    onChange={(e) => setPlayerName(e.target.value)}
-                                    placeholder="Ej. Mauricio"
-                                    className="w-full bg-black border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
-                                />
-                            </div>
-                            <div>
-                                <label className="text-[10px] text-zinc-400 block mb-1.5 uppercase font-bold">
-                                    Tu Cédula
-                                </label>
-                                <input
-                                    type="text"
-                                    value={cedula}
-                                    onChange={(e) => setCedula(e.target.value)}
-                                    placeholder="Ej. 1712345678"
-                                    className="w-full bg-black border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
-                                />
-                            </div>
-                        </div>
-
                         <div className="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-4 space-y-5">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                    <label className="text-[10px] text-zinc-400 block mb-1.5 uppercase font-bold">
+                                        Nombre de Usuario
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={playerName}
+                                        onChange={(e) =>
+                                            setPlayerName(e.target.value)
+                                        }
+                                        placeholder="Tu nombre"
+                                        className="w-full bg-black border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="text-[10px] text-zinc-400 block mb-1.5 uppercase font-bold">
+                                        Cédula
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={cedula}
+                                        onChange={(e) =>
+                                            setCedula(e.target.value)
+                                        }
+                                        placeholder="Ej. 1712345678"
+                                        className="w-full bg-black border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
+                                    />
+                                </div>
+                            </div>
+
                             <div>
                                 <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">
                                     Billetera
@@ -1526,7 +1529,9 @@ export default function ParchisGamePage() {
 
                                     <button
                                         type="button"
-                                        onClick={() => setSelectedWallet("bonus")}
+                                        onClick={() =>
+                                            setSelectedWallet("bonus")
+                                        }
                                         className={`py-3 px-2 rounded-xl text-xs font-black uppercase border transition-all ${
                                             selectedWallet === "bonus"
                                                 ? "bg-yellow-400 text-black border-yellow-300"
@@ -1541,7 +1546,7 @@ export default function ParchisGamePage() {
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div>
                                     <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">
-                                        Apuesta
+                                        Sala
                                     </label>
                                     <div className="grid grid-cols-3 gap-2">
                                         {(["0.25", "1.00", "10.00"] as ParchisBet[]).map(
@@ -1549,8 +1554,10 @@ export default function ParchisGamePage() {
                                                 <button
                                                     key={amt}
                                                     type="button"
-                                                    onClick={() => setSelectedBet(amt)}
-                                                    className={`py-3 rounded-xl text-xs sm:text-sm font-black border transition-all ${
+                                                    onClick={() =>
+                                                        setSelectedBet(amt)
+                                                    }
+                                                    className={`py-3 rounded-xl text-sm font-black border transition-all ${
                                                         selectedBet === amt
                                                             ? "bg-emerald-500 text-black border-emerald-400"
                                                             : "bg-black text-zinc-400 border-zinc-800 hover:border-emerald-500"
@@ -1568,30 +1575,36 @@ export default function ParchisGamePage() {
                                         Jugadores
                                     </label>
                                     <div className="grid grid-cols-3 gap-2">
-                                        {([2, 3, 4] as MaxPlayers[]).map((cnt) => (
-                                            <button
-                                                key={cnt}
-                                                type="button"
-                                                onClick={() => setMaxPlayers(cnt)}
-                                                className={`py-3 rounded-xl text-xs sm:text-sm font-black border transition-all ${
-                                                    maxPlayers === cnt
-                                                        ? "bg-emerald-500 text-black border-emerald-400"
-                                                        : "bg-black text-zinc-400 border-zinc-800 hover:border-emerald-500"
-                                                }`}
-                                            >
-                                                {cnt}P
-                                            </button>
-                                        ))}
+                                        {([2, 3, 4] as MaxPlayers[]).map(
+                                            (cnt) => (
+                                                <button
+                                                    key={cnt}
+                                                    type="button"
+                                                    onClick={() =>
+                                                        setMaxPlayers(cnt)
+                                                    }
+                                                    className={`py-3 rounded-xl text-sm font-black border transition-all ${
+                                                        maxPlayers === cnt
+                                                            ? "bg-emerald-500 text-black border-emerald-400"
+                                                            : "bg-black text-zinc-400 border-zinc-800 hover:border-emerald-500"
+                                                    }`}
+                                                >
+                                                    {cnt}P
+                                                </button>
+                                            )
+                                        )}
                                     </div>
                                 </div>
                             </div>
 
-                            <div className="bg-black/60 border border-zinc-800 rounded-2xl p-3.5 space-y-3">
+                            <div className="bg-black/70 border border-zinc-800 rounded-2xl p-3.5 space-y-3">
                                 <label className="flex items-center gap-2.5 text-xs font-bold text-zinc-300 cursor-pointer">
                                     <input
                                         type="checkbox"
                                         checked={isPrivate}
-                                        onChange={(e) => setIsPrivate(e.target.checked)}
+                                        onChange={(e) =>
+                                            setIsPrivate(e.target.checked)
+                                        }
                                         className="rounded accent-emerald-500"
                                     />
                                     <span>Sala privada con contraseña</span>
@@ -1601,33 +1614,24 @@ export default function ParchisGamePage() {
                                     <input
                                         type="text"
                                         value={roomPassword}
-                                        onChange={(e) => setRoomPassword(e.target.value)}
-                                        placeholder="Código o contraseña de sala"
+                                        onChange={(e) =>
+                                            setRoomPassword(e.target.value)
+                                        }
+                                        placeholder="Contraseña de sala"
                                         className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
                                     />
                                 )}
 
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                                    <button
-                                        type="button"
-                                        disabled={startingRef.current || busyAction}
-                                        onClick={() => connectToRoom("matchmake", "")}
-                                        className="py-3.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-black text-xs uppercase rounded-2xl transition-all"
-                                    >
-                                        Buscar Sala Pública
-                                    </button>
-
-                                    <button
-                                        type="button"
-                                        disabled={startingRef.current || busyAction}
-                                        onClick={handleCreatePrivateOrCustomRoom}
-                                        className="py-3.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-white font-black text-xs uppercase rounded-2xl border border-zinc-700 transition-all"
-                                    >
-                                        {isPrivate
-                                            ? "Crear Sala Privada"
-                                            : "Crear Nueva Sala"}
-                                    </button>
-                                </div>
+                                <button
+                                    type="button"
+                                    disabled={startingRef.current || busyAction}
+                                    onClick={handleCreatePrivateOrCustomRoom}
+                                    className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-black text-xs uppercase tracking-wider rounded-2xl shadow-lg active:scale-95 transition-all"
+                                >
+                                    {isPrivate
+                                        ? "Crear Sala Privada"
+                                        : "Crear Sala"}
+                                </button>
                             </div>
 
                             <div className="border-t border-zinc-800 pt-4 space-y-2.5">
@@ -1640,7 +1644,7 @@ export default function ParchisGamePage() {
                                         onClick={() => void fetchPublicRooms()}
                                         className="text-[10px] text-emerald-400 font-bold uppercase hover:underline"
                                     >
-                                        Buscar / Actualizar
+                                        Actualizar
                                     </button>
                                 </div>
 
@@ -1648,15 +1652,17 @@ export default function ParchisGamePage() {
                                     <input
                                         type="text"
                                         value={searchCedula}
-                                        onChange={(e) => setSearchCedula(e.target.value)}
-                                        placeholder="Número de cédula del anfitrión..."
+                                        onChange={(e) =>
+                                            setSearchCedula(e.target.value)
+                                        }
+                                        placeholder="Cédula del anfitrión..."
                                         className="flex-1 bg-black border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
                                     />
                                     {searchCedula && (
                                         <button
                                             type="button"
                                             onClick={() => setSearchCedula("")}
-                                            className="px-3 py-2 bg-zinc-900 text-zinc-400 text-xs rounded-xl border border-zinc-800"
+                                            className="px-3 py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs font-bold rounded-xl border border-zinc-800"
                                         >
                                             Limpiar
                                         </button>
@@ -1666,11 +1672,11 @@ export default function ParchisGamePage() {
                                 {publicRooms.length === 0 ? (
                                     <p className="text-xs text-zinc-500">
                                         {roomsUnavailable
-                                            ? "Lista de salas en mantenimiento; puedes crear o buscar sala directa."
-                                            : "No hay salas públicas disponibles para este filtro."}
+                                            ? "Lista de salas en mantenimiento; crea una sala o entra por ID."
+                                            : "No hay salas disponibles con ese filtro."}
                                     </p>
                                 ) : (
-                                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                                    <div className="space-y-2 max-h-44 overflow-y-auto">
                                         {publicRooms.map((item) => (
                                             <div
                                                 key={item.room_id}
@@ -1678,15 +1684,16 @@ export default function ParchisGamePage() {
                                             >
                                                 <div className="min-w-0">
                                                     <span className="font-black text-white block truncate">
-                                                        Anfitrión:{" "}
-                                                        {item.host_name || "Jugador"}
+                                                        {item.host_name ||
+                                                            "Jugador"}
                                                     </span>
                                                     <span className="text-[10px] text-zinc-400 block truncate">
                                                         {item.host_cedula
-                                                            ? `Cédula: ${item.host_cedula} · `
+                                                            ? `CI: ${item.host_cedula} · `
                                                             : ""}
-                                                        {item.players_count}/{item.max_players} jugadores ·{" "}
-                                                        ${item.bet.toFixed(2)}
+                                                        {item.players_count}/
+                                                        {item.max_players}P · $
+                                                        {item.bet.toFixed(2)}
                                                     </span>
                                                 </div>
                                                 <button
@@ -1709,28 +1716,35 @@ export default function ParchisGamePage() {
                                 )}
                             </div>
 
-                            <div className="border-t border-zinc-800 pt-4 space-y-2.5">
+                            <div className="border-t border-zinc-800 pt-4 space-y-2">
                                 <span className="text-[10px] text-zinc-400 uppercase font-bold block">
-                                    Entrar por ID de sala
+                                    Entrar por ID
                                 </span>
                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                                     <input
                                         type="text"
                                         value={joinRoomId}
-                                        onChange={(e) => setJoinRoomId(e.target.value)}
+                                        onChange={(e) =>
+                                            setJoinRoomId(e.target.value)
+                                        }
                                         placeholder="ID de sala"
                                         className="bg-black border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
                                     />
                                     <input
                                         type="text"
                                         value={joinPassword}
-                                        onChange={(e) => setJoinPassword(e.target.value)}
-                                        placeholder="Contraseña (si aplica)"
+                                        onChange={(e) =>
+                                            setJoinPassword(e.target.value)
+                                        }
+                                        placeholder="Contraseña"
                                         className="bg-black border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
                                     />
                                     <button
                                         type="button"
-                                        disabled={!joinRoomId.trim() || startingRef.current}
+                                        disabled={
+                                            !joinRoomId.trim() ||
+                                            startingRef.current
+                                        }
                                         onClick={() =>
                                             connectToRoom(
                                                 joinRoomId.trim(),
@@ -1758,15 +1772,16 @@ export default function ParchisGamePage() {
                                 </button>
                                 <div className="min-w-0">
                                     <span className="block text-xs font-black text-emerald-400 uppercase truncate">
-                                        Sala de{" "}
+                                        Anfitrión:{" "}
                                         {gameState?.host_name ||
                                             activePlayers[0]?.player_name ||
-                                            "Anfitrión"}
+                                            visibleUserName}
                                     </span>
                                     <span className="block text-[10px] text-zinc-400 truncate">
-                                        ID: {gameState?.room_id || roomId}
+                                        Jugador: {visibleUserName} · ID:{" "}
+                                        {gameState?.room_id || roomId}
                                         {gameState?.host_cedula
-                                            ? ` · Cédula: ${gameState.host_cedula}`
+                                            ? ` · CI: ${gameState.host_cedula}`
                                             : ""}
                                     </span>
                                 </div>
@@ -1776,7 +1791,7 @@ export default function ParchisGamePage() {
                                 <button
                                     type="button"
                                     onClick={() => setRulesOpen(true)}
-                                    className="px-3 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[10px] text-zinc-200 font-bold uppercase"
+                                    className="px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[10px] text-zinc-200 font-black uppercase"
                                 >
                                     Reglas
                                 </button>
@@ -1802,7 +1817,7 @@ export default function ParchisGamePage() {
                                     <canvas
                                         ref={boardCanvasRef}
                                         onPointerDown={handleBoardPointerDown}
-                                        className="w-full h-full max-w-[min(82vh,780px)] aspect-square rounded-2xl border-2 border-zinc-700 shadow-2xl cursor-pointer touch-none"
+                                        className="w-full h-full max-w-[min(82vh,780px)] aspect-square rounded-2xl border-2 border-zinc-800 shadow-2xl cursor-pointer touch-none"
                                         style={{ touchAction: "none" }}
                                     />
                                     <p className="text-xs text-emerald-400 mt-2.5 text-center font-semibold">
@@ -1812,23 +1827,26 @@ export default function ParchisGamePage() {
                                 </div>
 
                                 <div className="xl:col-span-4 space-y-4">
-                                    <div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-4 flex items-center justify-between gap-4">
+                                    <div className="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-4 flex items-center justify-between gap-4">
                                         <div>
                                             <span className="text-[10px] text-zinc-400 uppercase font-bold block">
+                                                {visibleUserName}
+                                            </span>
+                                            <span className="text-sm font-black text-emerald-400 block mt-0.5">
                                                 {isMyTurn
                                                     ? gameState.must_move
                                                         ? "Mueve una ficha"
                                                         : "Tu turno"
                                                     : "Turno en curso"}
                                             </span>
-                                            <span className="text-base font-black text-white block mt-0.5">
+                                            <span className="text-xs font-bold text-white block mt-1">
                                                 {gameState.dice !== null
-                                                    ? `Resultado: ${gameState.dice}`
+                                                    ? `Dado: ${gameState.dice}`
                                                     : "Listo para tirar"}
                                             </span>
                                             <span className="text-[10px] text-zinc-500 block mt-1">
                                                 {isHost
-                                                    ? "Eres el anfitrión (si sales se cierra)"
+                                                    ? "Anfitrión: si sales se cierra"
                                                     : "Activa mientras esté el anfitrión"}
                                             </span>
                                         </div>
@@ -1844,7 +1862,7 @@ export default function ParchisGamePage() {
                                     </div>
 
                                     {gameState.status === "finished" && (
-                                        <div className="bg-emerald-500/10 border border-emerald-500/40 rounded-2xl p-4 text-center space-y-2">
+                                        <div className="bg-zinc-900/60 border border-emerald-400 rounded-2xl p-4 text-center space-y-2">
                                             <h3 className="text-base font-black uppercase text-emerald-400">
                                                 Partida Finalizada
                                             </h3>
@@ -1858,7 +1876,7 @@ export default function ParchisGamePage() {
                                                 onClick={exitParchisGame}
                                                 className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase rounded-xl"
                                             >
-                                                Volver al Lobby
+                                                Volver a la arena
                                             </button>
                                         </div>
                                     )}
@@ -1888,7 +1906,7 @@ export default function ParchisGamePage() {
                                                 return (
                                                     <div
                                                         key={p.user_id}
-                                                        className={`bg-zinc-900/50 rounded-2xl p-3 border transition-all ${
+                                                        className={`bg-zinc-900/40 rounded-2xl p-3 border transition-all ${
                                                             activeTurn
                                                                 ? "border-emerald-400"
                                                                 : "border-zinc-800"
@@ -1915,8 +1933,8 @@ export default function ParchisGamePage() {
                                                             </div>
                                                             <span className="text-[10px] text-zinc-400 uppercase shrink-0">
                                                                 {p.connected
-                                                                    ? "Conectado"
-                                                                    : "Desconectado"}
+                                                                    ? "Activo"
+                                                                    : "Salió"}
                                                             </span>
                                                         </div>
 
