@@ -85,7 +85,16 @@ const PARCHIS_BETS: Record<ParchisBet, number> = {
     "10.00": 10.0,
 };
 
-const SEAT_PALETTE = [
+// Esquinas visuales como en la captura:
+// 0 = Arriba Izquierda (Verde), 1 = Arriba Derecha (Rojo),
+// 2 = Abajo Derecha (Azul), 3 = Abajo Izquierda (Amarillo)
+const CORNER_PALETTE = [
+    {
+        name: "Verde",
+        main: "#2d9a42",
+        dark: "#185925",
+        soft: "rgba(45, 154, 66, 0.25)",
+    },
     {
         name: "Rojo",
         main: "#e53935",
@@ -97,12 +106,6 @@ const SEAT_PALETTE = [
         main: "#1e88e5",
         dark: "#124e85",
         soft: "rgba(30, 136, 229, 0.25)",
-    },
-    {
-        name: "Verde",
-        main: "#2e9e44",
-        dark: "#185926",
-        soft: "rgba(46, 158, 68, 0.25)",
     },
     {
         name: "Amarillo",
@@ -127,7 +130,8 @@ function getMainName(
 
 function getVisualCorner(seatIndex: number, totalPlayers: number): number {
     if (totalPlayers === 2) {
-        return seatIndex === 0 ? 2 : 0;
+        // Arriba derecha (Rojo = 1) vs Abajo izquierda (Amarillo = 3)
+        return seatIndex === 0 ? 1 : 3;
     }
     return seatIndex % 4;
 }
@@ -190,7 +194,7 @@ function getGoalLanePoint(
     pos: number,
     boardSize: number
 ): { x: number; y: number } {
-    const pad = boardSize * 0.03;
+    const pad = boardSize * 0.032;
     const inner = boardSize - pad * 2;
     const cell = inner / 15;
     const step = Math.max(0, Math.min(7, pos)) / 7;
@@ -224,7 +228,7 @@ function getPieceBoardPoint(
     corner: number,
     boardSize: number
 ): { x: number; y: number } {
-    const pad = boardSize * 0.03;
+    const pad = boardSize * 0.032;
     const inner = boardSize - pad * 2;
     const cell = inner / 15;
 
@@ -312,7 +316,7 @@ function PipDieBox({
     );
 }
 
-function PlayerDiceBar({
+function PlayerTurnRow({
     playerName,
     accentColor,
     d1,
@@ -320,7 +324,7 @@ function PlayerDiceBar({
     rolling,
     canRoll,
     onRoll,
-    alignRight = false,
+    position,
 }: {
     playerName: string;
     accentColor: string;
@@ -329,9 +333,9 @@ function PlayerDiceBar({
     rolling: boolean;
     canRoll: boolean;
     onRoll: () => void;
-    alignRight?: boolean;
+    position: "top" | "bottom";
 }) {
-    const [spinDice, setSpinDice] = useState<[number, number]>([2, 4]);
+    const [spinDice, setSpinDice] = useState<[number, number]>([4, 6]);
 
     useEffect(() => {
         if (!rolling) return;
@@ -347,32 +351,54 @@ function PlayerDiceBar({
     const show1 = rolling ? spinDice[0] : d1;
     const show2 = rolling ? spinDice[1] : d2;
 
+    if (position === "top") {
+        return (
+            <div className="flex flex-col items-end gap-1">
+                <div className="flex items-center gap-2">
+                    <div className="bg-zinc-900/90 border border-zinc-700 rounded-2xl p-1.5 flex items-center gap-1.5">
+                        <PipDieBox num={show1} rolling={rolling} />
+                        <PipDieBox num={show2} rolling={rolling} />
+                    </div>
+                    {canRoll && (
+                        <button
+                            type="button"
+                            disabled={rolling}
+                            onClick={onRoll}
+                            className="px-3.5 py-2.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-black font-black text-[11px] uppercase rounded-xl active:scale-95 transition-all"
+                        >
+                            {rolling ? "..." : "Lanzar"}
+                        </button>
+                    )}
+                </div>
+                <div className="flex items-center gap-1.5">
+                    <span
+                        className="w-2.5 h-2.5 rounded-full"
+                        style={{ backgroundColor: accentColor }}
+                    />
+                    <span className="text-xs font-bold text-zinc-200">
+                        {playerName}
+                    </span>
+                </div>
+            </div>
+        );
+    }
+
     return (
-        <div
-            className={`flex items-center justify-between gap-3 ${
-                alignRight ? "flex-row-reverse" : "flex-row"
-            }`}
-        >
-            <div
-                className={`flex items-center gap-2 min-w-0 ${
-                    alignRight ? "flex-row-reverse text-right" : "text-left"
-                }`}
-            >
+        <div className="flex flex-col items-start gap-1">
+            <div className="flex items-center gap-1.5">
                 <span
-                    className="w-3.5 h-3.5 rounded-full border border-white/50 shrink-0"
+                    className="w-2.5 h-2.5 rounded-full"
                     style={{ backgroundColor: accentColor }}
                 />
-                <span className="text-xs sm:text-sm font-black text-white truncate">
+                <span className="text-xs font-bold text-zinc-200">
                     {playerName}
                 </span>
             </div>
-
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-2">
                 <div className="bg-zinc-900/90 border border-zinc-700 rounded-2xl p-1.5 flex items-center gap-1.5">
                     <PipDieBox num={show1} rolling={rolling} />
                     <PipDieBox num={show2} rolling={rolling} />
                 </div>
-
                 {canRoll && (
                     <button
                         type="button"
@@ -951,6 +977,7 @@ export default function ParchisGamePage() {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, size, size);
 
+        // Marco exterior tipo madera de la captura
         ctx.fillStyle = "#5c3b28";
         ctx.beginPath();
         ctx.roundRect(0, 0, size, size, 16);
@@ -963,20 +990,21 @@ export default function ParchisGamePage() {
         ctx.fillStyle = "#f7f3e8";
         ctx.fillRect(pad, pad, inner, inner);
 
+        // Pasillos de meta (Arriba = Verde [0], Derecha = Rojo [1], Abajo = Azul [2], Izquierda = Amarillo [3])
         for (let y = 1; y <= 6; y++) {
-            ctx.fillStyle = SEAT_PALETTE[0].main;
+            ctx.fillStyle = CORNER_PALETTE[0].main;
             ctx.fillRect(pad + 7 * cell, pad + y * cell, cell, cell);
         }
         for (let x = 8; x <= 13; x++) {
-            ctx.fillStyle = SEAT_PALETTE[1].main;
+            ctx.fillStyle = CORNER_PALETTE[1].main;
             ctx.fillRect(pad + x * cell, pad + 7 * cell, cell, cell);
         }
         for (let y = 8; y <= 13; y++) {
-            ctx.fillStyle = SEAT_PALETTE[2].main;
+            ctx.fillStyle = CORNER_PALETTE[2].main;
             ctx.fillRect(pad + 7 * cell, pad + y * cell, cell, cell);
         }
         for (let x = 1; x <= 6; x++) {
-            ctx.fillStyle = SEAT_PALETTE[3].main;
+            ctx.fillStyle = CORNER_PALETTE[3].main;
             ctx.fillRect(pad + x * cell, pad + 7 * cell, cell, cell);
         }
 
@@ -1005,7 +1033,7 @@ export default function ParchisGamePage() {
             );
             if (startEntry) {
                 const sIdx = Number(startEntry[0]);
-                ctx.fillStyle = SEAT_PALETTE[sIdx % 4].main;
+                ctx.fillStyle = CORNER_PALETTE[sIdx % 4].main;
                 ctx.fillRect(
                     pad + g.gx * cell + 1,
                     pad + g.gy * cell + 1,
@@ -1022,13 +1050,13 @@ export default function ParchisGamePage() {
                     cell - 3
                 );
                 ctx.beginPath();
-                ctx.arc(px, py, Math.max(3.5, cell * 0.17), 0, Math.PI * 2);
+                ctx.arc(px, py, Math.max(3.5, cell * 0.16), 0, Math.PI * 2);
                 ctx.fillStyle = "#27272a";
                 ctx.fill();
             }
 
             ctx.fillStyle = "rgba(24, 24, 27, 0.55)";
-            ctx.font = `600 ${Math.max(7, Math.floor(cell * 0.28))}px sans-serif`;
+            ctx.font = `600 ${Math.max(7, Math.floor(cell * 0.27))}px sans-serif`;
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
             ctx.fillText(String(i + 1), px, py);
@@ -1053,7 +1081,7 @@ export default function ParchisGamePage() {
 
         for (const h of homes) {
             const isActive = activeCorners.has(h.corner);
-            const pal = SEAT_PALETTE[h.corner];
+            const pal = CORNER_PALETTE[h.corner];
             const hx0 = pad + h.gx * cell;
             const hy0 = pad + h.gy * cell;
             const hSize = cell * 6;
@@ -1096,7 +1124,7 @@ export default function ParchisGamePage() {
                     [cLeft + cSize, cTop],
                     [midX, midY],
                 ],
-                color: SEAT_PALETTE[0].main,
+                color: CORNER_PALETTE[0].main,
             },
             {
                 pts: [
@@ -1104,7 +1132,7 @@ export default function ParchisGamePage() {
                     [cLeft + cSize, cTop + cSize],
                     [midX, midY],
                 ],
-                color: SEAT_PALETTE[1].main,
+                color: CORNER_PALETTE[1].main,
             },
             {
                 pts: [
@@ -1112,7 +1140,7 @@ export default function ParchisGamePage() {
                     [cLeft + cSize, cTop + cSize],
                     [midX, midY],
                 ],
-                color: SEAT_PALETTE[2].main,
+                color: CORNER_PALETTE[2].main,
             },
             {
                 pts: [
@@ -1120,7 +1148,7 @@ export default function ParchisGamePage() {
                     [cLeft, cTop + cSize],
                     [midX, midY],
                 ],
-                color: SEAT_PALETTE[3].main,
+                color: CORNER_PALETTE[3].main,
             },
         ];
 
@@ -1154,7 +1182,7 @@ export default function ParchisGamePage() {
 
         for (const p of players) {
             const corner = getVisualCorner(p.seat_index, players.length);
-            const pal = SEAT_PALETTE[corner];
+            const pal = CORNER_PALETTE[corner];
 
             for (const piece of p.pieces || []) {
                 const pt = getPieceBoardPoint(piece, corner, size);
@@ -1330,23 +1358,23 @@ export default function ParchisGamePage() {
 
     const topPlayer =
         activePlayers.find(
-            (p) => getVisualCorner(p.seat_index, activePlayers.length) === 0
+            (p) => getVisualCorner(p.seat_index, activePlayers.length) === 1
         ) ||
         activePlayers[1] ||
         null;
     const bottomPlayer =
         activePlayers.find(
-            (p) => getVisualCorner(p.seat_index, activePlayers.length) === 2
+            (p) => getVisualCorner(p.seat_index, activePlayers.length) === 3
         ) ||
         activePlayers[0] ||
         null;
 
     const topCorner = topPlayer
         ? getVisualCorner(topPlayer.seat_index, activePlayers.length)
-        : 0;
+        : 1;
     const bottomCorner = bottomPlayer
         ? getVisualCorner(bottomPlayer.seat_index, activePlayers.length)
-        : 2;
+        : 3;
 
     const topIsTurn = Boolean(
         gameState &&
@@ -1787,9 +1815,9 @@ export default function ParchisGamePage() {
                             </div>
                         ) : (
                             <>
-                                <PlayerDiceBar
+                                <PlayerTurnRow
                                     playerName={topName}
-                                    accentColor={SEAT_PALETTE[topCorner].main}
+                                    accentColor={CORNER_PALETTE[topCorner].main}
                                     d1={topIsTurn ? d1 : null}
                                     d2={topIsTurn ? d2 : null}
                                     rolling={rollingDice && topIsTurn}
@@ -1802,7 +1830,7 @@ export default function ParchisGamePage() {
                                         )
                                     }
                                     onRoll={sendRollDice}
-                                    alignRight={true}
+                                    position="top"
                                 />
 
                                 <div className="w-full flex items-center justify-center">
@@ -1814,9 +1842,11 @@ export default function ParchisGamePage() {
                                     />
                                 </div>
 
-                                <PlayerDiceBar
+                                <PlayerTurnRow
                                     playerName={bottomName}
-                                    accentColor={SEAT_PALETTE[bottomCorner].main}
+                                    accentColor={
+                                        CORNER_PALETTE[bottomCorner].main
+                                    }
                                     d1={bottomIsTurn ? d1 : null}
                                     d2={bottomIsTurn ? d2 : null}
                                     rolling={rollingDice && bottomIsTurn}
@@ -1830,7 +1860,7 @@ export default function ParchisGamePage() {
                                         )
                                     }
                                     onRoll={sendRollDice}
-                                    alignRight={false}
+                                    position="bottom"
                                 />
 
                                 {gameState.status === "finished" && (
