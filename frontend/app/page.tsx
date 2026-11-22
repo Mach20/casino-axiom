@@ -4,6 +4,39 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import Header from "./components/Header";
 
+const GAMES = [
+  {
+    id: "x-vs-o",
+    badge: "Online",
+    minBet: "Min: $0.25",
+    title: "X vs O",
+    description:
+      "3 en raya multijugador en tiempo real con apuestas y salas privadas.",
+    href: "/game",
+    hoverClass: "hover:bg-emerald-500 hover:text-black hover:border-emerald-400",
+  },
+  {
+    id: "snake",
+    badge: "Online",
+    minBet: "Min: $0.20",
+    title: "Snake",
+    description:
+      "Controla tu serpiente, come bolitas para crecer, sobrevive a otros jugadores y retírate cuando quieras.",
+    href: "/snake",
+    hoverClass: "hover:bg-yellow-400 hover:text-black hover:border-yellow-400",
+  },
+  {
+    id: "parchis",
+    badge: "Online",
+    minBet: "Min: $0.25",
+    title: "Parchis",
+    description:
+      "Compite contra otros jugadores y tú con tus amigos en este tablero, demuestra tus habilidades.",
+    href: "/parchis",
+    hoverClass: "hover:bg-yellow-400 hover:text-black hover:border-yellow-400",
+  },
+];
+
 export default function Home() {
   const [currentSlide, setCurrentSlide] = useState(0);
 
@@ -26,7 +59,7 @@ export default function Home() {
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-5 md:px-6 py-5 sm:py-8 space-y-6 sm:space-y-8">
         {/* CARRUSEL / BANNER PRINCIPAL */}
-        <section className="relative overflow-hidden rounded-2xl sm:rounded-3xl border border-zinc-800 bg-zinc-950 h-48 sm:h-64 md:h-[340px] lg:h-[380px]">
+        <section className="relative overflow-hidden rounded-2xl sm:rounded-3xl border border-zinc-800 bg-zinc-950 h-48 sm:h-64 md:h-[320px] lg:h-[360px]">
           {slides.map((imgUrl, index) => (
             <div
               key={index}
@@ -61,103 +94,47 @@ export default function Home() {
           </div>
         </section>
 
-        {/* SECCIÓN DE JUEGOS */}
-        <section className="w-full min-w-0">
+        {/* SECCIÓN DE 3 JUEGOS */}
+        <section id="juegos-online" className="w-full min-w-0">
           <h3 className="text-xs sm:text-sm font-black text-zinc-300 uppercase tracking-wider mb-3.5 sm:mb-4 flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
             <span>Juegos Online</span>
           </h3>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-5 w-full">
-            {/* TARJETA 1: X vs O */}
-            <div className="w-full min-w-0 bg-zinc-950 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 hover:border-emerald-500/50 transition-all flex flex-col justify-between">
-              <div>
-                <div className="flex justify-between items-center gap-2 mb-3">
-                  <span className="text-[10px] bg-emerald-950 text-emerald-400 font-bold px-2.5 py-1 rounded-lg border border-emerald-800/60 uppercase shrink-0">
-                    online
-                  </span>
+            {GAMES.map((game) => (
+              <article
+                key={game.id}
+                className="w-full min-w-0 bg-zinc-950 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 hover:border-emerald-500/50 transition-all flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex justify-between items-center gap-2 mb-3">
+                    <span className="text-[10px] bg-emerald-950 text-emerald-400 font-bold px-2.5 py-1 rounded-lg border border-emerald-800/60 uppercase shrink-0">
+                      {game.badge}
+                    </span>
 
-                  <span className="text-[11px] sm:text-xs text-zinc-400 sm:text-zinc-500 font-mono whitespace-nowrap">
-                    Min: $0.25
-                  </span>
+                    <span className="text-[11px] sm:text-xs text-zinc-400 sm:text-zinc-500 font-mono whitespace-nowrap">
+                      {game.minBet}
+                    </span>
+                  </div>
+
+                  <h4 className="text-xl sm:text-2xl font-black text-white uppercase tracking-wider mb-2 break-words">
+                    {game.title}
+                  </h4>
+
+                  <p className="text-xs sm:text-[13px] text-zinc-400 leading-relaxed mb-5 sm:mb-6">
+                    {game.description}
+                  </p>
                 </div>
 
-                <h4 className="text-xl sm:text-2xl font-black text-white uppercase tracking-wider mb-2 break-words">
-                  X vs O
-                </h4>
-
-                <p className="text-xs sm:text-[13px] text-zinc-400 leading-relaxed mb-5 sm:mb-6">
-                  3 en raya multijugador en tiempo real con apuestas y salas privadas.
-                </p>
-              </div>
-
-              <Link
-                href="/game"
-                className="w-full py-3 px-4 bg-zinc-900 hover:bg-emerald-500 hover:text-black text-zinc-200 font-black text-xs uppercase tracking-wider rounded-xl transition-all text-center border border-zinc-800 hover:border-emerald-400 block cursor-pointer active:scale-[0.99]"
-              >
-                Jugar Ahora
-              </Link>
-            </div>
-
-            {/* TARJETA 2: Snake Arena */}
-            <div className="w-full min-w-0 bg-zinc-950 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 hover:border-emerald-500/50 transition-all flex flex-col justify-between">
-              <div>
-                <div className="flex justify-between items-center gap-2 mb-3">
-                  <span className="text-[10px] bg-emerald-950 text-emerald-400 font-bold px-2.5 py-1 rounded-lg border border-emerald-800/60 uppercase shrink-0">
-                    Online
-                  </span>
-
-                  <span className="text-[11px] sm:text-xs text-zinc-400 sm:text-zinc-500 font-mono whitespace-nowrap">
-                    Min: $0.20
-                  </span>
-                </div>
-
-                <h4 className="text-xl sm:text-2xl font-black text-white uppercase tracking-wider mb-2 break-words">
-                  Snake
-                </h4>
-
-                <p className="text-xs sm:text-[13px] text-zinc-400 leading-relaxed mb-5 sm:mb-6">
-                  Controla tu serpiente, come bolitas para crecer, sobrevive a otros jugadores y retírate cuando quieras.
-                </p>
-              </div>
-
-              <Link
-                href="/snake"
-                className="w-full py-3 px-4 bg-zinc-900 hover:bg-yellow-400 hover:text-black text-zinc-200 font-black text-xs uppercase tracking-wider rounded-xl transition-all text-center border border-zinc-800 hover:border-yellow-400 block cursor-pointer active:scale-[0.99]"
-              >
-                Jugar Ahora
-              </Link>
-            </div>
-
-            {/* TARJETA 3: Parchis */}
-            <div className="w-full min-w-0 bg-zinc-950 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 hover:border-emerald-500/50 transition-all flex flex-col justify-between">
-              <div>
-                <div className="flex justify-between items-center gap-2 mb-3">
-                  <span className="text-[10px] bg-emerald-950 text-emerald-400 font-bold px-2.5 py-1 rounded-lg border border-emerald-800/60 uppercase shrink-0">
-                    Online
-                  </span>
-
-                  <span className="text-[11px] sm:text-xs text-zinc-400 sm:text-zinc-500 font-mono whitespace-nowrap">
-                    Min: $0.25
-                  </span>
-                </div>
-
-                <h4 className="text-xl sm:text-2xl font-black text-white uppercase tracking-wider mb-2 break-words">
-                  Parchis
-                </h4>
-
-                <p className="text-xs sm:text-[13px] text-zinc-400 leading-relaxed mb-5 sm:mb-6">
-                  Compite contra otros jugadores y tu con tus amigos en este tablero, demustra tus habilidades.
-                </p>
-              </div>
-
-              <Link
-                href="/parchis"
-                className="w-full py-3 px-4 bg-zinc-900 hover:bg-yellow-400 hover:text-black text-zinc-200 font-black text-xs uppercase tracking-wider rounded-xl transition-all text-center border border-zinc-800 hover:border-yellow-400 block cursor-pointer active:scale-[0.99]"
-              >
-                Jugar Ahora
-              </Link>
-            </div>
+                <Link
+                  href={game.href}
+                  className={`w-full py-3 px-4 bg-zinc-900 text-zinc-200 font-black text-xs uppercase tracking-wider rounded-xl transition-all text-center border border-zinc-800 block cursor-pointer active:scale-[0.99] ${game.hoverClass}`}
+                >
+                  Jugar Ahora
+                </Link>
+              </article>
+            ))}
           </div>
         </section>
       </main>
