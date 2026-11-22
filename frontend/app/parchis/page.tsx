@@ -71,9 +71,6 @@ interface PublicRoomItem {
 
 interface ProfileRow {
     first_name: string | null;
-    middle_name: string | null;
-    last_name: string | null;
-    second_last_name: string | null;
     doc_number: string | null;
     balance: number | null;
     bonus_balance: number | null;
@@ -91,27 +88,27 @@ const PARCHIS_BETS: Record<ParchisBet, number> = {
 const SEAT_PALETTE = [
     {
         name: "Rojo",
-        main: "#ef4444",
-        dark: "#7f1d1d",
-        soft: "rgba(239, 68, 68, 0.22)",
+        main: "#e53935",
+        dark: "#8e1c1a",
+        soft: "rgba(229, 57, 53, 0.25)",
     },
     {
         name: "Azul",
-        main: "#3b82f6",
-        dark: "#1e3a8a",
-        soft: "rgba(59, 130, 246, 0.22)",
+        main: "#1e88e5",
+        dark: "#124e85",
+        soft: "rgba(30, 136, 229, 0.25)",
     },
     {
         name: "Verde",
-        main: "#22c55e",
-        dark: "#14532d",
-        soft: "rgba(34, 197, 94, 0.22)",
+        main: "#2e9e44",
+        dark: "#185926",
+        soft: "rgba(46, 158, 68, 0.25)",
     },
     {
         name: "Amarillo",
-        main: "#eab308",
-        dark: "#713f12",
-        soft: "rgba(234, 179, 8, 0.22)",
+        main: "#f4b400",
+        dark: "#8c6600",
+        soft: "rgba(244, 180, 0, 0.25)",
     },
 ];
 
@@ -119,25 +116,18 @@ const TRACK_LEN = 68;
 const SAFE_SPOTS = new Set([0, 5, 12, 17, 22, 29, 34, 39, 46, 51, 56, 63]);
 const START_SPOTS: Record<number, number> = { 0: 0, 1: 17, 2: 34, 3: 51 };
 
-function buildFullNameFromProfile(
+function getMainName(
     profile: Partial<ProfileRow> | null,
     fallback = "Jugador"
 ): string {
-    if (!profile) return fallback;
-    const parts = [
-        profile.first_name,
-        profile.middle_name,
-        profile.last_name,
-        profile.second_last_name,
-    ]
-        .map((p) => (p || "").trim())
-        .filter(Boolean);
-    return parts.length > 0 ? parts.join(" ") : fallback;
+    const raw = (profile?.first_name || "").trim();
+    if (!raw) return fallback;
+    return raw.split(/\s+/)[0] || fallback;
 }
 
 function getVisualCorner(seatIndex: number, totalPlayers: number): number {
     if (totalPlayers === 2) {
-        return seatIndex === 0 ? 0 : 2;
+        return seatIndex === 0 ? 2 : 0;
     }
     return seatIndex % 4;
 }
@@ -159,7 +149,7 @@ function getHomeSlotOffset(
     pieceId: number,
     cellSize: number
 ): { dx: number; dy: number } {
-    const d = cellSize * 0.62;
+    const d = cellSize * 0.68;
     const slots = [
         { dx: -d, dy: -d },
         { dx: d, dy: -d },
@@ -287,49 +277,66 @@ function resolveTwoDice(
     return [null, null];
 }
 
-function SingleDiceBox({
+const PIP_POSITIONS: Record<number, number[]> = {
+    1: [4],
+    2: [2, 6],
+    3: [2, 4, 6],
+    4: [0, 2, 6, 8],
+    5: [0, 2, 4, 6, 8],
+    6: [0, 2, 3, 5, 6, 8],
+};
+
+function PipDieBox({
     num,
     rolling,
 }: {
     num: number | null;
     rolling: boolean;
 }) {
+    const pips = num && PIP_POSITIONS[num] ? PIP_POSITIONS[num] : [];
     return (
         <div
-            className={`w-12 h-12 rounded-xl bg-zinc-100 border-2 border-zinc-400 shadow-inner flex items-center justify-center transition-transform duration-150 ${
+            className={`w-11 h-11 rounded-xl bg-gradient-to-b from-zinc-100 to-zinc-300 border-2 border-zinc-500 p-1.5 grid grid-cols-3 grid-rows-3 place-items-center shadow-md transition-transform duration-150 ${
                 rolling ? "rotate-12 scale-105" : "rotate-0 scale-100"
             }`}
         >
-            <span
-                className={`text-xl font-black leading-none ${
-                    num === 5 || num === 6 ? "text-red-600" : "text-zinc-950"
-                }`}
-            >
-                {num ?? "-"}
-            </span>
+            {Array.from({ length: 9 }).map((_, idx) => (
+                <span
+                    key={idx}
+                    className={`w-2 h-2 rounded-full ${
+                        pips.includes(idx) ? "bg-zinc-900" : "bg-transparent"
+                    }`}
+                />
+            ))}
         </div>
     );
 }
 
-function ParchisDicePanel({
+function PlayerDiceBar({
+    playerName,
+    accentColor,
     d1,
     d2,
     rolling,
+    canRoll,
     onRoll,
-    disabled,
+    alignRight = false,
 }: {
+    playerName: string;
+    accentColor: string;
     d1: number | null;
     d2: number | null;
     rolling: boolean;
+    canRoll: boolean;
     onRoll: () => void;
-    disabled: boolean;
+    alignRight?: boolean;
 }) {
-    const [animDice, setAnimDice] = useState<[number, number]>([1, 1]);
+    const [spinDice, setSpinDice] = useState<[number, number]>([2, 4]);
 
     useEffect(() => {
         if (!rolling) return;
         const timer = setInterval(() => {
-            setAnimDice([
+            setSpinDice([
                 Math.floor(Math.random() * 6) + 1,
                 Math.floor(Math.random() * 6) + 1,
             ]);
@@ -337,24 +344,46 @@ function ParchisDicePanel({
         return () => clearInterval(timer);
     }, [rolling]);
 
-    const show1 = rolling ? animDice[0] : d1;
-    const show2 = rolling ? animDice[1] : d2;
+    const show1 = rolling ? spinDice[0] : d1;
+    const show2 = rolling ? spinDice[1] : d2;
 
     return (
-        <div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-3.5 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-                <SingleDiceBox num={show1} rolling={rolling} />
-                <SingleDiceBox num={show2} rolling={rolling} />
+        <div
+            className={`flex items-center justify-between gap-3 ${
+                alignRight ? "flex-row-reverse" : "flex-row"
+            }`}
+        >
+            <div
+                className={`flex items-center gap-2 min-w-0 ${
+                    alignRight ? "flex-row-reverse text-right" : "text-left"
+                }`}
+            >
+                <span
+                    className="w-3.5 h-3.5 rounded-full border border-white/50 shrink-0"
+                    style={{ backgroundColor: accentColor }}
+                />
+                <span className="text-xs sm:text-sm font-black text-white truncate">
+                    {playerName}
+                </span>
             </div>
 
-            <button
-                type="button"
-                disabled={disabled || rolling}
-                onClick={onRoll}
-                className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-black font-black text-xs uppercase rounded-xl active:scale-95 transition-all shrink-0"
-            >
-                {rolling ? "Girando..." : "Lanzar"}
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+                <div className="bg-zinc-900/90 border border-zinc-700 rounded-2xl p-1.5 flex items-center gap-1.5">
+                    <PipDieBox num={show1} rolling={rolling} />
+                    <PipDieBox num={show2} rolling={rolling} />
+                </div>
+
+                {canRoll && (
+                    <button
+                        type="button"
+                        disabled={rolling}
+                        onClick={onRoll}
+                        className="px-3.5 py-2.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-black font-black text-[11px] uppercase rounded-xl active:scale-95 transition-all"
+                    >
+                        {rolling ? "..." : "Lanzar"}
+                    </button>
+                )}
+            </div>
         </div>
     );
 }
@@ -476,9 +505,7 @@ export default function ParchisGamePage() {
 
             const { data: profile, error } = await supabase
                 .from("profiles")
-                .select(
-                    "first_name, middle_name, last_name, second_last_name, doc_number, balance, bonus_balance"
-                )
+                .select("first_name, doc_number, balance, bonus_balance")
                 .eq("id", currentUserId)
                 .maybeSingle();
 
@@ -489,8 +516,7 @@ export default function ParchisGamePage() {
             }
 
             if (profile) {
-                const fullName = buildFullNameFromProfile(profile, emailFallback);
-                setPlayerName(fullName);
+                setPlayerName(getMainName(profile, emailFallback));
                 setDocNumber(
                     profile.doc_number ? String(profile.doc_number) : ""
                 );
@@ -664,7 +690,7 @@ export default function ParchisGamePage() {
             gameStateRef.current = null;
             setConnectionMessage("Conectando con el servidor...");
 
-            const cleanName = playerName.trim() || "Jugador";
+            const cleanName = (playerName.trim() || "Jugador").split(/\s+/)[0];
             const cleanId = docNumber.trim();
 
             const wsUrl = getWebSocketUrl(
@@ -847,6 +873,7 @@ export default function ParchisGamePage() {
 
         setBusyAction(true);
         try {
+            const cleanName = (playerName.trim() || "Jugador").split(/\s+/)[0];
             const res = await fetch(`${API_BASE}/parchis/rooms/create`, {
                 method: "POST",
                 headers: {
@@ -859,7 +886,7 @@ export default function ParchisGamePage() {
                     wallet: selectedWallet,
                     is_private: isPrivate,
                     password: isPrivate ? roomPassword.trim() : "",
-                    host_name: playerName.trim() || "Anfitrión",
+                    host_name: cleanName,
                     host_doc_number: docNumber.trim(),
                     host_cedula: docNumber.trim(),
                 }),
@@ -924,14 +951,16 @@ export default function ParchisGamePage() {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, size, size);
 
-        ctx.fillStyle = "#080d0b";
-        ctx.fillRect(0, 0, size, size);
+        ctx.fillStyle = "#5c3b28";
+        ctx.beginPath();
+        ctx.roundRect(0, 0, size, size, 16);
+        ctx.fill();
 
-        const pad = size * 0.03;
+        const pad = size * 0.032;
         const inner = size - pad * 2;
         const cell = inner / 15;
 
-        ctx.fillStyle = "#f4efe2";
+        ctx.fillStyle = "#f7f3e8";
         ctx.fillRect(pad, pad, inner, inner);
 
         for (let y = 1; y <= 6; y++) {
@@ -951,7 +980,7 @@ export default function ParchisGamePage() {
             ctx.fillRect(pad + x * cell, pad + 7 * cell, cell, cell);
         }
 
-        ctx.strokeStyle = "rgba(24, 24, 27, 0.35)";
+        ctx.strokeStyle = "rgba(39, 39, 42, 0.35)";
         ctx.lineWidth = 1;
         for (let r = 0; r < 15; r++) {
             for (let c = 0; c < 15; c++) {
@@ -985,14 +1014,24 @@ export default function ParchisGamePage() {
                 );
             }
             if (SAFE_SPOTS.has(i)) {
+                ctx.fillStyle = startEntry ? "#ffffff" : "#9ca3af";
+                ctx.fillRect(
+                    pad + g.gx * cell + 1.5,
+                    pad + g.gy * cell + 1.5,
+                    cell - 3,
+                    cell - 3
+                );
                 ctx.beginPath();
-                ctx.arc(px, py, Math.max(4, cell * 0.19), 0, Math.PI * 2);
-                ctx.fillStyle = startEntry ? "#ffffff" : "#d97706";
+                ctx.arc(px, py, Math.max(3.5, cell * 0.17), 0, Math.PI * 2);
+                ctx.fillStyle = "#27272a";
                 ctx.fill();
-                ctx.lineWidth = 1;
-                ctx.strokeStyle = "#18181b";
-                ctx.stroke();
             }
+
+            ctx.fillStyle = "rgba(24, 24, 27, 0.55)";
+            ctx.font = `600 ${Math.max(7, Math.floor(cell * 0.28))}px sans-serif`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(String(i + 1), px, py);
         }
 
         const state = gameStateRef.current;
@@ -1019,78 +1058,28 @@ export default function ParchisGamePage() {
             const hy0 = pad + h.gy * cell;
             const hSize = cell * 6;
 
-            ctx.fillStyle = isActive ? pal.main : "#27272a";
+            ctx.fillStyle = isActive ? pal.main : "#3f3f46";
             ctx.fillRect(hx0, hy0, hSize, hSize);
             ctx.strokeStyle = "#18181b";
             ctx.lineWidth = 2;
             ctx.strokeRect(hx0, hy0, hSize, hSize);
 
-            const inset = cell * 1.15;
-            ctx.fillStyle = isActive ? "#f4efe2" : "#18181b";
-            ctx.beginPath();
-            ctx.roundRect(
-                hx0 + inset,
-                hy0 + inset,
-                hSize - inset * 2,
-                hSize - inset * 2,
-                cell * 0.45
-            );
-            ctx.fill();
-
-            const occupant = players.find(
-                (pl: ParchisPlayerState) =>
-                    getVisualCorner(pl.seat_index, players.length) === h.corner
-            );
-
-            if (occupant && state) {
-                const isTurn =
-                    state.status === "playing" &&
-                    state.turn_seat === occupant.seat_index;
-                if (isTurn) {
-                    ctx.save();
-                    ctx.strokeStyle = "#10b981";
-                    ctx.lineWidth = 4;
-                    ctx.strokeRect(hx0 + 2, hy0 + 2, hSize - 4, hSize - 4);
-                    ctx.restore();
-                }
-
-                const labelText =
-                    occupant.player_name ||
-                    `Jugador ${occupant.seat_index + 1}`;
-                ctx.save();
-                ctx.fillStyle = "rgba(9, 9, 11, 0.88)";
+            const center = getHomeCenter(h.corner);
+            for (let pid = 0; pid < 4; pid++) {
+                const slot = getHomeSlotOffset(pid, cell);
                 ctx.beginPath();
-                ctx.roundRect(hx0 + 4, hy0 + 4, hSize - 8, cell * 0.95, 6);
-                ctx.fill();
-
-                ctx.fillStyle = isTurn ? "#34d399" : "#ffffff";
-                ctx.font = `bold ${Math.max(9, Math.floor(cell * 0.44))}px sans-serif`;
-                ctx.textAlign = "center";
-                ctx.textBaseline = "middle";
-                ctx.fillText(
-                    labelText.slice(0, 18),
-                    hx0 + hSize / 2,
-                    hy0 + 4 + (cell * 0.95) / 2
+                ctx.arc(
+                    center.x * size + slot.dx,
+                    center.y * size + slot.dy,
+                    cell * 0.42,
+                    0,
+                    Math.PI * 2
                 );
-                ctx.restore();
-
-                const center = getHomeCenter(h.corner);
-                for (let pid = 0; pid < 4; pid++) {
-                    const slot = getHomeSlotOffset(pid, cell);
-                    ctx.beginPath();
-                    ctx.arc(
-                        center.x * size + slot.dx,
-                        center.y * size + slot.dy,
-                        cell * 0.36,
-                        0,
-                        Math.PI * 2
-                    );
-                    ctx.fillStyle = pal.soft;
-                    ctx.fill();
-                    ctx.lineWidth = 1.5;
-                    ctx.strokeStyle = pal.main;
-                    ctx.stroke();
-                }
+                ctx.fillStyle = isActive ? pal.dark : "#27272a";
+                ctx.fill();
+                ctx.lineWidth = 1.5;
+                ctx.strokeStyle = isActive ? "#ffffff" : "#52525b";
+                ctx.stroke();
             }
         }
 
@@ -1210,15 +1199,9 @@ export default function ParchisGamePage() {
                 ctx.stroke();
 
                 ctx.beginPath();
-                ctx.arc(pt.x, pt.y, radius * 0.6, 0, Math.PI * 2);
-                ctx.fillStyle = pal.dark;
-                ctx.fill();
-
+                ctx.arc(pt.x, pt.y, radius * 0.56, 0, Math.PI * 2);
                 ctx.fillStyle = "#ffffff";
-                ctx.font = `bold ${Math.max(8, Math.floor(radius * 0.95))}px sans-serif`;
-                ctx.textAlign = "center";
-                ctx.textBaseline = "middle";
-                ctx.fillText(String(piece.id + 1), pt.x, pt.y + 0.5);
+                ctx.fill();
                 ctx.restore();
             }
         }
@@ -1341,9 +1324,47 @@ export default function ParchisGamePage() {
         gameState &&
             (gameState.host_user_id === userId || myPlayer?.seat_index === 0)
     );
-    const visibleUserName = playerName.trim() || "Jugador";
+    const mainName = (playerName.trim() || "Jugador").split(/\s+/)[0];
     const visibleUserId = docNumber.trim() || "-";
     const [d1, d2] = resolveTwoDice(gameState);
+
+    const topPlayer =
+        activePlayers.find(
+            (p) => getVisualCorner(p.seat_index, activePlayers.length) === 0
+        ) ||
+        activePlayers[1] ||
+        null;
+    const bottomPlayer =
+        activePlayers.find(
+            (p) => getVisualCorner(p.seat_index, activePlayers.length) === 2
+        ) ||
+        activePlayers[0] ||
+        null;
+
+    const topCorner = topPlayer
+        ? getVisualCorner(topPlayer.seat_index, activePlayers.length)
+        : 0;
+    const bottomCorner = bottomPlayer
+        ? getVisualCorner(bottomPlayer.seat_index, activePlayers.length)
+        : 2;
+
+    const topIsTurn = Boolean(
+        gameState &&
+            gameState.status === "playing" &&
+            topPlayer &&
+            gameState.turn_seat === topPlayer.seat_index
+    );
+    const bottomIsTurn = Boolean(
+        gameState &&
+            gameState.status === "playing" &&
+            bottomPlayer &&
+            gameState.turn_seat === bottomPlayer.seat_index
+    );
+
+    const topName = (topPlayer?.player_name || "Jugador").split(/\s+/)[0];
+    const bottomName = (bottomPlayer?.player_name || mainName).split(
+        /\s+/
+    )[0];
 
     return (
         <div className="min-h-screen bg-black text-white flex flex-col select-none font-sans overflow-x-hidden">
@@ -1379,7 +1400,7 @@ export default function ParchisGamePage() {
                                 <strong className="text-emerald-400">
                                     5
                                 </strong>{" "}
-                                saca una ficha a tu salida.
+                                en el dado saca una ficha a tu salida.
                             </li>
                             <li>
                                 <strong className="text-white">
@@ -1393,12 +1414,6 @@ export default function ParchisGamePage() {
                                 </strong>{" "}
                                 Caer en una casilla no segura ocupada por un
                                 rival envía su ficha a casa.
-                            </li>
-                            <li>
-                                <strong className="text-white">
-                                    2 jugadores:
-                                </strong>{" "}
-                                Se ubican en esquinas opuestas.
                             </li>
                             <li>
                                 <strong className="text-white">
@@ -1445,7 +1460,7 @@ export default function ParchisGamePage() {
             <main
                 className={`flex-1 w-full mx-auto flex flex-col ${
                     isInGame
-                        ? "max-w-[1440px] px-2 sm:px-4 py-2 sm:py-3"
+                        ? "max-w-3xl px-3 sm:px-6 py-3 sm:py-5 items-center justify-center"
                         : "max-w-4xl px-3 sm:px-6 py-4 sm:py-8 items-center justify-center"
                 }`}
             >
@@ -1476,7 +1491,7 @@ export default function ParchisGamePage() {
                             </h2>
                             <p className="text-xs text-zinc-400">
                                 <span className="text-white font-black">
-                                    {visibleUserName}
+                                    {mainName}
                                 </span>{" "}
                                 · ID:{" "}
                                 <span className="text-emerald-400 font-bold">
@@ -1657,6 +1672,9 @@ export default function ParchisGamePage() {
                                             const itemId =
                                                 item.host_doc_number ||
                                                 item.host_cedula;
+                                            const itemName = (
+                                                item.host_name || "Jugador"
+                                            ).split(/\s+/)[0];
                                             return (
                                                 <div
                                                     key={item.room_id}
@@ -1664,8 +1682,7 @@ export default function ParchisGamePage() {
                                                 >
                                                     <div className="min-w-0">
                                                         <span className="font-black text-white block truncate">
-                                                            {item.host_name ||
-                                                                "Jugador"}
+                                                            {itemName}
                                                         </span>
                                                         <span className="text-[10px] text-zinc-400 block truncate">
                                                             {itemId
@@ -1741,217 +1758,104 @@ export default function ParchisGamePage() {
                         </div>
                     </div>
                 ) : (
-                    <div className="flex-1 w-full bg-zinc-950 border border-zinc-800 rounded-3xl p-3 sm:p-5 flex flex-col gap-4 shadow-2xl">
-                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-900 pb-3">
-                            <div className="flex items-center gap-2.5 min-w-0">
-                                <button
-                                    type="button"
-                                    onClick={exitParchisGame}
-                                    className="px-3 py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-red-400 text-xs font-bold uppercase rounded-xl border border-zinc-800 shrink-0"
-                                >
-                                    &lsaquo; {isHost ? "Cerrar Sala" : "Salir"}
-                                </button>
-                                <div className="min-w-0">
-                                    <span className="block text-xs font-black text-emerald-400 uppercase truncate">
-                                        {gameState?.host_name ||
-                                            activePlayers[0]?.player_name ||
-                                            visibleUserName}
-                                    </span>
-                                    <span className="block text-[10px] text-zinc-400 truncate">
-                                        ID:{" "}
-                                        {gameState?.host_doc_number ||
-                                            gameState?.host_cedula ||
-                                            visibleUserId}{" "}
-                                        · Sala: {gameState?.room_id || roomId}
-                                    </span>
-                                </div>
-                            </div>
+                    <div className="w-full max-w-xl bg-zinc-950 border border-zinc-800 rounded-3xl p-3 sm:p-4 flex flex-col gap-3 shadow-2xl">
+                        <div className="flex items-center justify-between gap-2 border-b border-zinc-900 pb-2.5">
+                            <button
+                                type="button"
+                                onClick={exitParchisGame}
+                                className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-red-400 text-[11px] font-bold uppercase rounded-xl border border-zinc-800"
+                            >
+                                &lsaquo; {isHost ? "Cerrar Sala" : "Salir"}
+                            </button>
 
-                            <div className="flex items-center gap-3">
-                                <button
-                                    type="button"
-                                    onClick={() => setRulesOpen(true)}
-                                    className="px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[10px] text-zinc-200 font-black uppercase"
-                                >
-                                    Reglas
-                                </button>
+                            <span className="text-xs font-black text-emerald-400">
+                                {money(gameState?.pot_total ?? 0)}
+                            </span>
 
-                                <div className="text-right">
-                                    <span className="block text-[9px] text-zinc-500 uppercase">
-                                        Bote
-                                    </span>
-                                    <span className="text-xs sm:text-sm font-black text-emerald-400">
-                                        {money(gameState?.pot_total ?? 0)}
-                                    </span>
-                                </div>
-                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setRulesOpen(true)}
+                                className="px-3 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[11px] text-zinc-200 font-black uppercase"
+                            >
+                                Reglas
+                            </button>
                         </div>
 
                         {!isConnected || !gameState ? (
-                            <div className="flex-1 flex items-center justify-center py-20 text-xs text-yellow-400 uppercase font-bold tracking-wider">
+                            <div className="py-20 text-center text-xs text-yellow-400 uppercase font-bold tracking-wider">
                                 {connectionMessage}
                             </div>
                         ) : (
-                            <div className="flex-1 grid grid-cols-1 xl:grid-cols-12 gap-5 items-center">
-                                <div className="xl:col-span-8 flex flex-col items-center justify-center min-h-[340px] sm:min-h-[520px]">
+                            <>
+                                <PlayerDiceBar
+                                    playerName={topName}
+                                    accentColor={SEAT_PALETTE[topCorner].main}
+                                    d1={topIsTurn ? d1 : null}
+                                    d2={topIsTurn ? d2 : null}
+                                    rolling={rollingDice && topIsTurn}
+                                    canRoll={
+                                        Boolean(
+                                            topPlayer &&
+                                                topPlayer.user_id === userId &&
+                                                isMyTurn &&
+                                                !gameState.must_move
+                                        )
+                                    }
+                                    onRoll={sendRollDice}
+                                    alignRight={true}
+                                />
+
+                                <div className="w-full flex items-center justify-center">
                                     <canvas
                                         ref={boardCanvasRef}
                                         onPointerDown={handleBoardPointerDown}
-                                        className="w-full h-full max-w-[min(82vh,780px)] aspect-square rounded-2xl border-2 border-zinc-800 shadow-2xl cursor-pointer touch-none"
+                                        className="w-full max-w-[540px] aspect-square rounded-2xl border-2 border-zinc-800 shadow-2xl cursor-pointer touch-none"
                                         style={{ touchAction: "none" }}
                                     />
-                                    <p className="text-xs text-emerald-400 mt-2.5 text-center font-semibold">
-                                        {gameState.last_event ||
-                                            "Esperando turno..."}
-                                    </p>
                                 </div>
 
-                                <div className="xl:col-span-4 space-y-4">
-                                    <ParchisDicePanel
-                                        d1={d1}
-                                        d2={d2}
-                                        rolling={rollingDice}
-                                        onRoll={sendRollDice}
-                                        disabled={
-                                            !isMyTurn || gameState.must_move
-                                        }
-                                    />
+                                <PlayerDiceBar
+                                    playerName={bottomName}
+                                    accentColor={SEAT_PALETTE[bottomCorner].main}
+                                    d1={bottomIsTurn ? d1 : null}
+                                    d2={bottomIsTurn ? d2 : null}
+                                    rolling={rollingDice && bottomIsTurn}
+                                    canRoll={
+                                        Boolean(
+                                            bottomPlayer &&
+                                                bottomPlayer.user_id ===
+                                                    userId &&
+                                                isMyTurn &&
+                                                !gameState.must_move
+                                        )
+                                    }
+                                    onRoll={sendRollDice}
+                                    alignRight={false}
+                                />
 
-                                    {gameState.status === "finished" && (
-                                        <div className="bg-zinc-900/60 border border-emerald-400 rounded-2xl p-4 text-center space-y-2">
-                                            <h3 className="text-base font-black uppercase text-emerald-400">
-                                                Partida Finalizada
-                                            </h3>
-                                            <button
-                                                type="button"
-                                                onClick={exitParchisGame}
-                                                className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase rounded-xl"
-                                            >
-                                                Volver
-                                            </button>
-                                        </div>
-                                    )}
-
-                                    <div className="space-y-2.5">
-                                        {activePlayers.map(
-                                            (p: ParchisPlayerState) => {
-                                                const isMe = p.user_id === userId;
-                                                const activeTurn =
-                                                    gameState.status ===
-                                                        "playing" &&
-                                                    gameState.turn_seat ===
-                                                        p.seat_index;
-                                                const corner = getVisualCorner(
-                                                    p.seat_index,
-                                                    activePlayers.length
-                                                );
-                                                const pal = SEAT_PALETTE[corner];
-                                                const displayName =
-                                                    p.player_name ||
-                                                    `Jugador ${p.seat_index + 1}`;
-
-                                                return (
-                                                    <div
-                                                        key={p.user_id}
-                                                        className={`bg-zinc-900/40 rounded-2xl p-3 border transition-all ${
-                                                            activeTurn
-                                                                ? "border-emerald-400"
-                                                                : "border-zinc-800"
-                                                        }`}
-                                                    >
-                                                        <div className="flex items-center gap-2 mb-2">
-                                                            <span
-                                                                className="w-3.5 h-3.5 rounded-full border border-white/40 shrink-0"
-                                                                style={{
-                                                                    backgroundColor:
-                                                                        pal.main,
-                                                                }}
-                                                            />
-                                                            <span className="text-xs font-black truncate">
-                                                                {displayName}
-                                                            </span>
-                                                        </div>
-
-                                                        <div className="grid grid-cols-4 gap-1.5">
-                                                            {p.pieces.map(
-                                                                (
-                                                                    pc: ParchisPiece
-                                                                ) => {
-                                                                    const canMove =
-                                                                        Boolean(
-                                                                            isMe &&
-                                                                                isMyTurn &&
-                                                                                gameState.must_move &&
-                                                                                gameState.dice !==
-                                                                                    null &&
-                                                                                ((pc.stage ===
-                                                                                    -1 &&
-                                                                                    gameState.dice ===
-                                                                                        5) ||
-                                                                                    pc.stage ===
-                                                                                        0 ||
-                                                                                    pc.stage ===
-                                                                                        100)
-                                                                        );
-                                                                    const label =
-                                                                        pc.stage ===
-                                                                        -1
-                                                                            ? "Casa"
-                                                                            : pc.stage ===
-                                                                                100
-                                                                              ? `Meta ${
-                                                                                    pc.pos +
-                                                                                    1
-                                                                                }`
-                                                                              : `C-${pc.pos}`;
-
-                                                                    return (
-                                                                        <button
-                                                                            key={
-                                                                                pc.id
-                                                                            }
-                                                                            type="button"
-                                                                            disabled={
-                                                                                !canMove
-                                                                            }
-                                                                            onClick={() =>
-                                                                                sendMovePiece(
-                                                                                    pc.id
-                                                                                )
-                                                                            }
-                                                                            className={`py-1.5 px-2 rounded-xl border text-[10px] font-bold transition-all ${
-                                                                                canMove
-                                                                                    ? "bg-emerald-500/20 hover:bg-emerald-500/35 border-emerald-400 text-white"
-                                                                                    : "bg-black/60 border-zinc-800 text-zinc-400"
-                                                                            }`}
-                                                                        >
-                                                                            F
-                                                                            {pc.id +
-                                                                                1}
-                                                                            :{" "}
-                                                                            {label}
-                                                                        </button>
-                                                                    );
-                                                                }
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            }
-                                        )}
+                                {gameState.status === "finished" && (
+                                    <div className="bg-zinc-900/70 border border-emerald-400 rounded-2xl p-3.5 text-center space-y-2">
+                                        <h3 className="text-sm font-black uppercase text-emerald-400">
+                                            Partida Finalizada
+                                        </h3>
+                                        <button
+                                            type="button"
+                                            onClick={exitParchisGame}
+                                            className="px-5 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase rounded-xl"
+                                        >
+                                            Volver
+                                        </button>
                                     </div>
-                                </div>
-                            </div>
+                                )}
+                            </>
                         )}
                     </div>
                 )}
             </main>
 
-            {!isInGame && (
-                <footer className="py-6 text-center text-[10px] text-zinc-600 font-bold uppercase tracking-widest">
-                    AXIOM PARCHIS ARENA
-                </footer>
-            )}
+            <footer className="py-5 text-center text-[10px] text-zinc-600 font-bold uppercase tracking-widest">
+                AXIOM PARCHIS ARENA
+            </footer>
         </div>
     );
 }
