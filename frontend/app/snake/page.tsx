@@ -118,7 +118,7 @@ function drawSnakeVisual(
         scale?: number;
         time?: number;
         sizeFactor?: number;
-        trimTailFactor?: number;
+        segmentCount?: number;
     }
 ) {
     const {
@@ -135,23 +135,20 @@ function drawSnakeVisual(
         scale = 1,
         time = 0,
         sizeFactor = 1,
-        trimTailFactor = 1,
+        segmentCount,
     } = options;
 
     if (!Array.isArray(body) || body.length === 0) return;
 
-    const clampedSize = Math.max(0.45, Math.min(1.4, sizeFactor));
-    const clampedTrim = Math.max(0.35, Math.min(1, trimTailFactor));
-
-    // Recorta segmentos desde la cola sin alterar la separación entre nodos
-    const visibleCount =
-        body.length > MIN_VISIBLE_SEGMENTS
+    const clampedSize = Math.max(0.45, Math.min(1.45, sizeFactor));
+    const targetSegments =
+        typeof segmentCount === "number"
             ? Math.max(
                   MIN_VISIBLE_SEGMENTS,
-                  Math.round(body.length * clampedTrim)
+                  Math.min(body.length, Math.round(segmentCount))
               )
             : body.length;
-    const drawBody = body.slice(0, visibleCount);
+    const drawBody = body.slice(0, targetSegments);
 
     const effectiveBodyRadius = baseBodyRadius * clampedSize;
 
@@ -189,7 +186,7 @@ function drawSnakeVisual(
     for (let i = drawBody.length - 1; i >= 1; i--) {
         const seg = drawBody[i];
         const ratio = i / Math.max(drawBody.length, 1);
-        const taper = Math.max(0.45, 1 - ratio * 0.45);
+        const taper = Math.max(0.48, 1 - ratio * 0.42);
         const radius = Math.max(
             3,
             Number(seg.radius ?? baseBodyRadius) * clampedSize * taper
@@ -463,7 +460,6 @@ function SnakeStudioPreview({
                 scale: 1,
                 time,
                 sizeFactor: 1,
-                trimTailFactor: 1,
             });
 
             frameId = requestAnimationFrame(render);
@@ -572,7 +568,7 @@ export default function SnakeGamePage() {
     const boostPointerIdRef = useRef<number | null>(null);
     const joystickPointerIdRef = useRef<number | null>(null);
     const minimapPointerIdRef = useRef<number | null>(null);
-    const initialBodyLengthRef = useRef<number>(0);
+    const peakBodyLengthRef = useRef<number>(0);
 
     const applyPreset = (preset: SkinPreset) => {
         setSelectedPresetId(preset.id);
@@ -1267,11 +1263,8 @@ export default function SnakeGamePage() {
                 ? boostActiveRef.current || Boolean(value.boosting)
                 : Boolean(value.boosting);
 
-            if (isOwnSnake && initialBodyLengthRef.current === 0) {
-                initialBodyLengthRef.current = Math.max(
-                    MIN_VISIBLE_SEGMENTS + 1,
-                    value.body.length
-                );
+            if (isOwnSnake && value.body.length > peakBodyLengthRef.current) {
+                peakBodyLengthRef.current = value.body.length;
             }
 
             const balance = Number(
@@ -1281,31 +1274,32 @@ export default function SnakeGamePage() {
                         : selectedBetRef.current)
             );
 
-            const balanceRatio =
+            // Escala proporcional a las monedas actuales frente a la apuesta inicial
+            const coinRatio =
                 selectedBetRef.current > 0
-                    ? Math.max(0.55, Math.min(1.35, balance / selectedBetRef.current))
+                    ? Math.max(0.55, Math.min(1.4, balance / selectedBetRef.current))
                     : 1;
 
-            const lengthRatio =
-                isOwnSnake && initialBodyLengthRef.current > 0
-                    ? Math.max(
-                          0.55,
-                          Math.min(1.25, value.body.length / initialBodyLengthRef.current)
+            const boostScale = snakeBoosting ? 0.82 : 1;
+            const sizeFactor = isOwnSnake
+                ? Math.max(0.48, Math.min(1.4, coinRatio * boostScale))
+                : boostScale;
+
+            const referenceLength =
+                isOwnSnake && peakBodyLengthRef.current > 0
+                    ? peakBodyLengthRef.current
+                    : value.body.length;
+
+            // Cantidad de segmentos escalada igual que el tamaño (sin estirar segmentos)
+            const segmentCount = isOwnSnake
+                ? Math.max(
+                      MIN_VISIBLE_SEGMENTS,
+                      Math.round(
+                          referenceLength *
+                              Math.max(0.55, Math.min(1.25, coinRatio * (snakeBoosting ? 0.85 : 1)))
                       )
-                    : 1;
-
-            const baseScale = isOwnSnake
-                ? Math.min(lengthRatio, balanceRatio)
-                : lengthRatio;
-
-            // Encogimiento claro al acelerar o soltar monedas/masa
-            const sizeFactor = snakeBoosting
-                ? Math.max(0.52, baseScale * 0.72)
-                : Math.max(0.58, baseScale);
-
-            const trimTailFactor = snakeBoosting
-                ? Math.max(0.55, baseScale * 0.75)
-                : Math.max(0.65, baseScale);
+                  )
+                : value.body.length;
 
             const primaryColor = isOwnSnake
                 ? customColorRef.current
@@ -1353,7 +1347,7 @@ export default function SnakeGamePage() {
                 scale,
                 time: now,
                 sizeFactor,
-                trimTailFactor,
+                segmentCount,
             });
 
             if (head) {
@@ -1446,7 +1440,7 @@ export default function SnakeGamePage() {
         boostPointerIdRef.current = null;
         joystickPointerIdRef.current = null;
         minimapPointerIdRef.current = null;
-        initialBodyLengthRef.current = 0;
+        peakBodyLengthRef.current = 0;
 
         closingByUserRef.current = true;
         startingRef.current = false;
@@ -1521,7 +1515,7 @@ export default function SnakeGamePage() {
 
         startingRef.current = true;
         selectedBetRef.current = parsedBet;
-        initialBodyLengthRef.current = 0;
+        peakBodyLengthRef.current = 0;
 
         setSnakeRoomId(generatedRoomId);
         setIsInSnakeGame(true);
