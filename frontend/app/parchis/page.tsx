@@ -85,9 +85,6 @@ const PARCHIS_BETS: Record<ParchisBet, number> = {
     "10.00": 10.0,
 };
 
-// Esquinas visuales:
-// 0 = Arriba Izquierda (Verde), 1 = Arriba Derecha (Rojo),
-// 2 = Abajo Derecha (Azul), 3 = Abajo Izquierda (Amarillo)
 const CORNER_PALETTE = [
     {
         name: "Verde",
@@ -271,21 +268,29 @@ function clampDieFace(val: unknown, fallback = 1): number {
     return Math.min(6, Math.max(1, Math.round(n)));
 }
 
-function resolveTwoDice(state: ParchisState | null): [number, number] {
-    if (!state) return [1, 1];
-    if (Array.isArray(state.dice_pair) && state.dice_pair.length >= 2) {
-        return [
-            clampDieFace(state.dice_pair[0], 1),
-            clampDieFace(state.dice_pair[1], 1),
-        ];
+function randomDiePair(): [number, number] {
+    return [
+        Math.floor(Math.random() * 6) + 1,
+        Math.floor(Math.random() * 6) + 1,
+    ];
+}
+
+function randomPairForSum(totalValue: number): [number, number] {
+    const t = Math.round(totalValue);
+    const validPairs: Array<[number, number]> = [];
+    for (let a = 1; a <= 6; a++) {
+        for (let b = 1; b <= 6; b++) {
+            if (a + b === t) validPairs.push([a, b]);
+        }
     }
-    if (typeof state.dice === "number" && state.dice > 0) {
-        const total = Math.min(12, Math.max(2, Math.round(state.dice)));
-        const d1 = clampDieFace(Math.ceil(total / 2), 1);
-        const d2 = clampDieFace(total - d1, 1);
-        return [d1, d2];
+    if (validPairs.length > 0) {
+        return validPairs[Math.floor(Math.random() * validPairs.length)];
     }
-    return [2, 4];
+    if (t >= 1 && t <= 6) {
+        const other = Math.floor(Math.random() * 6) + 1;
+        return Math.random() < 0.5 ? [t, other] : [other, t];
+    }
+    return randomDiePair();
 }
 
 const PIP_POSITIONS: Record<number, number[]> = {
@@ -349,16 +354,15 @@ function PlayerTurnRow({
     onRoll: () => void;
     position: "top" | "bottom";
 }) {
-    const [spinDice, setSpinDice] = useState<[number, number]>([4, 6]);
+    const [spinDice, setSpinDice] = useState<[number, number]>(() =>
+        randomDiePair()
+    );
 
     useEffect(() => {
         if (!rolling) return;
         const timer = setInterval(() => {
-            setSpinDice([
-                Math.floor(Math.random() * 6) + 1,
-                Math.floor(Math.random() * 6) + 1,
-            ]);
-        }, 75);
+            setSpinDice(randomDiePair());
+        }, 70);
         return () => clearInterval(timer);
     }, [rolling]);
 
@@ -369,10 +373,15 @@ function PlayerTurnRow({
         return (
             <div className="flex flex-col items-end gap-1">
                 <div className="flex items-center gap-2">
-                    <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-1.5 flex items-center gap-1.5 shadow-inner">
+                    <button
+                        type="button"
+                        disabled={!canRoll || rolling}
+                        onClick={onRoll}
+                        className="bg-zinc-900 border border-zinc-700 rounded-2xl p-1.5 flex items-center gap-1.5 shadow-inner disabled:cursor-default"
+                    >
                         <PipDieBox num={show1} rolling={rolling} />
                         <PipDieBox num={show2} rolling={rolling} />
-                    </div>
+                    </button>
                     {canRoll && (
                         <button
                             type="button"
@@ -409,10 +418,15 @@ function PlayerTurnRow({
                 </span>
             </div>
             <div className="flex items-center gap-2">
-                <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-1.5 flex items-center gap-1.5 shadow-inner">
+                <button
+                    type="button"
+                    disabled={!canRoll || rolling}
+                    onClick={onRoll}
+                    className="bg-zinc-900 border border-zinc-700 rounded-2xl p-1.5 flex items-center gap-1.5 shadow-inner disabled:cursor-default"
+                >
                     <PipDieBox num={show1} rolling={rolling} />
                     <PipDieBox num={show2} rolling={rolling} />
-                </div>
+                </button>
                 {canRoll && (
                     <button
                         type="button"
@@ -459,6 +473,9 @@ export default function ParchisGamePage() {
         "Preparando arena..."
     );
     const [gameState, setGameState] = useState<ParchisState | null>(null);
+    const [displayedDice, setDisplayedDice] = useState<[number, number]>(() =>
+        randomDiePair()
+    );
     const [busyAction, setBusyAction] = useState(false);
     const [rollingDice, setRollingDice] = useState(false);
     const [rulesOpen, setRulesOpen] = useState(false);
@@ -479,6 +496,7 @@ export default function ParchisGamePage() {
     const connectedRef = useRef(false);
     const closingByUserRef = useRef(false);
     const startingRef = useRef(false);
+    const lastDiceKeyRef = useRef<string>("");
 
     const showAlert = useCallback((title: string, message: string) => {
         setModal({ isOpen: true, title, message });
@@ -706,6 +724,7 @@ export default function ParchisGamePage() {
         gameStateRef.current = null;
         roomIdRef.current = "";
         setRoomId("");
+        lastDiceKeyRef.current = "";
 
         if (animationFrameRef.current !== null) {
             cancelAnimationFrame(animationFrameRef.current);
@@ -773,6 +792,7 @@ export default function ParchisGamePage() {
             selectedBetRef.current = betAmount;
             closingByUserRef.current = false;
             connectedRef.current = false;
+            lastDiceKeyRef.current = "";
 
             roomIdRef.current = targetRoomId;
             setRoomId(targetRoomId);
@@ -780,6 +800,7 @@ export default function ParchisGamePage() {
             setIsConnected(false);
             setGameState(null);
             gameStateRef.current = null;
+            setDisplayedDice(randomDiePair());
             setConnectionMessage("Conectando con el servidor...");
 
             const cleanName = (playerName.trim() || "Jugador").split(/\s+/)[0];
@@ -841,6 +862,28 @@ export default function ParchisGamePage() {
                             setRollingDice(false);
                             gameStateRef.current = data;
                             setGameState(data);
+
+                            if (
+                                Array.isArray(data.dice_pair) &&
+                                data.dice_pair.length >= 2
+                            ) {
+                                setDisplayedDice([
+                                    clampDieFace(data.dice_pair[0], 1),
+                                    clampDieFace(data.dice_pair[1], 1),
+                                ]);
+                            } else if (
+                                typeof data.dice === "number" &&
+                                data.dice > 0
+                            ) {
+                                const key = `${data.turn_seat}-${data.dice}-${data.last_event || ""}-${data.must_move}`;
+                                if (key !== lastDiceKeyRef.current) {
+                                    lastDiceKeyRef.current = key;
+                                    setDisplayedDice(
+                                        randomPairForSum(data.dice)
+                                    );
+                                }
+                            }
+
                             if (data.room_id) {
                                 const nextId = String(data.room_id);
                                 roomIdRef.current = nextId;
@@ -1011,6 +1054,7 @@ export default function ParchisGamePage() {
     const sendRollDice = () => {
         const ws = socketRef.current;
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        lastDiceKeyRef.current = "";
         setRollingDice(true);
         ws.send(JSON.stringify({ type: "ROLL_DICE" }));
     };
@@ -1420,7 +1464,7 @@ export default function ParchisGamePage() {
     );
     const mainName = (playerName.trim() || "Jugador").split(/\s+/)[0];
     const visibleUserId = docNumber.trim() || "-";
-    const [d1, d2] = resolveTwoDice(gameState);
+    const [d1, d2] = displayedDice;
 
     const topPlayer =
         activePlayers.find(
@@ -1462,7 +1506,7 @@ export default function ParchisGamePage() {
 
     return (
         <div className="min-h-screen bg-black text-white flex flex-col select-none font-sans overflow-x-hidden">
-            {rulesOpen && (
+            {rulesOpen && isInGame && (
                 <div className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
                     <div className="bg-zinc-950 border border-zinc-800 max-w-lg w-full rounded-3xl p-6 space-y-4 shadow-2xl">
                         <div className="flex items-center justify-between border-b border-zinc-900 pb-3.5">
@@ -1560,7 +1604,7 @@ export default function ParchisGamePage() {
             >
                 {!isInGame ? (
                     <div className="w-full max-w-xl bg-zinc-950 border border-zinc-800 rounded-3xl p-4 sm:p-6 space-y-5 shadow-2xl">
-                        <div className="flex items-center justify-between gap-2 border-b border-zinc-900 pb-3.5">
+                        <div className="flex items-center justify-start gap-2 border-b border-zinc-900 pb-3.5">
                             <Link
                                 href="/"
                                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 hover:text-emerald-400 font-bold uppercase transition-colors"
@@ -1568,15 +1612,6 @@ export default function ParchisGamePage() {
                                 <span>&lsaquo;</span>
                                 <span>Volver</span>
                             </Link>
-
-                            <button
-                                type="button"
-                                onClick={() => setRulesOpen(true)}
-                                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-700 text-xs font-black uppercase transition-all"
-                            >
-                                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
-                                <span>Reglas</span>
-                            </button>
                         </div>
 
                         <div className="text-center space-y-1">
