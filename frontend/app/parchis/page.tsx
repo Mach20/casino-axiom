@@ -67,71 +67,236 @@ const PARCHIS_BETS: Record<ParchisBet, number> = {
     "10.00": 10.0,
 };
 
-const SEAT_COLORS = ["#ef4444", "#3b82f6", "#22c55e", "#eab308"];
+const SEAT_PALETTE = [
+    {
+        name: "Rojo",
+        main: "#ef4444",
+        dark: "#7f1d1d",
+        soft: "rgba(239, 68, 68, 0.22)",
+        light: "#fca5a5",
+    },
+    {
+        name: "Azul",
+        main: "#3b82f6",
+        dark: "#1e3a8a",
+        soft: "rgba(59, 130, 246, 0.22)",
+        light: "#93c5fd",
+    },
+    {
+        name: "Verde",
+        main: "#22c55e",
+        dark: "#14532d",
+        soft: "rgba(34, 197, 94, 0.22)",
+        light: "#86efac",
+    },
+    {
+        name: "Amarillo",
+        main: "#eab308",
+        dark: "#713f12",
+        soft: "rgba(234, 179, 8, 0.22)",
+        light: "#fde047",
+    },
+];
+
 const TRACK_LEN = 68;
 const SAFE_SPOTS = new Set([0, 5, 12, 17, 22, 29, 34, 39, 46, 51, 56, 63]);
 const START_SPOTS: Record<number, number> = { 0: 0, 1: 17, 2: 34, 3: 51 };
 
-function money(value: number): string {
-    return `$${Number(value || 0).toFixed(2)}`;
+// Coordenadas normalizadas (0..1) sobre un tablero cuadrado de Parchís
+// Orden de asientos: 0 = Arriba-Izquierda (Rojo), 1 = Arriba-Derecha (Azul),
+// 2 = Abajo-Derecha (Verde), 3 = Abajo-Izquierda (Amarillo)
+function getHomeCenter(seatIndex: number): { x: number; y: number } {
+    switch (seatIndex % 4) {
+        case 0:
+            return { x: 0.2, y: 0.2 };
+        case 1:
+            return { x: 0.8, y: 0.2 };
+        case 2:
+            return { x: 0.8, y: 0.8 };
+        default:
+            return { x: 0.2, y: 0.8 };
+    }
 }
 
-function getTrackPoint(
-    spot: number,
-    cx: number,
-    cy: number,
-    outerR: number
+function getHomeSlotOffset(pieceId: number, cellSize: number): { dx: number; dy: number } {
+    const d = cellSize * 0.62;
+    const slots = [
+        { dx: -d, dy: -d },
+        { dx: d, dy: -d },
+        { dx: -d, dy: d },
+        { dx: d, dy: d },
+    ];
+    return slots[pieceId % 4];
+}
+
+// Genera las 68 casillas perimetrales alrededor de la cruz central (grilla 15x15)
+function buildTrackGridCoords(): Array<{ gx: number; gy: number }> {
+    const coords: Array<{ gx: number; gy: number }> = [];
+
+    // Brazo superior (columna 6 bajando, columna 8 subiendo)
+    for (let y = 0; y <= 5; y++) coords.push({ gx: 6, gy: y });
+    coords.push({ gx: 6, gy: 6 }); // esquina superior izq de la cruz
+    for (let x = 5; x >= 0; x--) coords.push({ gx: x, gy: 6 });
+    coords.push({ gx: 0, gy: 7 }); // extremo izquierdo medio
+    for (let x = 0; x <= 5; x++) coords.push({ gx: x, gy: 8 });
+    coords.push({ gx: 6, gy: 8 }); // esquina inferior izq de la cruz
+    for (let y = 9; y <= 14; y++) coords.push({ gx: 6, gy: y });
+    coords.push({ gx: 7, gy: 14 }); // extremo inferior medio
+    for (let y = 14; y >= 9; y--) coords.push({ gx: 8, gy: y });
+    coords.push({ gx: 8, gy: 8 }); // esquina inferior der de la cruz
+    for (let x = 9; x <= 14; x++) coords.push({ gx: x, gy: 8 });
+    coords.push({ gx: 14, gy: 7 }); // extremo derecho medio
+    for (let x = 14; x >= 9; x--) coords.push({ gx: x, gy: 6 });
+    coords.push({ gx: 8, gy: 6 }); // esquina superior der de la cruz
+    for (let y = 5; y >= 0; y--) coords.push({ gx: 8, gy: y });
+    coords.push({ gx: 7, gy: 0 }); // extremo superior medio
+
+    // Ajustamos exactamente a 68 posiciones distribuidas en el perímetro de la cruz
+    const perimeter: Array<{ gx: number; gy: number }> = [];
+    // Superior izq -> baja por col 6
+    for (let y = 0; y < 6; y++) perimeter.push({ gx: 6, gy: y });
+    // Izq superior -> va a der por fila 6 hasta col 5
+    for (let x = 5; x >= 0; x--) perimeter.push({ gx: x, gy: 6 });
+    perimeter.push({ gx: 0, gy: 7 });
+    for (let x = 0; x < 6; x++) perimeter.push({ gx: x, gy: 8 });
+    for (let y = 9; y <= 14; y++) perimeter.push({ gx: 6, gy: y });
+    perimeter.push({ gx: 7, gy: 14 });
+    for (let y = 14; y > 8; y--) perimeter.push({ gx: 8, gy: y });
+    for (let x = 9; x <= 14; x++) perimeter.push({ gx: x, gy: 8 });
+    perimeter.push({ gx: 14, gy: 7 });
+    for (let x = 14; x > 8; x--) perimeter.push({ gx: x, gy: 6 });
+    for (let y = 5; y >= 0; y--) perimeter.push({ gx: 8, gy: y });
+    perimeter.push({ gx: 7, gy: 0 });
+
+    // Normaliza a 68 casillas uniformes sobre el bucle perimetral
+    const result: Array<{ gx: number; gy: number }> = [];
+    const totalPts = perimeter.length;
+    for (let i = 0; i < TRACK_LEN; i++) {
+        const idx = Math.floor((i * totalPts) / TRACK_LEN) % totalPts;
+        result.push(perimeter[idx]);
+    }
+    return result;
+}
+
+const TRACK_GRID = buildTrackGridCoords();
+
+function getGoalLanePoint(
+    seatIndex: number,
+    pos: number,
+    boardSize: number
 ): { x: number; y: number } {
-    const angle = (spot / TRACK_LEN) * Math.PI * 2 - Math.PI / 2;
-    return {
-        x: cx + Math.cos(angle) * outerR,
-        y: cy + Math.sin(angle) * outerR,
-    };
+    const pad = boardSize * 0.04;
+    const inner = boardSize - pad * 2;
+    const cell = inner / 15;
+    const clamped = Math.max(0, Math.min(7, pos));
+    const step = clamped / 7;
+
+    // 0: arriba (baja hacia centro), 1: derecha (va hacia centro),
+    // 2: abajo (sube hacia centro), 3: izquierda (va hacia centro)
+    switch (seatIndex % 4) {
+        case 0: {
+            const gx = 7;
+            const gy = 1 + step * 5.2;
+            return {
+                x: pad + (gx + 0.5) * cell,
+                y: pad + (gy + 0.5) * cell,
+            };
+        }
+        case 1: {
+            const gx = 13 - step * 5.2;
+            const gy = 7;
+            return {
+                x: pad + (gx + 0.5) * cell,
+                y: pad + (gy + 0.5) * cell,
+            };
+        }
+        case 2: {
+            const gx = 7;
+            const gy = 13 - step * 5.2;
+            return {
+                x: pad + (gx + 0.5) * cell,
+                y: pad + (gy + 0.5) * cell,
+            };
+        }
+        default: {
+            const gx = 1 + step * 5.2;
+            const gy = 7;
+            return {
+                x: pad + (gx + 0.5) * cell,
+                y: pad + (gy + 0.5) * cell,
+            };
+        }
+    }
 }
 
 function getPieceBoardPoint(
     piece: ParchisPiece,
     seatIndex: number,
-    cx: number,
-    cy: number,
     boardSize: number
 ): { x: number; y: number } {
-    const outerR = boardSize * 0.41;
-    const seatAngle = (seatIndex * Math.PI) / 2 - Math.PI / 2;
-    const perpAngle = seatAngle + Math.PI / 2;
+    const pad = boardSize * 0.04;
+    const inner = boardSize - pad * 2;
+    const cell = inner / 15;
 
     if (piece.stage === -1) {
-        const homeDist = boardSize * 0.31;
-        const hx = cx + Math.cos(seatAngle) * homeDist;
-        const hy = cy + Math.sin(seatAngle) * homeDist;
-        const offsets = [
-            { dx: -11, dy: -11 },
-            { dx: 11, dy: -11 },
-            { dx: -11, dy: 11 },
-            { dx: 11, dy: 11 },
-        ];
-        const off = offsets[piece.id % offsets.length];
-        return { x: hx + off.dx, y: hy + off.dy };
-    }
-
-    if (piece.stage === 100) {
-        const progress = Math.max(0, Math.min(7, piece.pos)) / 7;
-        const startDist = outerR * 0.88;
-        const endDist = boardSize * 0.08;
-        const dist = startDist - (startDist - endDist) * progress;
-        const jitter = (piece.id % 2 === 0 ? 1 : -1) * 5;
+        const home = getHomeCenter(seatIndex);
+        const slot = getHomeSlotOffset(piece.id, cell);
         return {
-            x: cx + Math.cos(seatAngle) * dist + Math.cos(perpAngle) * jitter,
-            y: cy + Math.sin(seatAngle) * dist + Math.sin(perpAngle) * jitter,
+            x: home.x * boardSize + slot.dx,
+            y: home.y * boardSize + slot.dy,
         };
     }
 
-    const pt = getTrackPoint(piece.pos, cx, cy, outerR);
-    const laneOffset = (piece.id % 2 === 0 ? 1 : -1) * 4.5;
+    if (piece.stage === 100) {
+        const pt = getGoalLanePoint(seatIndex, piece.pos, boardSize);
+        const jitter = (piece.id % 2 === 0 ? -1 : 1) * (cell * 0.14);
+        return {
+            x: pt.x + (seatIndex % 2 === 0 ? jitter : 0),
+            y: pt.y + (seatIndex % 2 === 1 ? jitter : 0),
+        };
+    }
+
+    const spot = ((piece.pos % TRACK_LEN) + TRACK_LEN) % TRACK_LEN;
+    const g = TRACK_GRID[spot];
+    const baseX = pad + (g.gx + 0.5) * cell;
+    const baseY = pad + (g.gy + 0.5) * cell;
+
+    const spread = (piece.id % 2 === 0 ? -1 : 1) * (cell * 0.15);
     return {
-        x: pt.x + Math.cos(seatAngle) * laneOffset,
-        y: pt.y + Math.sin(seatAngle) * laneOffset,
+        x: baseX + spread,
+        y: baseY - spread * 0.6,
     };
+}
+
+function money(value: number): string {
+    return `$${Number(value || 0).toFixed(2)}`;
+}
+
+function DiceFace({ value }: { value: number | null }) {
+    const pipsMap: Record<number, number[]> = {
+        1: [4],
+        2: [2, 6],
+        3: [2, 4, 6],
+        4: [0, 2, 6, 8],
+        5: [0, 2, 4, 6, 8],
+        6: [0, 2, 3, 5, 6, 8],
+    };
+    const activePips = value && pipsMap[value] ? pipsMap[value] : [];
+
+    return (
+        <div className="w-14 h-14 rounded-2xl bg-zinc-100 text-zinc-950 border-2 border-white shadow-lg p-2 grid grid-cols-3 grid-rows-3 place-items-center shrink-0">
+            {Array.from({ length: 9 }).map((_, idx) => (
+                <span
+                    key={idx}
+                    className={`w-2.5 h-2.5 rounded-full transition-all ${
+                        activePips.includes(idx)
+                            ? "bg-zinc-950 scale-100"
+                            : "bg-transparent scale-0"
+                    }`}
+                />
+            ))}
+        </div>
+    );
 }
 
 export default function ParchisGamePage() {
@@ -609,7 +774,7 @@ export default function ParchisGamePage() {
         const rect = canvas.getBoundingClientRect();
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         const size = Math.max(
-            220,
+            240,
             Math.floor(Math.min(rect.width, rect.height || rect.width))
         );
 
@@ -624,45 +789,224 @@ export default function ParchisGamePage() {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, size, size);
 
-        const cx = size / 2;
-        const cy = size / 2;
-        const outerR = size * 0.41;
-
-        ctx.fillStyle = "#060b09";
+        // Marco exterior tipo madera/tablero clásico oscuro elegante
+        ctx.fillStyle = "#111815";
         ctx.fillRect(0, 0, size, size);
 
-        ctx.beginPath();
-        ctx.arc(cx, cy, outerR + 18, 0, Math.PI * 2);
-        ctx.fillStyle = "#0b1511";
-        ctx.fill();
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = "rgba(52, 211, 153, 0.25)";
-        ctx.stroke();
+        const pad = size * 0.04;
+        const inner = size - pad * 2;
+        const cell = inner / 15;
 
+        // Fondo crema marfil clásico del tablero
+        ctx.fillStyle = "#f4efe2";
+        ctx.fillRect(pad, pad, inner, inner);
+
+        // Dibujar pasillos de llegada (6 casillas de color hacia el centro)
+        // Asiento 0 (Rojo): col 7, filas 1..6
+        for (let y = 1; y <= 6; y++) {
+            ctx.fillStyle = SEAT_PALETTE[0].main;
+            ctx.fillRect(pad + 7 * cell, pad + y * cell, cell, cell);
+        }
+        // Asiento 1 (Azul): fila 7, cols 8..13
+        for (let x = 8; x <= 13; x++) {
+            ctx.fillStyle = SEAT_PALETTE[1].main;
+            ctx.fillRect(pad + x * cell, pad + 7 * cell, cell, cell);
+        }
+        // Asiento 2 (Verde): col 7, filas 8..13
+        for (let y = 8; y <= 13; y++) {
+            ctx.fillStyle = SEAT_PALETTE[2].main;
+            ctx.fillRect(pad + 7 * cell, pad + y * cell, cell, cell);
+        }
+        // Asiento 3 (Amarillo): fila 7, cols 1..6
+        for (let x = 1; x <= 6; x++) {
+            ctx.fillStyle = SEAT_PALETTE[3].main;
+            ctx.fillRect(pad + x * cell, pad + 7 * cell, cell, cell);
+        }
+
+        // Cuadrícula de casillas del tablero
+        ctx.strokeStyle = "rgba(24, 24, 27, 0.35)";
+        ctx.lineWidth = 1;
+        for (let r = 0; r < 15; r++) {
+            for (let c = 0; c < 15; c++) {
+                // Omitir interior de las 4 casas (6x6 en esquinas) y centro (3x3)
+                const inTopLeftHome = r < 6 && c < 6;
+                const inTopRightHome = r < 6 && c > 8;
+                const inBottomRightHome = r > 8 && c > 8;
+                const inBottomLeftHome = r > 8 && c < 6;
+                const inCenter = r >= 6 && r <= 8 && c >= 6 && c <= 8;
+
+                if (
+                    inTopLeftHome ||
+                    inTopRightHome ||
+                    inBottomRightHome ||
+                    inBottomLeftHome ||
+                    inCenter
+                ) {
+                    continue;
+                }
+
+                ctx.strokeRect(
+                    pad + c * cell,
+                    pad + r * cell,
+                    cell,
+                    cell
+                );
+            }
+        }
+
+        // Resaltar casillas seguras y de salida en el track de 68
         for (let i = 0; i < TRACK_LEN; i++) {
-            const pt = getTrackPoint(i, cx, cy, outerR);
-            const isSafe = SAFE_SPOTS.has(i);
-            const isStart = Object.values(START_SPOTS).includes(i);
+            const g = TRACK_GRID[i];
+            const px = pad + (g.gx + 0.5) * cell;
+            const py = pad + (g.gy + 0.5) * cell;
 
+            const startSeatEntry = Object.entries(START_SPOTS).find(
+                ([, spot]) => spot === i
+            );
+
+            if (startSeatEntry) {
+                const sIdx = Number(startSeatEntry[0]);
+                ctx.fillStyle = SEAT_PALETTE[sIdx % 4].main;
+                ctx.fillRect(
+                    pad + g.gx * cell + 1,
+                    pad + g.gy * cell + 1,
+                    cell - 2,
+                    cell - 2
+                );
+            }
+
+            if (SAFE_SPOTS.has(i)) {
+                ctx.beginPath();
+                ctx.arc(px, py, Math.max(3.5, cell * 0.18), 0, Math.PI * 2);
+                ctx.fillStyle = startSeatEntry ? "#ffffff" : "#d97706";
+                ctx.fill();
+                ctx.lineWidth = 1;
+                ctx.strokeStyle = "#18181b";
+                ctx.stroke();
+            }
+        }
+
+        // Dibujar las 4 Casas (Cárceles) en las esquinas
+        const homes = [
+            { seat: 0, gx: 0, gy: 0 },
+            { seat: 1, gx: 9, gy: 0 },
+            { seat: 2, gx: 9, gy: 9 },
+            { seat: 3, gx: 0, gy: 9 },
+        ];
+
+        const state = gameStateRef.current;
+
+        for (const h of homes) {
+            const pal = SEAT_PALETTE[h.seat];
+            const hx0 = pad + h.gx * cell;
+            const hy0 = pad + h.gy * cell;
+            const hSize = cell * 6;
+
+            ctx.fillStyle = pal.main;
+            ctx.fillRect(hx0, hy0, hSize, hSize);
+            ctx.strokeStyle = "#18181b";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(hx0, hy0, hSize, hSize);
+
+            // Patio interior blanco de la casa
+            const inset = cell * 1.1;
+            ctx.fillStyle = "#f4efe2";
             ctx.beginPath();
-            ctx.arc(pt.x, pt.y, isSafe ? 6.5 : 4.5, 0, Math.PI * 2);
-            ctx.fillStyle = isStart
-                ? "#34d399"
-                : isSafe
-                  ? "#fbbf24"
-                  : "#182620";
+            ctx.roundRect(
+                hx0 + inset,
+                hy0 + inset,
+                hSize - inset * 2,
+                hSize - inset * 2,
+                cell * 0.5
+            );
             ctx.fill();
-            ctx.strokeStyle = "rgba(255,255,255,0.14)";
-            ctx.lineWidth = 1;
+
+            const isTurn =
+                state?.status === "playing" && state.turn_seat === h.seat;
+            if (isTurn) {
+                ctx.save();
+                ctx.strokeStyle = "#10b981";
+                ctx.lineWidth = 3.5;
+                ctx.strokeRect(hx0 + 2, hy0 + 2, hSize - 4, hSize - 4);
+                ctx.restore();
+            }
+
+            // 4 huecos de fichas en casa
+            const center = getHomeCenter(h.seat);
+            for (let pid = 0; pid < 4; pid++) {
+                const slot = getHomeSlotOffset(pid, cell);
+                const sx = center.x * size + slot.dx;
+                const sy = center.y * size + slot.dy;
+
+                ctx.beginPath();
+                ctx.arc(sx, sy, cell * 0.36, 0, Math.PI * 2);
+                ctx.fillStyle = pal.soft;
+                ctx.fill();
+                ctx.lineWidth = 1.5;
+                ctx.strokeStyle = pal.main;
+                ctx.stroke();
+            }
+        }
+
+        // Meta central (4 triángulos de colores)
+        const cLeft = pad + 6 * cell;
+        const cTop = pad + 6 * cell;
+        const cSize = cell * 3;
+        const midX = cLeft + cSize / 2;
+        const midY = cTop + cSize / 2;
+
+        const triangles = [
+            // Rojo (arriba)
+            {
+                pts: [
+                    [cLeft, cTop],
+                    [cLeft + cSize, cTop],
+                    [midX, midY],
+                ],
+                color: SEAT_PALETTE[0].main,
+            },
+            // Azul (derecha)
+            {
+                pts: [
+                    [cLeft + cSize, cTop],
+                    [cLeft + cSize, cTop + cSize],
+                    [midX, midY],
+                ],
+                color: SEAT_PALETTE[1].main,
+            },
+            // Verde (abajo)
+            {
+                pts: [
+                    [cLeft, cTop + cSize],
+                    [cLeft + cSize, cTop + cSize],
+                    [midX, midY],
+                ],
+                color: SEAT_PALETTE[2].main,
+            },
+            // Amarillo (izquierda)
+            {
+                pts: [
+                    [cLeft, cTop],
+                    [cLeft, cTop + cSize],
+                    [midX, midY],
+                ],
+                color: SEAT_PALETTE[3].main,
+            },
+        ];
+
+        for (const tri of triangles) {
+            ctx.beginPath();
+            ctx.moveTo(tri.pts[0][0], tri.pts[0][1]);
+            ctx.lineTo(tri.pts[1][0], tri.pts[1][1]);
+            ctx.lineTo(tri.pts[2][0], tri.pts[2][1]);
+            ctx.closePath();
+            ctx.fillStyle = tri.color;
+            ctx.fill();
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = "#18181b";
             ctx.stroke();
         }
 
-        ctx.beginPath();
-        ctx.arc(cx, cy, size * 0.085, 0, Math.PI * 2);
-        ctx.fillStyle = "#10b981";
-        ctx.fill();
-
-        const state = gameStateRef.current;
         if (!state || !Array.isArray(state.players)) return;
 
         const currentUid = userIdRef.current;
@@ -674,26 +1018,13 @@ export default function ParchisGamePage() {
             state.must_move &&
             state.dice !== null;
 
-        for (const p of state.players) {
-            const color = SEAT_COLORS[p.seat_index % SEAT_COLORS.length];
-            const seatAngle = (p.seat_index * Math.PI) / 2 - Math.PI / 2;
-            const homeDist = size * 0.31;
-            const hx = cx + Math.cos(seatAngle) * homeDist;
-            const hy = cy + Math.sin(seatAngle) * homeDist;
+        const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.008);
 
-            ctx.save();
-            ctx.beginPath();
-            ctx.arc(hx, hy, 22, 0, Math.PI * 2);
-            ctx.fillStyle = "rgba(24, 24, 27, 0.85)";
-            ctx.fill();
-            ctx.lineWidth = state.turn_seat === p.seat_index ? 3 : 1.5;
-            ctx.strokeStyle =
-                state.turn_seat === p.seat_index ? "#34d399" : color;
-            ctx.stroke();
-            ctx.restore();
+        for (const p of state.players) {
+            const pal = SEAT_PALETTE[p.seat_index % SEAT_PALETTE.length];
 
             for (const piece of p.pieces || []) {
-                const pt = getPieceBoardPoint(piece, p.seat_index, cx, cy, size);
+                const pt = getPieceBoardPoint(piece, p.seat_index, size);
                 const canMoveThis = Boolean(
                     isMyTurn &&
                         p.user_id === currentUid &&
@@ -702,20 +1033,51 @@ export default function ParchisGamePage() {
                             piece.stage === 100)
                 );
 
+                const radius = Math.max(7.5, cell * 0.34);
+
+                if (canMoveThis) {
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.arc(
+                        pt.x,
+                        pt.y,
+                        radius + 3 + pulse * 3,
+                        0,
+                        Math.PI * 2
+                    );
+                    ctx.strokeStyle = "#10b981";
+                    ctx.lineWidth = 2.5;
+                    ctx.stroke();
+                    ctx.restore();
+                }
+
+                // Sombra de ficha
                 ctx.save();
                 ctx.beginPath();
-                ctx.arc(pt.x, pt.y, canMoveThis ? 9 : 7.5, 0, Math.PI * 2);
-                ctx.fillStyle = color;
+                ctx.arc(pt.x + 1.2, pt.y + 1.8, radius, 0, Math.PI * 2);
+                ctx.fillStyle = "rgba(0,0,0,0.45)";
                 ctx.fill();
-                ctx.lineWidth = canMoveThis ? 2.5 : 1.5;
-                ctx.strokeStyle = canMoveThis ? "#ffffff" : "#09090b";
+
+                // Cuerpo de ficha
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+                ctx.fillStyle = pal.main;
+                ctx.fill();
+                ctx.lineWidth = canMoveThis ? 2.5 : 1.8;
+                ctx.strokeStyle = canMoveThis ? "#ffffff" : "#111827";
                 ctx.stroke();
 
+                // Aro interior tipo ficha de parchís
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, radius * 0.62, 0, Math.PI * 2);
+                ctx.fillStyle = pal.dark;
+                ctx.fill();
+
                 ctx.fillStyle = "#ffffff";
-                ctx.font = "bold 9px Arial";
+                ctx.font = `bold ${Math.max(8, Math.floor(radius * 0.95))}px sans-serif`;
                 ctx.textAlign = "center";
                 ctx.textBaseline = "middle";
-                ctx.fillText(String(piece.id + 1), pt.x, pt.y);
+                ctx.fillText(String(piece.id + 1), pt.x, pt.y + 0.5);
                 ctx.restore();
             }
         }
@@ -758,20 +1120,17 @@ export default function ParchisGamePage() {
         if (!canvas) return;
         const rect = canvas.getBoundingClientRect();
         const size = Math.max(
-            220,
+            240,
             Math.floor(Math.min(rect.width, rect.height || rect.width))
         );
         const clickX = e.clientX - rect.left;
         const clickY = e.clientY - rect.top;
 
-        const cx = size / 2;
-        const cy = size / 2;
-
         let closestId = -1;
-        let minDist = 20;
+        let minDist = 24;
 
         for (const piece of me.pieces || []) {
-            const pt = getPieceBoardPoint(piece, me.seat_index, cx, cy, size);
+            const pt = getPieceBoardPoint(piece, me.seat_index, size);
             const dist = Math.hypot(clickX - pt.x, clickY - pt.y);
             if (dist < minDist) {
                 minDist = dist;
@@ -1150,32 +1509,39 @@ export default function ParchisGamePage() {
                                     <canvas
                                         ref={boardCanvasRef}
                                         onPointerDown={handleBoardPointerDown}
-                                        className="w-full max-w-[380px] aspect-square rounded-2xl border border-zinc-800 cursor-pointer touch-none"
+                                        className="w-full max-w-[400px] aspect-square rounded-2xl border-2 border-zinc-700 shadow-2xl cursor-pointer touch-none"
                                         style={{ touchAction: "none" }}
                                     />
-                                    <p className="text-[11px] text-emerald-400 mt-2.5 text-center font-medium">
+                                    <p className="text-[11px] text-emerald-400 mt-2.5 text-center font-semibold">
                                         {gameState.last_event || "Esperando turno..."}
                                     </p>
                                 </div>
 
                                 <div className="lg:col-span-6 space-y-4">
-                                    <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-4 flex items-center justify-between gap-3">
-                                        <div>
-                                            <span className="text-[10px] text-zinc-400 uppercase font-bold block">
-                                                Dado actual
-                                            </span>
-                                            <span className="text-2xl font-black text-white">
-                                                {gameState.dice !== null
-                                                    ? gameState.dice
-                                                    : "-"}
-                                            </span>
+                                    <div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-4 flex items-center justify-between gap-3">
+                                        <div className="flex items-center gap-3.5">
+                                            <DiceFace value={gameState.dice} />
+                                            <div>
+                                                <span className="text-[10px] text-zinc-400 uppercase font-bold block">
+                                                    {isMyTurn
+                                                        ? gameState.must_move
+                                                            ? "Elige una ficha"
+                                                            : "Tu turno"
+                                                        : `Turno asiento ${gameState.turn_seat + 1}`}
+                                                </span>
+                                                <span className="text-lg font-black text-white">
+                                                    {gameState.dice !== null
+                                                        ? `Dado: ${gameState.dice}`
+                                                        : "Sin tirar"}
+                                                </span>
+                                            </div>
                                         </div>
 
                                         <button
                                             type="button"
                                             disabled={!isMyTurn || gameState.must_move}
                                             onClick={sendRollDice}
-                                            className="px-5 py-3 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-black font-black text-xs uppercase rounded-2xl transition-all"
+                                            className="px-5 py-3.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-black font-black text-xs uppercase rounded-2xl transition-all shrink-0"
                                         >
                                             Lanzar Dado
                                         </button>
@@ -1207,15 +1573,15 @@ export default function ParchisGamePage() {
                                             const activeTurn =
                                                 gameState.status === "playing" &&
                                                 gameState.turn_seat === p.seat_index;
-                                            const seatColor =
-                                                SEAT_COLORS[
-                                                    p.seat_index % SEAT_COLORS.length
+                                            const pal =
+                                                SEAT_PALETTE[
+                                                    p.seat_index % SEAT_PALETTE.length
                                                 ];
 
                                             return (
                                                 <div
                                                     key={p.user_id}
-                                                    className={`bg-zinc-900/40 rounded-2xl p-3 border ${
+                                                    className={`bg-zinc-900/40 rounded-2xl p-3 border transition-all ${
                                                         activeTurn
                                                             ? "border-emerald-400"
                                                             : "border-zinc-800"
@@ -1224,14 +1590,15 @@ export default function ParchisGamePage() {
                                                     <div className="flex items-center justify-between mb-2">
                                                         <div className="flex items-center gap-2">
                                                             <span
-                                                                className="w-3 h-3 rounded-full"
+                                                                className="w-3.5 h-3.5 rounded-full border border-white/40"
                                                                 style={{
                                                                     backgroundColor:
-                                                                        seatColor,
+                                                                        pal.main,
                                                                 }}
                                                             />
                                                             <span className="text-xs font-black">
-                                                                Asiento {p.seat_index + 1}
+                                                                {pal.name} · Asiento{" "}
+                                                                {p.seat_index + 1}
                                                                 {p.team
                                                                     ? ` · Equipo ${p.team}`
                                                                     : ""}
@@ -1252,7 +1619,14 @@ export default function ParchisGamePage() {
                                                                     isMyTurn &&
                                                                     gameState.must_move &&
                                                                     gameState.dice !==
-                                                                        null
+                                                                        null &&
+                                                                    ((pc.stage === -1 &&
+                                                                        gameState.dice ===
+                                                                            5) ||
+                                                                        pc.stage ===
+                                                                            0 ||
+                                                                        pc.stage ===
+                                                                            100)
                                                             );
                                                             const label =
                                                                 pc.stage === -1
@@ -1271,7 +1645,7 @@ export default function ParchisGamePage() {
                                                                     }
                                                                     className={`py-1.5 px-2 rounded-xl border text-[10px] font-bold transition-all ${
                                                                         canMove
-                                                                            ? "bg-emerald-500/15 hover:bg-emerald-500/30 border-emerald-400 text-white"
+                                                                            ? "bg-emerald-500/20 hover:bg-emerald-500/35 border-emerald-400 text-white"
                                                                             : "bg-black/60 border-zinc-800 text-zinc-400"
                                                                     }`}
                                                                 >
