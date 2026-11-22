@@ -322,6 +322,48 @@ function randomDiePair(prev?: [number, number]): [number, number] {
     return [randomDieFace(prev?.[0]), randomDieFace(prev?.[1])];
 }
 
+// Calcula la posición en cada paso (0 -> 1 -> 2 -> 3 -> 4...) desde la posición inicial
+function getStepPiecePose(
+    startPiece: ParchisPiece,
+    seatIndex: number,
+    stepOffset: number
+): ParchisPiece {
+    if (stepOffset <= 0) return startPiece;
+    if (startPiece.stage === -1) {
+        return {
+            ...startPiece,
+            stage: 0,
+            pos: START_SPOTS[seatIndex] ?? 0,
+            steps_walked: 0,
+        };
+    }
+
+    let stage = startPiece.stage;
+    let pos = startPiece.pos;
+    let stepsWalked = startPiece.steps_walked;
+
+    for (let s = 1; s <= stepOffset; s++) {
+        if (stage === 0) {
+            stepsWalked += 1;
+            if (stepsWalked >= 63) {
+                stage = 100;
+                pos = 1;
+            } else {
+                pos = (pos + 1) % TRACK_LEN;
+            }
+        } else if (stage === 100) {
+            pos = Math.min(7, pos + 1);
+        }
+    }
+
+    return {
+        ...startPiece,
+        stage,
+        pos,
+        steps_walked: stepsWalked,
+    };
+}
+
 const PIP_COORDS: Record<number, Array<[number, number]>> = {
     1: [[50, 50]],
     2: [
@@ -356,6 +398,7 @@ const PIP_COORDS: Record<number, Array<[number, number]>> = {
     ],
 };
 
+// Dado normal cuando es el turno del jugador (gira al lanzar)
 function PipDieBox({
     num,
     rolling,
@@ -389,6 +432,53 @@ function PipDieBox({
     );
 }
 
+// Dado estático estilo triángulo/dragón cuando NO le toca el turno (no se mueve)
+function DragonTriangleDieBox({
+    num,
+    accentColor,
+}: {
+    num: number;
+    accentColor: string;
+}) {
+    const face = clampDieFace(num, 1);
+
+    return (
+        <div
+            style={{ borderColor: accentColor }}
+            className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-zinc-950 border-2 p-1 flex items-center justify-center shadow-inner opacity-90"
+            title={`Dado en espera: ${face}`}
+        >
+            <svg viewBox="0 0 100 100" className="w-full h-full block">
+                {/* Triángulo / emblema estilo dragón */}
+                <polygon
+                    points="50,8 92,84 8,84"
+                    fill={accentColor}
+                    fillOpacity="0.22"
+                    stroke={accentColor}
+                    strokeWidth="5"
+                    strokeLinejoin="round"
+                />
+                <polygon
+                    points="50,24 74,68 26,68"
+                    fill="#18181b"
+                    stroke={accentColor}
+                    strokeWidth="2.5"
+                />
+                <text
+                    x="50"
+                    y="58"
+                    textAnchor="middle"
+                    fill="#ffffff"
+                    fontSize="24"
+                    fontWeight="900"
+                >
+                    {face}
+                </text>
+            </svg>
+        </div>
+    );
+}
+
 function PlayerTurnRow({
     playerName,
     colorName,
@@ -401,7 +491,6 @@ function PlayerTurnRow({
     mustMove,
     onRoll,
     position,
-    showDice,
 }: {
     playerName: string;
     colorName: string;
@@ -414,20 +503,20 @@ function PlayerTurnRow({
     mustMove: boolean;
     onRoll: () => void;
     position: "top" | "bottom";
-    showDice: boolean;
 }) {
     const [spinDice, setSpinDice] = useState<[number, number]>([3, 5]);
 
     useEffect(() => {
-        if (!rolling) return;
+        if (!isActiveTurn || !rolling) return;
         const timer = setInterval(() => {
             setSpinDice((prev) => randomDiePair(prev));
         }, 75);
         return () => clearInterval(timer);
-    }, [rolling]);
+    }, [isActiveTurn, rolling]);
 
-    const show1 = rolling ? spinDice[0] : d1;
-    const show2 = rolling ? spinDice[1] : d2;
+    // Solo los dados del jugador activo giran; los del otro se quedan fijos
+    const show1 = isActiveTurn && rolling ? spinDice[0] : d1;
+    const show2 = isActiveTurn && rolling ? spinDice[1] : d2;
 
     const badge = (
         <div className="flex items-center gap-1.5">
@@ -464,8 +553,23 @@ function PlayerTurnRow({
                 }}
                 className="bg-zinc-900 border-2 rounded-2xl p-1.5 flex items-center gap-1.5 shadow-lg active:scale-95 transition-all disabled:cursor-default disabled:active:scale-100"
             >
-                <PipDieBox num={show1} rolling={rolling} />
-                <PipDieBox num={show2} rolling={rolling} />
+                {isActiveTurn ? (
+                    <>
+                        <PipDieBox num={show1} rolling={rolling} />
+                        <PipDieBox num={show2} rolling={rolling} />
+                    </>
+                ) : (
+                    <>
+                        <DragonTriangleDieBox
+                            num={d1}
+                            accentColor={accentColor}
+                        />
+                        <DragonTriangleDieBox
+                            num={d2}
+                            accentColor={accentColor}
+                        />
+                    </>
+                )}
             </button>
             {canRoll && (
                 <button
@@ -483,7 +587,7 @@ function PlayerTurnRow({
     if (position === "top") {
         return (
             <div className="w-full flex flex-col items-end gap-1">
-                {showDice && diceBox}
+                {diceBox}
                 {badge}
             </div>
         );
@@ -492,7 +596,7 @@ function PlayerTurnRow({
     return (
         <div className="w-full flex flex-col items-start gap-1">
             {badge}
-            {showDice && diceBox}
+            {diceBox}
         </div>
     );
 }
@@ -534,9 +638,6 @@ export default function ParchisGamePage() {
     const [isConnecting, setIsConnecting] = useState(false);
     const [closingByUser, setClosingByUser] = useState(false);
     const [activeSocket, setActiveSocket] = useState<WebSocket | null>(null);
-    const [pieceCoords, setPieceCoords] = useState<
-        Record<string, { x: number; y: number }>
-    >({});
 
     const [modal, setModal] = useState({
         isOpen: false,
@@ -545,6 +646,74 @@ export default function ParchisGamePage() {
     });
 
     const boardCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const gameStateRef = useRef<ParchisState | null>(null);
+    const userIdRef = useRef<string | null>(null);
+    const turnDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const stepAnimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const animatedPieceRef = useRef<{
+        userId: string;
+        pieceId: number;
+        piece: ParchisPiece;
+    } | null>(null);
+
+    useEffect(() => {
+        userIdRef.current = userId;
+    }, [userId]);
+
+    const clearTurnTimers = useCallback(() => {
+        if (turnDelayTimerRef.current) {
+            clearTimeout(turnDelayTimerRef.current);
+            turnDelayTimerRef.current = null;
+        }
+        if (stepAnimTimerRef.current) {
+            clearTimeout(stepAnimTimerRef.current);
+            stepAnimTimerRef.current = null;
+        }
+        animatedPieceRef.current = null;
+    }, []);
+
+    // Aplica el estado entrante con demora de ~3s al cambiar de turno
+    const applyIncomingGameState = useCallback((nextState: ParchisState) => {
+        const prevState = gameStateRef.current;
+
+        const updateDiceIfPresent = (st: ParchisState) => {
+            if (Array.isArray(st.dice_pair) && st.dice_pair.length === 2) {
+                setDisplayedDice([
+                    clampDieFace(st.dice_pair[0], 1),
+                    clampDieFace(st.dice_pair[1], 1),
+                ]);
+            }
+        };
+
+        if (
+            prevState &&
+            prevState.status === "playing" &&
+            stHasTurnChanged(prevState, nextState)
+        ) {
+            // Mantenemos el turno anterior visible 3 segundos antes de cambiar
+            updateDiceIfPresent(nextState);
+            if (turnDelayTimerRef.current) {
+                clearTimeout(turnDelayTimerRef.current);
+            }
+            turnDelayTimerRef.current = setTimeout(() => {
+                turnDelayTimerRef.current = null;
+                gameStateRef.current = nextState;
+                setGameState(nextState);
+                setRollingDice(false);
+            }, 3000);
+            return;
+        }
+
+        if (turnDelayTimerRef.current) {
+            clearTimeout(turnDelayTimerRef.current);
+            turnDelayTimerRef.current = null;
+        }
+
+        gameStateRef.current = nextState;
+        setGameState(nextState);
+        setRollingDice(false);
+        updateDiceIfPresent(nextState);
+    }, []);
 
     const showAlert = useCallback((title: string, message: string) => {
         setModal({ isOpen: true, title, message });
@@ -710,6 +879,7 @@ export default function ParchisGamePage() {
     }, [isInGame, userId, fetchPublicRooms]);
 
     const exitParchisGame = useCallback(async () => {
+        clearTurnTimers();
         setClosingByUser(true);
         setIsConnecting(false);
         setIsConnected(false);
@@ -755,7 +925,7 @@ export default function ParchisGamePage() {
 
         setIsInGame(false);
         setGameState(null);
-        setPieceCoords({});
+        gameStateRef.current = null;
         setRoomId("");
 
         if (ws) {
@@ -780,6 +950,7 @@ export default function ParchisGamePage() {
     }, [
         accessToken,
         activeSocket,
+        clearTurnTimers,
         fetchPublicRooms,
         gameState,
         loadUserBalances,
@@ -823,14 +994,15 @@ export default function ParchisGamePage() {
                 return;
             }
 
+            clearTurnTimers();
             setIsConnecting(true);
             setClosingByUser(false);
             setIsConnected(false);
-            setPieceCoords({});
 
             setRoomId(targetRoomId);
             setIsInGame(true);
             setGameState(null);
+            gameStateRef.current = null;
             setDisplayedDice(randomDiePair());
             setConnectionMessage("Conectando con el servidor...");
 
@@ -887,18 +1059,7 @@ export default function ParchisGamePage() {
                         }
 
                         if (data.type === "PARCHIS_STATE") {
-                            setRollingDice(false);
-                            setGameState(data);
-
-                            if (
-                                Array.isArray(data.dice_pair) &&
-                                data.dice_pair.length === 2
-                            ) {
-                                setDisplayedDice([
-                                    clampDieFace(data.dice_pair[0], 1),
-                                    clampDieFace(data.dice_pair[1], 1),
-                                ]);
-                            }
+                            applyIncomingGameState(data);
 
                             if (data.room_id) {
                                 setRoomId(String(data.room_id));
@@ -944,6 +1105,7 @@ export default function ParchisGamePage() {
                         heartbeatTimer = null;
                     }
 
+                    clearTurnTimers();
                     setIsConnecting(false);
                     setActiveSocket(null);
                     setRollingDice(false);
@@ -980,7 +1142,9 @@ export default function ParchisGamePage() {
         [
             accessToken,
             activeSocket,
+            applyIncomingGameState,
             bonusBalance,
+            clearTurnTimers,
             closingByUser,
             docNumber,
             exitParchisGame,
@@ -1072,16 +1236,61 @@ export default function ParchisGamePage() {
         activeSocket.send(JSON.stringify({ type: "ROLL_DICE" }));
     };
 
-    const sendMovePiece = (pieceId: number, diceValue: number) => {
-        if (!activeSocket || activeSocket.readyState !== WebSocket.OPEN) return;
-        activeSocket.send(
-            JSON.stringify({
-                type: "MOVE_PIECE",
-                piece_id: pieceId,
-                dice_value: diceValue,
-            })
-        );
-    };
+    // Anima el movimiento paso a paso desde el siguiente (0 -> 1 -> 2 -> 3 -> 4)
+    const sendMovePiece = useCallback(
+        (pieceId: number, diceValue: number) => {
+            if (!activeSocket || activeSocket.readyState !== WebSocket.OPEN)
+                return;
+
+            const curState = gameStateRef.current;
+            const me = curState?.players?.find((p) => p.user_id === userId);
+            const startPiece = me?.pieces?.find((pc) => pc.id === pieceId);
+
+            if (stepAnimTimerRef.current) {
+                clearTimeout(stepAnimTimerRef.current);
+                stepAnimTimerRef.current = null;
+            }
+
+            if (me && startPiece && diceValue > 0) {
+                let currentStep = 0;
+                const runStep = () => {
+                    animatedPieceRef.current = {
+                        userId: me.user_id,
+                        pieceId,
+                        piece: getStepPiecePose(
+                            startPiece,
+                            me.seat_index,
+                            currentStep
+                        ),
+                    };
+                    if (currentStep < diceValue) {
+                        currentStep += 1;
+                        stepAnimTimerRef.current = setTimeout(runStep, 130);
+                    } else {
+                        stepAnimTimerRef.current = null;
+                        activeSocket.send(
+                            JSON.stringify({
+                                type: "MOVE_PIECE",
+                                piece_id: pieceId,
+                                dice_value: diceValue,
+                            })
+                        );
+                    }
+                };
+                runStep();
+                return;
+            }
+
+            activeSocket.send(
+                JSON.stringify({
+                    type: "MOVE_PIECE",
+                    piece_id: pieceId,
+                    dice_value: diceValue,
+                })
+            );
+        },
+        [activeSocket, userId]
+    );
 
     const renderBoard = useCallback(() => {
         const canvas = boardCanvasRef.current;
@@ -1214,12 +1423,12 @@ export default function ParchisGamePage() {
             }
         }
 
+        const state = gameStateRef.current;
         const players: ParchisPlayerState[] =
-            gameState && Array.isArray(gameState.players)
-                ? gameState.players
-                : [];
+            state && Array.isArray(state.players) ? state.players : [];
+        const currentUid = userIdRef.current;
         const me = players.find(
-            (pl: ParchisPlayerState) => pl.user_id === userId
+            (pl: ParchisPlayerState) => pl.user_id === currentUid
         );
         const mySeat = me ? me.seat_index : null;
 
@@ -1349,14 +1558,14 @@ export default function ParchisGamePage() {
             ctx.stroke();
         }
 
-        if (!gameState || players.length === 0) return;
+        if (!state || players.length === 0) return;
 
         const isMyTurnNow =
-            gameState.status === "playing" &&
+            state.status === "playing" &&
             me &&
-            gameState.turn_seat === me.seat_index &&
-            gameState.must_move &&
-            (gameState.dice_remaining?.length || 0) > 0;
+            state.turn_seat === me.seat_index &&
+            state.must_move &&
+            (state.dice_remaining?.length || 0) > 0;
 
         for (const p of players) {
             const corner = getPlayerVisualCorner(
@@ -1367,27 +1576,25 @@ export default function ParchisGamePage() {
             const pal = CORNER_PALETTE[corner];
 
             for (const piece of p.pieces || []) {
-                const target = getPieceBoardPoint(piece, corner, size);
-                const key = `${p.user_id}-${piece.id}`;
-                const prev = pieceCoords[key];
-                const cur = prev
-                    ? {
-                          x: prev.x + (target.x - prev.x) * 0.45,
-                          y: prev.y + (target.y - prev.y) * 0.45,
-                      }
-                    : target;
+                const animOverride =
+                    animatedPieceRef.current &&
+                    animatedPieceRef.current.userId === p.user_id &&
+                    animatedPieceRef.current.pieceId === piece.id
+                        ? animatedPieceRef.current.piece
+                        : piece;
 
+                const pt = getPieceBoardPoint(animOverride, corner, size);
                 const movable =
                     isMyTurnNow &&
-                    p.user_id === userId &&
-                    getMovableDice(piece, gameState.dice_remaining).length > 0;
+                    p.user_id === currentUid &&
+                    getMovableDice(piece, state.dice_remaining).length > 0;
 
                 const radius = Math.max(8.5, cell * 0.37);
 
                 if (movable) {
                     ctx.save();
                     ctx.beginPath();
-                    ctx.arc(cur.x, cur.y, radius + 4.5, 0, Math.PI * 2);
+                    ctx.arc(pt.x, pt.y, radius + 4.5, 0, Math.PI * 2);
                     ctx.strokeStyle = "#10b981";
                     ctx.lineWidth = 2.8;
                     ctx.stroke();
@@ -1396,16 +1603,16 @@ export default function ParchisGamePage() {
 
                 ctx.save();
                 ctx.beginPath();
-                ctx.arc(cur.x + 1.4, cur.y + 2.2, radius, 0, Math.PI * 2);
+                ctx.arc(pt.x + 1.4, pt.y + 2.2, radius, 0, Math.PI * 2);
                 ctx.fillStyle = "rgba(0,0,0,0.48)";
                 ctx.fill();
 
                 const pieceGrad = ctx.createRadialGradient(
-                    cur.x - radius * 0.3,
-                    cur.y - radius * 0.3,
+                    pt.x - radius * 0.3,
+                    pt.y - radius * 0.3,
                     radius * 0.15,
-                    cur.x,
-                    cur.y,
+                    pt.x,
+                    pt.y,
                     radius
                 );
                 pieceGrad.addColorStop(0, pal.light);
@@ -1413,7 +1620,7 @@ export default function ParchisGamePage() {
                 pieceGrad.addColorStop(1, pal.dark);
 
                 ctx.beginPath();
-                ctx.arc(cur.x, cur.y, radius, 0, Math.PI * 2);
+                ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
                 ctx.fillStyle = pieceGrad;
                 ctx.fill();
                 ctx.lineWidth = movable ? 2.4 : 1.6;
@@ -1421,37 +1628,50 @@ export default function ParchisGamePage() {
                 ctx.stroke();
 
                 ctx.beginPath();
-                ctx.arc(cur.x, cur.y, radius * 0.52, 0, Math.PI * 2);
+                ctx.arc(pt.x, pt.y, radius * 0.52, 0, Math.PI * 2);
                 ctx.fillStyle = "#ffffff";
                 ctx.fill();
 
                 ctx.beginPath();
-                ctx.arc(cur.x, cur.y, radius * 0.24, 0, Math.PI * 2);
+                ctx.arc(pt.x, pt.y, radius * 0.24, 0, Math.PI * 2);
                 ctx.fillStyle = pal.main;
                 ctx.fill();
                 ctx.restore();
             }
         }
-    }, [gameState, pieceCoords, userId]);
+    }, []);
 
     useEffect(() => {
         if (!isInGame) return;
-        renderBoard();
+        let running = true;
+        let rafId = 0;
+        const loop = () => {
+            if (!running) return;
+            renderBoard();
+            rafId = requestAnimationFrame(loop);
+        };
+        rafId = requestAnimationFrame(loop);
+        return () => {
+            running = false;
+            cancelAnimationFrame(rafId);
+        };
     }, [isInGame, renderBoard]);
 
     const handleBoardPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
-        if (!gameState || !userId || gameState.status !== "playing") return;
+        const state = gameStateRef.current;
+        const currentUid = userIdRef.current;
+        if (!state || !currentUid || state.status !== "playing") return;
 
-        const players: ParchisPlayerState[] = Array.isArray(gameState.players)
-            ? gameState.players
+        const players: ParchisPlayerState[] = Array.isArray(state.players)
+            ? state.players
             : [];
         const me = players.find(
-            (pl: ParchisPlayerState) => pl.user_id === userId
+            (pl: ParchisPlayerState) => pl.user_id === currentUid
         );
-        if (!me || gameState.turn_seat !== me.seat_index) {
+        if (!me || state.turn_seat !== me.seat_index) {
             return;
         }
-        if (gameState.penalty_pending) {
+        if (state.penalty_pending) {
             const canvas = boardCanvasRef.current;
             if (!canvas) return;
             const rect = canvas.getBoundingClientRect();
@@ -1487,7 +1707,7 @@ export default function ParchisGamePage() {
                 );
             return;
         }
-        if (!gameState.must_move || !gameState.dice_remaining?.length) return;
+        if (!state.must_move || !state.dice_remaining?.length) return;
 
         const canvas = boardCanvasRef.current;
         if (!canvas) return;
@@ -1508,10 +1728,7 @@ export default function ParchisGamePage() {
         let minDist = 30;
 
         for (const piece of me.pieces || []) {
-            const availableDice = getMovableDice(
-                piece,
-                gameState.dice_remaining
-            );
+            const availableDice = getMovableDice(piece, state.dice_remaining);
             if (availableDice.length === 0) continue;
             const pt = getPieceBoardPoint(piece, corner, size);
             const dist = Math.hypot(clickX - pt.x, clickY - pt.y);
@@ -1526,7 +1743,7 @@ export default function ParchisGamePage() {
                 (piece) => piece.id === closestId
             );
             const die = selectedPiece
-                ? getMovableDice(selectedPiece, gameState.dice_remaining)[0]
+                ? getMovableDice(selectedPiece, state.dice_remaining)[0]
                 : undefined;
             if (die !== undefined) sendMovePiece(closestId, die);
         }
@@ -2015,7 +2232,6 @@ export default function ParchisGamePage() {
                                     mustMove={topIsTurn && gameState.must_move}
                                     onRoll={sendRollDice}
                                     position="top"
-                                    showDice={topIsTurn}
                                 />
 
                                 <div className="w-full min-w-0 flex items-center justify-center overflow-hidden">
@@ -2053,7 +2269,6 @@ export default function ParchisGamePage() {
                                     }
                                     onRoll={sendRollDice}
                                     position="bottom"
-                                    showDice={bottomIsTurn}
                                 />
 
                                 {gameState.penalty_pending && isMyTurn && (
@@ -2125,4 +2340,11 @@ export default function ParchisGamePage() {
             </footer>
         </div>
     );
+}
+
+function stHasTurnChanged(
+    prevState: ParchisState,
+    nextState: ParchisState
+): boolean {
+    return prevState.turn_seat !== nextState.turn_seat;
 }
