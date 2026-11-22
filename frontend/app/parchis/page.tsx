@@ -534,7 +534,6 @@ export default function ParchisGamePage() {
     const [isConnecting, setIsConnecting] = useState(false);
     const [closingByUser, setClosingByUser] = useState(false);
     const [activeSocket, setActiveSocket] = useState<WebSocket | null>(null);
-    const [animFrameId, setAnimFrameId] = useState<number | null>(null);
     const [pieceCoords, setPieceCoords] = useState<
         Record<string, { x: number; y: number }>
     >({});
@@ -759,11 +758,6 @@ export default function ParchisGamePage() {
         setPieceCoords({});
         setRoomId("");
 
-        if (animFrameId !== null) {
-            cancelAnimationFrame(animFrameId);
-            setAnimFrameId(null);
-        }
-
         if (ws) {
             ws.onclose = null;
             ws.onerror = null;
@@ -786,7 +780,6 @@ export default function ParchisGamePage() {
     }, [
         accessToken,
         activeSocket,
-        animFrameId,
         fetchPublicRooms,
         gameState,
         loadUserBalances,
@@ -1365,11 +1358,6 @@ export default function ParchisGamePage() {
             gameState.must_move &&
             (gameState.dice_remaining?.length || 0) > 0;
 
-        const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.009);
-        const nextCoords: Record<string, { x: number; y: number }> = {
-            ...pieceCoords,
-        };
-
         for (const p of players) {
             const corner = getPlayerVisualCorner(
                 p.seat_index,
@@ -1381,14 +1369,13 @@ export default function ParchisGamePage() {
             for (const piece of p.pieces || []) {
                 const target = getPieceBoardPoint(piece, corner, size);
                 const key = `${p.user_id}-${piece.id}`;
-                const prev = nextCoords[key];
+                const prev = pieceCoords[key];
                 const cur = prev
                     ? {
-                          x: prev.x + (target.x - prev.x) * 0.28,
-                          y: prev.y + (target.y - prev.y) * 0.28,
+                          x: prev.x + (target.x - prev.x) * 0.45,
+                          y: prev.y + (target.y - prev.y) * 0.45,
                       }
                     : target;
-                nextCoords[key] = cur;
 
                 const movable =
                     isMyTurnNow &&
@@ -1400,13 +1387,7 @@ export default function ParchisGamePage() {
                 if (movable) {
                     ctx.save();
                     ctx.beginPath();
-                    ctx.arc(
-                        cur.x,
-                        cur.y,
-                        radius + 3.5 + pulse * 3,
-                        0,
-                        Math.PI * 2
-                    );
+                    ctx.arc(cur.x, cur.y, radius + 4.5, 0, Math.PI * 2);
                     ctx.strokeStyle = "#10b981";
                     ctx.lineWidth = 2.8;
                     ctx.stroke();
@@ -1455,22 +1436,8 @@ export default function ParchisGamePage() {
 
     useEffect(() => {
         if (!isInGame) return;
-        let running = true;
-        const loop = () => {
-            if (!running) return;
-            renderBoard();
-            const id = requestAnimationFrame(loop);
-            setAnimFrameId(id);
-        };
-        const firstId = requestAnimationFrame(loop);
-        setAnimFrameId(firstId);
-        return () => {
-            running = false;
-            if (animFrameId !== null) {
-                cancelAnimationFrame(animFrameId);
-            }
-        };
-    }, [isInGame, renderBoard, animFrameId]);
+        renderBoard();
+    }, [isInGame, renderBoard]);
 
     const handleBoardPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
         if (!gameState || !userId || gameState.status !== "playing") return;
@@ -2048,10 +2015,7 @@ export default function ParchisGamePage() {
                                     mustMove={topIsTurn && gameState.must_move}
                                     onRoll={sendRollDice}
                                     position="top"
-                                    showDice={
-                                        isMyTurn &&
-                                        topPlayer?.user_id === userId
-                                    }
+                                    showDice={topIsTurn}
                                 />
 
                                 <div className="w-full min-w-0 flex items-center justify-center overflow-hidden">
@@ -2089,10 +2053,7 @@ export default function ParchisGamePage() {
                                     }
                                     onRoll={sendRollDice}
                                     position="bottom"
-                                    showDice={
-                                        isMyTurn &&
-                                        bottomPlayer?.user_id === userId
-                                    }
+                                    showDice={bottomIsTurn}
                                 />
 
                                 {gameState.penalty_pending && isMyTurn && (
