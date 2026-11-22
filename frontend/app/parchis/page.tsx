@@ -119,7 +119,7 @@ function getPieceBoardPoint(
         const startDist = outerR * 0.88;
         const endDist = boardSize * 0.08;
         const dist = startDist - (startDist - endDist) * progress;
-        const jitter = ((piece.id % 2 === 0 ? 1 : -1) * 5);
+        const jitter = (piece.id % 2 === 0 ? 1 : -1) * 5;
         return {
             x: cx + Math.cos(seatAngle) * dist + Math.cos(perpAngle) * jitter,
             y: cy + Math.sin(seatAngle) * dist + Math.sin(perpAngle) * jitter,
@@ -127,7 +127,7 @@ function getPieceBoardPoint(
     }
 
     const pt = getTrackPoint(piece.pos, cx, cy, outerR);
-    const laneOffset = ((piece.id % 2 === 0 ? 1 : -1) * 4.5);
+    const laneOffset = (piece.id % 2 === 0 ? 1 : -1) * 4.5;
     return {
         x: pt.x + Math.cos(seatAngle) * laneOffset,
         y: pt.y + Math.sin(seatAngle) * laneOffset,
@@ -153,6 +153,7 @@ export default function ParchisGamePage() {
     const [joinPassword, setJoinPassword] = useState("");
 
     const [publicRooms, setPublicRooms] = useState<PublicRoomItem[]>([]);
+    const [roomsUnavailable, setRoomsUnavailable] = useState(false);
     const [isInGame, setIsInGame] = useState(false);
     const [roomId, setRoomId] = useState("");
     const [isConnected, setIsConnected] = useState(false);
@@ -296,11 +297,17 @@ export default function ParchisGamePage() {
             const res = await fetch(
                 `${API_BASE}/parchis/rooms?bet=${encodeURIComponent(String(amount))}`
             );
-            if (!res.ok) return;
+            if (!res.ok) {
+                setRoomsUnavailable(true);
+                setPublicRooms([]);
+                return;
+            }
             const data = await res.json();
+            setRoomsUnavailable(false);
             setPublicRooms(Array.isArray(data.rooms) ? data.rooms : []);
         } catch {
-            // ignore network errors while polling lobby
+            setRoomsUnavailable(true);
+            setPublicRooms([]);
         }
     }, [selectedBet]);
 
@@ -309,7 +316,7 @@ export default function ParchisGamePage() {
         void fetchPublicRooms();
         const timer = setInterval(() => {
             void fetchPublicRooms();
-        }, 4000);
+        }, 6000);
         return () => clearInterval(timer);
     }, [isInGame, userId, fetchPublicRooms]);
 
@@ -347,7 +354,12 @@ export default function ParchisGamePage() {
     }, [loadUserBalances]);
 
     const connectToRoom = useCallback(
-        (targetRoomId: string, pwd = "", overrideBet?: number, overridePlayers?: MaxPlayers) => {
+        (
+            targetRoomId: string,
+            pwd = "",
+            overrideBet?: number,
+            overridePlayers?: MaxPlayers
+        ) => {
             if (startingRef.current || socketRef.current) {
                 showAlert(
                     "Partida activa",
@@ -554,7 +566,7 @@ export default function ParchisGamePage() {
                 }),
             });
 
-            const data = await res.json();
+            const data = await res.json().catch(() => ({}));
             if (!res.ok || !data.room_id) {
                 showAlert(
                     "No se pudo crear la sala",
@@ -596,7 +608,10 @@ export default function ParchisGamePage() {
 
         const rect = canvas.getBoundingClientRect();
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
-        const size = Math.max(220, Math.floor(Math.min(rect.width, rect.height || rect.width)));
+        const size = Math.max(
+            220,
+            Math.floor(Math.min(rect.width, rect.height || rect.width))
+        );
 
         if (
             canvas.width !== Math.floor(size * dpr) ||
@@ -1038,7 +1053,9 @@ export default function ParchisGamePage() {
 
                                 {publicRooms.length === 0 ? (
                                     <p className="text-xs text-zinc-500">
-                                        No hay salas públicas disponibles para este monto.
+                                        {roomsUnavailable
+                                            ? "Lista de salas en mantenimiento; puedes crear o buscar sala directa."
+                                            : "No hay salas públicas disponibles para este monto."}
                                     </p>
                                 ) : (
                                     <div className="space-y-2 max-h-40 overflow-y-auto">
