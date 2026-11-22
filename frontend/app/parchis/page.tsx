@@ -287,11 +287,18 @@ function getPieceBoardPoint(
     };
 }
 
+// Regla solicitada: siempre se mueve una casilla más (ej. 1 -> 2, 4 -> 5, 12 -> 13)
+function getEffectiveSteps(diceValue: number | null): number {
+    if (typeof diceValue !== "number" || !Number.isFinite(diceValue)) return 0;
+    return diceValue + 1;
+}
+
 function canPieceMove(piece: ParchisPiece, diceValue: number | null): boolean {
-    if (diceValue === null || diceValue < 1 || diceValue > 6) return false;
+    if (diceValue === null || diceValue < 1) return false;
+    const steps = getEffectiveSteps(diceValue);
     if (piece.stage === -1) return diceValue === 5;
-    if (piece.stage === 0) return piece.steps_walked + diceValue <= 70;
-    if (piece.stage === 100) return piece.pos + diceValue <= 7;
+    if (piece.stage === 0) return piece.steps_walked + steps <= 75;
+    if (piece.stage === 100) return piece.pos + steps <= 7;
     return false;
 }
 
@@ -322,7 +329,7 @@ function randomDiePair(prev?: [number, number]): [number, number] {
     return [randomDieFace(prev?.[0]), randomDieFace(prev?.[1])];
 }
 
-// Calcula la posición en cada paso (0 -> 1 -> 2 -> 3 -> 4...) desde la posición inicial
+// Calcula la posición en cada paso (0 -> 1 -> 2 -> ... -> dado + 1)
 function getStepPiecePose(
     startPiece: ParchisPiece,
     seatIndex: number,
@@ -398,7 +405,6 @@ const PIP_COORDS: Record<number, Array<[number, number]>> = {
     ],
 };
 
-// Dado normal cuando es el turno del jugador (gira al lanzar)
 function PipDieBox({
     num,
     rolling,
@@ -432,7 +438,6 @@ function PipDieBox({
     );
 }
 
-// Dado estático estilo triángulo/dragón cuando NO le toca el turno (no se mueve)
 function DragonTriangleDieBox({
     num,
     accentColor,
@@ -449,7 +454,6 @@ function DragonTriangleDieBox({
             title={`Dado en espera: ${face}`}
         >
             <svg viewBox="0 0 100 100" className="w-full h-full block">
-                {/* Triángulo / emblema estilo dragón */}
                 <polygon
                     points="50,8 92,84 8,84"
                     fill={accentColor}
@@ -514,7 +518,6 @@ function PlayerTurnRow({
         return () => clearInterval(timer);
     }, [isActiveTurn, rolling]);
 
-    // Solo los dados del jugador activo giran; los del otro se quedan fijos
     const show1 = isActiveTurn && rolling ? spinDice[0] : d1;
     const show2 = isActiveTurn && rolling ? spinDice[1] : d2;
 
@@ -672,7 +675,6 @@ export default function ParchisGamePage() {
         animatedPieceRef.current = null;
     }, []);
 
-    // Aplica el estado entrante con demora de ~3s al cambiar de turno
     const applyIncomingGameState = useCallback((nextState: ParchisState) => {
         const prevState = gameStateRef.current;
 
@@ -690,7 +692,6 @@ export default function ParchisGamePage() {
             prevState.status === "playing" &&
             stHasTurnChanged(prevState, nextState)
         ) {
-            // Mantenemos el turno anterior visible 3 segundos antes de cambiar
             updateDiceIfPresent(nextState);
             if (turnDelayTimerRef.current) {
                 clearTimeout(turnDelayTimerRef.current);
@@ -1236,7 +1237,7 @@ export default function ParchisGamePage() {
         activeSocket.send(JSON.stringify({ type: "ROLL_DICE" }));
     };
 
-    // Anima el movimiento paso a paso desde el siguiente (0 -> 1 -> 2 -> 3 -> 4)
+    // Avanza una casilla adicional sobre el valor del dado (dado + 1), paso a paso desde el siguiente
     const sendMovePiece = useCallback(
         (pieceId: number, diceValue: number) => {
             if (!activeSocket || activeSocket.readyState !== WebSocket.OPEN)
@@ -1245,13 +1246,14 @@ export default function ParchisGamePage() {
             const curState = gameStateRef.current;
             const me = curState?.players?.find((p) => p.user_id === userId);
             const startPiece = me?.pieces?.find((pc) => pc.id === pieceId);
+            const totalSteps = getEffectiveSteps(diceValue);
 
             if (stepAnimTimerRef.current) {
                 clearTimeout(stepAnimTimerRef.current);
                 stepAnimTimerRef.current = null;
             }
 
-            if (me && startPiece && diceValue > 0) {
+            if (me && startPiece && totalSteps > 0) {
                 let currentStep = 0;
                 const runStep = () => {
                     animatedPieceRef.current = {
@@ -1263,9 +1265,9 @@ export default function ParchisGamePage() {
                             currentStep
                         ),
                     };
-                    if (currentStep < diceValue) {
+                    if (currentStep < totalSteps) {
                         currentStep += 1;
-                        stepAnimTimerRef.current = setTimeout(runStep, 130);
+                        stepAnimTimerRef.current = setTimeout(runStep, 125);
                     } else {
                         stepAnimTimerRef.current = null;
                         activeSocket.send(
@@ -1273,6 +1275,7 @@ export default function ParchisGamePage() {
                                 type: "MOVE_PIECE",
                                 piece_id: pieceId,
                                 dice_value: diceValue,
+                                steps_moved: totalSteps,
                             })
                         );
                     }
@@ -1286,6 +1289,7 @@ export default function ParchisGamePage() {
                     type: "MOVE_PIECE",
                     piece_id: pieceId,
                     dice_value: diceValue,
+                    steps_moved: totalSteps,
                 })
             );
         },
@@ -2305,7 +2309,8 @@ export default function ParchisGamePage() {
                                                         }
                                                         className="min-w-9 rounded-lg bg-emerald-400 px-2.5 py-2 text-[10px] font-black text-black transition hover:bg-emerald-300 active:scale-95"
                                                     >
-                                                        Dado: {die}
+                                                        Dado {die} (+
+                                                        {getEffectiveSteps(die)})
                                                     </button>
                                                 ))}
                                             </div>
