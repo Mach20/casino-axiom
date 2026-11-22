@@ -85,7 +85,7 @@ const PARCHIS_BETS: Record<ParchisBet, number> = {
     "10.00": 10.0,
 };
 
-// Esquinas visuales como en la captura:
+// Esquinas visuales:
 // 0 = Arriba Izquierda (Verde), 1 = Arriba Derecha (Rojo),
 // 2 = Abajo Derecha (Azul), 3 = Abajo Izquierda (Amarillo)
 const CORNER_PALETTE = [
@@ -130,7 +130,6 @@ function getMainName(
 
 function getVisualCorner(seatIndex: number, totalPlayers: number): number {
     if (totalPlayers === 2) {
-        // Arriba derecha (Rojo = 1) vs Abajo izquierda (Amarillo = 3)
         return seatIndex === 0 ? 1 : 3;
     }
     return seatIndex % 4;
@@ -266,19 +265,27 @@ function money(value: number): string {
     return `$${Number(value || 0).toFixed(2)}`;
 }
 
-function resolveTwoDice(
-    state: ParchisState | null
-): [number | null, number | null] {
-    if (!state) return [null, null];
+function clampDieFace(val: unknown, fallback = 1): number {
+    const n = Number(val);
+    if (!Number.isFinite(n) || n < 1) return fallback;
+    return Math.min(6, Math.max(1, Math.round(n)));
+}
+
+function resolveTwoDice(state: ParchisState | null): [number, number] {
+    if (!state) return [1, 1];
     if (Array.isArray(state.dice_pair) && state.dice_pair.length >= 2) {
-        return [Number(state.dice_pair[0]), Number(state.dice_pair[1])];
+        return [
+            clampDieFace(state.dice_pair[0], 1),
+            clampDieFace(state.dice_pair[1], 1),
+        ];
     }
     if (typeof state.dice === "number" && state.dice > 0) {
-        const d1 = Math.min(6, Math.max(1, Math.ceil(state.dice / 2)));
-        const d2 = Math.min(6, Math.max(1, state.dice - d1 || 1));
+        const total = Math.min(12, Math.max(2, Math.round(state.dice)));
+        const d1 = clampDieFace(Math.ceil(total / 2), 1);
+        const d2 = clampDieFace(total - d1, 1);
         return [d1, d2];
     }
-    return [null, null];
+    return [2, 4];
 }
 
 const PIP_POSITIONS: Record<number, number[]> = {
@@ -294,24 +301,31 @@ function PipDieBox({
     num,
     rolling,
 }: {
-    num: number | null;
+    num: number;
     rolling: boolean;
 }) {
-    const pips = num && PIP_POSITIONS[num] ? PIP_POSITIONS[num] : [];
+    const face = clampDieFace(num, 1);
+    const pips = PIP_POSITIONS[face] || PIP_POSITIONS[1];
+
     return (
         <div
-            className={`w-11 h-11 rounded-xl bg-gradient-to-b from-zinc-100 to-zinc-300 border-2 border-zinc-500 p-1.5 grid grid-cols-3 grid-rows-3 place-items-center shadow-md transition-transform duration-150 ${
+            style={{ backgroundColor: "#f4f4f5", color: "#09090b" }}
+            className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl border-2 border-zinc-600 p-1.5 grid grid-cols-3 grid-rows-3 place-items-center shadow-md transition-transform duration-150 ${
                 rolling ? "rotate-12 scale-105" : "rotate-0 scale-100"
             }`}
         >
-            {Array.from({ length: 9 }).map((_, idx) => (
-                <span
-                    key={idx}
-                    className={`w-2 h-2 rounded-full ${
-                        pips.includes(idx) ? "bg-zinc-900" : "bg-transparent"
-                    }`}
-                />
-            ))}
+            {Array.from({ length: 9 }).map((_, idx) => {
+                const active = pips.includes(idx);
+                return (
+                    <span
+                        key={idx}
+                        style={{
+                            backgroundColor: active ? "#09090b" : "transparent",
+                        }}
+                        className="w-2 h-2 rounded-full block"
+                    />
+                );
+            })}
         </div>
     );
 }
@@ -328,8 +342,8 @@ function PlayerTurnRow({
 }: {
     playerName: string;
     accentColor: string;
-    d1: number | null;
-    d2: number | null;
+    d1: number;
+    d2: number;
     rolling: boolean;
     canRoll: boolean;
     onRoll: () => void;
@@ -355,7 +369,7 @@ function PlayerTurnRow({
         return (
             <div className="flex flex-col items-end gap-1">
                 <div className="flex items-center gap-2">
-                    <div className="bg-zinc-900/90 border border-zinc-700 rounded-2xl p-1.5 flex items-center gap-1.5">
+                    <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-1.5 flex items-center gap-1.5 shadow-inner">
                         <PipDieBox num={show1} rolling={rolling} />
                         <PipDieBox num={show2} rolling={rolling} />
                     </div>
@@ -395,7 +409,7 @@ function PlayerTurnRow({
                 </span>
             </div>
             <div className="flex items-center gap-2">
-                <div className="bg-zinc-900/90 border border-zinc-700 rounded-2xl p-1.5 flex items-center gap-1.5">
+                <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-1.5 flex items-center gap-1.5 shadow-inner">
                     <PipDieBox num={show1} rolling={rolling} />
                     <PipDieBox num={show2} rolling={rolling} />
                 </div>
@@ -460,6 +474,7 @@ export default function ParchisGamePage() {
     const gameStateRef = useRef<ParchisState | null>(null);
     const userIdRef = useRef<string | null>(null);
     const accessTokenRef = useRef("");
+    const roomIdRef = useRef("");
     const animationFrameRef = useRef<number | null>(null);
     const connectedRef = useRef(false);
     const closingByUserRef = useRef(false);
@@ -634,24 +649,68 @@ export default function ParchisGamePage() {
         return () => clearInterval(timer);
     }, [isInGame, userId, fetchPublicRooms]);
 
-    const exitParchisGame = useCallback(() => {
+    const exitParchisGame = useCallback(async () => {
         closingByUserRef.current = true;
         startingRef.current = false;
         connectedRef.current = false;
         setRollingDice(false);
 
+        const activeRoomId =
+            gameStateRef.current?.room_id || roomIdRef.current || roomId;
+        const currentState = gameStateRef.current;
+        const currentUid = userIdRef.current;
+        const mySeat = currentState?.players?.find(
+            (pl) => pl.user_id === currentUid
+        );
+        const hostClosing = Boolean(
+            currentState &&
+                currentUid &&
+                (currentState.host_user_id === currentUid ||
+                    mySeat?.seat_index === 0)
+        );
+
+        const ws = socketRef.current;
+        socketRef.current = null;
+
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            try {
+                ws.send(
+                    JSON.stringify({
+                        type: hostClosing ? "CLOSE_ROOM" : "LEAVE_ROOM",
+                        room_id: activeRoomId,
+                    })
+                );
+            } catch {}
+        }
+
+        if (hostClosing && activeRoomId && accessTokenRef.current) {
+            try {
+                await fetch(
+                    `${API_BASE}/parchis/rooms/${encodeURIComponent(
+                        String(activeRoomId)
+                    )}/close`,
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            Authorization: `Bearer ${accessTokenRef.current}`,
+                        },
+                    }
+                );
+            } catch {}
+        }
+
         setIsConnected(false);
         setIsInGame(false);
         setGameState(null);
         gameStateRef.current = null;
+        roomIdRef.current = "";
+        setRoomId("");
 
         if (animationFrameRef.current !== null) {
             cancelAnimationFrame(animationFrameRef.current);
             animationFrameRef.current = null;
         }
-
-        const ws = socketRef.current;
-        socketRef.current = null;
 
         if (ws) {
             ws.onclose = null;
@@ -661,12 +720,18 @@ export default function ParchisGamePage() {
                 ws.readyState === WebSocket.OPEN ||
                 ws.readyState === WebSocket.CONNECTING
             ) {
-                ws.close(1000, "Jugador salió de la partida");
+                ws.close(
+                    1000,
+                    hostClosing
+                        ? "Anfitrión cerró la sala"
+                        : "Jugador salió de la partida"
+                );
             }
         }
 
-        void loadUserBalances();
-    }, [loadUserBalances]);
+        await loadUserBalances();
+        await fetchPublicRooms();
+    }, [fetchPublicRooms, loadUserBalances, roomId]);
 
     const connectToRoom = useCallback(
         (
@@ -709,6 +774,7 @@ export default function ParchisGamePage() {
             closingByUserRef.current = false;
             connectedRef.current = false;
 
+            roomIdRef.current = targetRoomId;
             setRoomId(targetRoomId);
             setIsInGame(true);
             setIsConnected(false);
@@ -762,7 +828,7 @@ export default function ParchisGamePage() {
                             data.type === "ROOM_CLOSED" ||
                             data.status === "closed_by_host"
                         ) {
-                            exitParchisGame();
+                            void exitParchisGame();
                             showAlert(
                                 "Sala cerrada",
                                 data.message ||
@@ -776,7 +842,9 @@ export default function ParchisGamePage() {
                             gameStateRef.current = data;
                             setGameState(data);
                             if (data.room_id) {
-                                setRoomId(String(data.room_id));
+                                const nextId = String(data.room_id);
+                                roomIdRef.current = nextId;
+                                setRoomId(nextId);
                             }
                             if (!connectedRef.current) {
                                 connectedRef.current = true;
@@ -797,7 +865,7 @@ export default function ParchisGamePage() {
                                 data.message || "No se pudo completar la acción."
                             );
                             if (!connectedRef.current) {
-                                exitParchisGame();
+                                void exitParchisGame();
                             }
                         }
                     } catch (error) {
@@ -962,7 +1030,7 @@ export default function ParchisGamePage() {
         const rect = canvas.getBoundingClientRect();
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         const size = Math.max(
-            260,
+            240,
             Math.floor(Math.min(rect.width, rect.height || rect.width))
         );
 
@@ -977,7 +1045,6 @@ export default function ParchisGamePage() {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, size, size);
 
-        // Marco exterior tipo madera de la captura
         ctx.fillStyle = "#5c3b28";
         ctx.beginPath();
         ctx.roundRect(0, 0, size, size, 16);
@@ -990,7 +1057,6 @@ export default function ParchisGamePage() {
         ctx.fillStyle = "#f7f3e8";
         ctx.fillRect(pad, pad, inner, inner);
 
-        // Pasillos de meta (Arriba = Verde [0], Derecha = Rojo [1], Abajo = Azul [2], Izquierda = Amarillo [3])
         for (let y = 1; y <= 6; y++) {
             ctx.fillStyle = CORNER_PALETTE[0].main;
             ctx.fillRect(pad + 7 * cell, pad + y * cell, cell, cell);
@@ -1277,7 +1343,7 @@ export default function ParchisGamePage() {
         if (!canvas) return;
         const rect = canvas.getBoundingClientRect();
         const size = Math.max(
-            260,
+            240,
             Math.floor(Math.min(rect.width, rect.height || rect.width))
         );
         const clickX = e.clientX - rect.left;
@@ -1447,8 +1513,8 @@ export default function ParchisGamePage() {
                                 <strong className="text-white">
                                     Anfitrión:
                                 </strong>{" "}
-                                Si el anfitrión sale, la sala se cierra para
-                                todos.
+                                Si el anfitrión cierra o sale, la sala se cierra
+                                para todos.
                             </li>
                         </ul>
 
@@ -1488,7 +1554,7 @@ export default function ParchisGamePage() {
             <main
                 className={`flex-1 w-full mx-auto flex flex-col ${
                     isInGame
-                        ? "max-w-3xl px-3 sm:px-6 py-3 sm:py-5 items-center justify-center"
+                        ? "max-w-3xl px-2.5 sm:px-6 py-2.5 sm:py-5 items-center justify-center"
                         : "max-w-4xl px-3 sm:px-6 py-4 sm:py-8 items-center justify-center"
                 }`}
             >
@@ -1786,11 +1852,11 @@ export default function ParchisGamePage() {
                         </div>
                     </div>
                 ) : (
-                    <div className="w-full max-w-xl bg-zinc-950 border border-zinc-800 rounded-3xl p-3 sm:p-4 flex flex-col gap-3 shadow-2xl">
+                    <div className="w-full max-w-xl bg-zinc-950 border border-zinc-800 rounded-3xl p-2.5 sm:p-4 flex flex-col gap-2.5 sm:gap-3 shadow-2xl">
                         <div className="flex items-center justify-between gap-2 border-b border-zinc-900 pb-2.5">
                             <button
                                 type="button"
-                                onClick={exitParchisGame}
+                                onClick={() => void exitParchisGame()}
                                 className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-red-400 text-[11px] font-bold uppercase rounded-xl border border-zinc-800"
                             >
                                 &lsaquo; {isHost ? "Cerrar Sala" : "Salir"}
@@ -1818,8 +1884,8 @@ export default function ParchisGamePage() {
                                 <PlayerTurnRow
                                     playerName={topName}
                                     accentColor={CORNER_PALETTE[topCorner].main}
-                                    d1={topIsTurn ? d1 : null}
-                                    d2={topIsTurn ? d2 : null}
+                                    d1={d1}
+                                    d2={d2}
                                     rolling={rollingDice && topIsTurn}
                                     canRoll={
                                         Boolean(
@@ -1837,7 +1903,7 @@ export default function ParchisGamePage() {
                                     <canvas
                                         ref={boardCanvasRef}
                                         onPointerDown={handleBoardPointerDown}
-                                        className="w-full max-w-[540px] aspect-square rounded-2xl border-2 border-zinc-800 shadow-2xl cursor-pointer touch-none"
+                                        className="w-full max-w-[min(88vw,540px)] sm:max-w-[540px] aspect-square rounded-2xl border-2 border-zinc-800 shadow-2xl cursor-pointer touch-none"
                                         style={{ touchAction: "none" }}
                                     />
                                 </div>
@@ -1847,8 +1913,8 @@ export default function ParchisGamePage() {
                                     accentColor={
                                         CORNER_PALETTE[bottomCorner].main
                                     }
-                                    d1={bottomIsTurn ? d1 : null}
-                                    d2={bottomIsTurn ? d2 : null}
+                                    d1={d1}
+                                    d2={d2}
                                     rolling={rollingDice && bottomIsTurn}
                                     canRoll={
                                         Boolean(
@@ -1870,7 +1936,7 @@ export default function ParchisGamePage() {
                                         </h3>
                                         <button
                                             type="button"
-                                            onClick={exitParchisGame}
+                                            onClick={() => void exitParchisGame()}
                                             className="px-5 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase rounded-xl"
                                         >
                                             Volver
