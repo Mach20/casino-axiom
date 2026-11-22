@@ -51,6 +51,8 @@ interface ParchisState {
     dice: number | null;
     dice_pair?: [number, number] | number[] | null;
     dice_remaining?: number[];
+    double_count?: number;
+    penalty_pending?: boolean;
     must_move: boolean;
     pot_total: number;
     winners: string[];
@@ -320,33 +322,6 @@ function randomDiePair(prev?: [number, number]): [number, number] {
     return [randomDieFace(prev?.[0]), randomDieFace(prev?.[1])];
 }
 
-function randomPairForSum(
-    totalValue: number,
-    prev?: [number, number]
-): [number, number] {
-    const t = Math.round(totalValue);
-    const validPairs: Array<[number, number]> = [];
-    for (let a = 1; a <= 6; a++) {
-        for (let b = 1; b <= 6; b++) {
-            if (a + b === t) validPairs.push([a, b]);
-        }
-    }
-    if (validPairs.length > 0) {
-        const filtered = prev
-            ? validPairs.filter(
-                ([a, b]) => !(a === prev[0] && b === prev[1])
-            )
-            : validPairs;
-        const pool = filtered.length > 0 ? filtered : validPairs;
-        return pool[Math.floor(Math.random() * pool.length)];
-    }
-    if (t >= 1 && t <= 6) {
-        const other = randomDieFace(prev?.[1]);
-        return Math.random() < 0.5 ? [t, other] : [other, t];
-    }
-    return randomDiePair(prev);
-}
-
 const PIP_COORDS: Record<number, Array<[number, number]>> = {
     1: [[50, 50]],
     2: [
@@ -393,8 +368,9 @@ function PipDieBox({
 
     return (
         <div
-            className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-zinc-100 border-2 border-zinc-500 p-1 flex items-center justify-center shadow-md transition-transform duration-150 ${rolling ? "rotate-12 scale-105" : "rotate-0 scale-100"
-                }`}
+            className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-zinc-100 border-2 border-zinc-500 p-1 flex items-center justify-center shadow-md transition-transform duration-150 ${
+                rolling ? "rotate-12 scale-105" : "rotate-0 scale-100"
+            }`}
         >
             <svg viewBox="0 0 100 100" className="w-full h-full block">
                 <rect
@@ -425,6 +401,7 @@ function PlayerTurnRow({
     mustMove,
     onRoll,
     position,
+    showDice,
 }: {
     playerName: string;
     colorName: string;
@@ -437,6 +414,7 @@ function PlayerTurnRow({
     mustMove: boolean;
     onRoll: () => void;
     position: "top" | "bottom";
+    showDice: boolean;
 }) {
     const [spinDice, setSpinDice] = useState<[number, number]>([3, 5]);
 
@@ -505,7 +483,7 @@ function PlayerTurnRow({
     if (position === "top") {
         return (
             <div className="w-full flex flex-col items-end gap-1">
-                {diceBox}
+                {showDice && diceBox}
                 {badge}
             </div>
         );
@@ -514,7 +492,7 @@ function PlayerTurnRow({
     return (
         <div className="w-full flex flex-col items-start gap-1">
             {badge}
-            {diceBox}
+            {showDice && diceBox}
         </div>
     );
 }
@@ -554,6 +532,12 @@ export default function ParchisGamePage() {
     const [busyAction, setBusyAction] = useState(false);
     const [rollingDice, setRollingDice] = useState(false);
     const [isConnecting, setIsConnecting] = useState(false);
+    const [closingByUser, setClosingByUser] = useState(false);
+    const [activeSocket, setActiveSocket] = useState<WebSocket | null>(null);
+    const [animFrameId, setAnimFrameId] = useState<number | null>(null);
+    const [pieceCoords, setPieceCoords] = useState<
+        Record<string, { x: number; y: number }>
+    >({});
 
     const [modal, setModal] = useState({
         isOpen: false,
@@ -562,31 +546,6 @@ export default function ParchisGamePage() {
     });
 
     const boardCanvasRef = useRef<HTMLCanvasElement | null>(null);
-    const socketRef = useRef<WebSocket | null>(null);
-    const gameStateRef = useRef<ParchisState | null>(null);
-    const userIdRef = useRef<string | null>(null);
-    const accessTokenRef = useRef<string>("");
-    const roomIdRef = useRef<string>("");
-    const animationFrameRef = useRef<number | null>(null);
-    const connectedRef = useRef<boolean>(false);
-    const closingByUserRef = useRef<boolean>(false);
-    const connectingRef = useRef<boolean>(false);
-    const rollCounterRef = useRef<number>(0);
-    const appliedRollCounterRef = useRef<number>(0);
-    const displayedDiceRef = useRef<[number, number]>([3, 5]);
-    const pieceCoordsMapRef = useRef<Map<string, { x: number; y: number }>>(
-        new Map()
-    );
-
-    const setConnectingFlag = useCallback((flag: boolean) => {
-        connectingRef.current = flag;
-        setIsConnecting(flag);
-    }, []);
-
-    const setDicePair = useCallback((pair: [number, number]) => {
-        displayedDiceRef.current = pair;
-        setDisplayedDice(pair);
-    }, []);
 
     const showAlert = useCallback((title: string, message: string) => {
         setModal({ isOpen: true, title, message });
@@ -632,9 +591,7 @@ export default function ParchisGamePage() {
 
             if (!currentUserId) {
                 setUserId(null);
-                userIdRef.current = null;
                 setAccessToken("");
-                accessTokenRef.current = "";
                 setPlayBalance(0);
                 setBonusBalance(0);
                 setPlayerName("");
@@ -645,9 +602,7 @@ export default function ParchisGamePage() {
             const token = session.access_token || "";
 
             setUserId(currentUserId);
-            userIdRef.current = currentUserId;
             setAccessToken(token);
-            accessTokenRef.current = token;
 
             const emailFallback =
                 session.user?.email?.split("@")[0] || "Jugador";
@@ -707,9 +662,7 @@ export default function ParchisGamePage() {
                 void loadUserBalances(session);
             } else {
                 setUserId(null);
-                userIdRef.current = null;
                 setAccessToken("");
-                accessTokenRef.current = "";
                 setPlayBalance(0);
                 setBonusBalance(0);
                 setPlayerName("");
@@ -758,27 +711,20 @@ export default function ParchisGamePage() {
     }, [isInGame, userId, fetchPublicRooms]);
 
     const exitParchisGame = useCallback(async () => {
-        closingByUserRef.current = true;
-        setConnectingFlag(false);
-        connectedRef.current = false;
+        setClosingByUser(true);
+        setIsConnecting(false);
+        setIsConnected(false);
         setRollingDice(false);
 
-        const activeRoomId =
-            gameStateRef.current?.room_id || roomIdRef.current || roomId;
-        const currentState = gameStateRef.current;
-        const currentUid = userIdRef.current;
-        const mySeat = currentState?.players?.find(
-            (pl) => pl.user_id === currentUid
-        );
-        const hostClosing = Boolean(
-            currentState &&
-            currentUid &&
-            (currentState.host_user_id === currentUid ||
-                mySeat?.seat_index === 0)
-        );
+        const activeRoomId = gameState?.room_id || roomId;
+        const mySeat = gameState?.players?.find((pl) => pl.user_id === userId);
+        const hostClosing =
+            gameState !== null &&
+            userId !== null &&
+            (gameState.host_user_id === userId || mySeat?.seat_index === 0);
 
-        const ws = socketRef.current;
-        socketRef.current = null;
+        const ws = activeSocket;
+        setActiveSocket(null);
 
         if (ws && ws.readyState === WebSocket.OPEN) {
             try {
@@ -788,10 +734,10 @@ export default function ParchisGamePage() {
                         room_id: activeRoomId,
                     })
                 );
-            } catch { }
+            } catch {}
         }
 
-        if (hostClosing && activeRoomId && accessTokenRef.current) {
+        if (hostClosing && activeRoomId && accessToken) {
             try {
                 await fetch(
                     `${API_BASE}/parchis/rooms/${encodeURIComponent(
@@ -801,26 +747,21 @@ export default function ParchisGamePage() {
                         method: "POST",
                         headers: {
                             "Content-Type": "application/json",
-                            Authorization: `Bearer ${accessTokenRef.current}`,
+                            Authorization: `Bearer ${accessToken}`,
                         },
                     }
                 );
-            } catch { }
+            } catch {}
         }
 
-        setIsConnected(false);
         setIsInGame(false);
         setGameState(null);
-        gameStateRef.current = null;
-        pieceCoordsMapRef.current.clear();
-        roomIdRef.current = "";
+        setPieceCoords({});
         setRoomId("");
-        rollCounterRef.current = 0;
-        appliedRollCounterRef.current = 0;
 
-        if (animationFrameRef.current !== null) {
-            cancelAnimationFrame(animationFrameRef.current);
-            animationFrameRef.current = null;
+        if (animFrameId !== null) {
+            cancelAnimationFrame(animFrameId);
+            setAnimFrameId(null);
         }
 
         if (ws) {
@@ -842,7 +783,16 @@ export default function ParchisGamePage() {
 
         await loadUserBalances();
         await fetchPublicRooms();
-    }, [fetchPublicRooms, loadUserBalances, roomId, setConnectingFlag]);
+    }, [
+        accessToken,
+        activeSocket,
+        animFrameId,
+        fetchPublicRooms,
+        gameState,
+        loadUserBalances,
+        roomId,
+        userId,
+    ]);
 
     const connectToRoom = useCallback(
         (
@@ -851,7 +801,7 @@ export default function ParchisGamePage() {
             overrideBet?: number,
             overridePlayers?: MaxPlayers
         ) => {
-            if (connectingRef.current || socketRef.current) {
+            if (isConnecting || activeSocket) {
                 showAlert(
                     "Partida activa",
                     "Ya existe una conexión activa en Parchís."
@@ -859,7 +809,7 @@ export default function ParchisGamePage() {
                 return;
             }
 
-            if (!userIdRef.current || !accessTokenRef.current) {
+            if (!userId || !accessToken) {
                 showAlert(
                     "Error de sesión",
                     "No se detectó una sesión válida. Vuelve a iniciar sesión."
@@ -880,20 +830,15 @@ export default function ParchisGamePage() {
                 return;
             }
 
-            setConnectingFlag(true);
-            closingByUserRef.current = false;
-            connectedRef.current = false;
-            rollCounterRef.current = 0;
-            appliedRollCounterRef.current = 0;
-            pieceCoordsMapRef.current.clear();
+            setIsConnecting(true);
+            setClosingByUser(false);
+            setIsConnected(false);
+            setPieceCoords({});
 
-            roomIdRef.current = targetRoomId;
             setRoomId(targetRoomId);
             setIsInGame(true);
-            setIsConnected(false);
             setGameState(null);
-            gameStateRef.current = null;
-            setDicePair(randomDiePair());
+            setDisplayedDice(randomDiePair());
             setConnectionMessage("Conectando con el servidor...");
 
             const cleanName = (playerName.trim() || "Jugador").split(/\s+/)[0];
@@ -901,39 +846,36 @@ export default function ParchisGamePage() {
 
             const wsUrl = getWebSocketUrl(
                 `/ws/parchis/${encodeURIComponent(targetRoomId)}` +
-                `?user_id=${encodeURIComponent(userIdRef.current)}` +
-                `&access_token=${encodeURIComponent(accessTokenRef.current)}` +
-                `&player_name=${encodeURIComponent(cleanName)}` +
-                `&doc_number=${encodeURIComponent(cleanId)}` +
-                `&cedula=${encodeURIComponent(cleanId)}` +
-                `&bet=${encodeURIComponent(String(betAmount))}` +
-                `&max_players=${encodeURIComponent(String(playersCount))}` +
-                `&wallet=${encodeURIComponent(selectedWallet)}` +
-                `&password=${encodeURIComponent(pwd)}`
+                    `?user_id=${encodeURIComponent(userId)}` +
+                    `&access_token=${encodeURIComponent(accessToken)}` +
+                    `&player_name=${encodeURIComponent(cleanName)}` +
+                    `&doc_number=${encodeURIComponent(cleanId)}` +
+                    `&cedula=${encodeURIComponent(cleanId)}` +
+                    `&bet=${encodeURIComponent(String(betAmount))}` +
+                    `&max_players=${encodeURIComponent(String(playersCount))}` +
+                    `&wallet=${encodeURIComponent(selectedWallet)}` +
+                    `&password=${encodeURIComponent(pwd)}`
             );
 
             let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
             try {
                 const ws = new WebSocket(wsUrl);
-                socketRef.current = ws;
+                setActiveSocket(ws);
 
                 ws.onopen = () => {
-                    if (socketRef.current !== ws) return;
                     if (heartbeatTimer) clearInterval(heartbeatTimer);
                     heartbeatTimer = setInterval(() => {
                         if (ws.readyState === WebSocket.OPEN) {
                             try {
                                 ws.send(JSON.stringify({ type: "PING" }));
-                            } catch { }
+                            } catch {}
                         }
                     }, 20000);
                     setConnectionMessage("Esperando estado de la partida...");
                 };
 
                 ws.onmessage = (event) => {
-                    if (socketRef.current !== ws) return;
-
                     try {
                         const data = JSON.parse(event.data);
 
@@ -946,33 +888,29 @@ export default function ParchisGamePage() {
                             showAlert(
                                 "Sala cerrada",
                                 data.message ||
-                                "El anfitrión salió de la sala y esta se cerró."
+                                    "El anfitrión salió de la sala y esta se cerró."
                             );
                             return;
                         }
 
                         if (data.type === "PARCHIS_STATE") {
                             setRollingDice(false);
-                            gameStateRef.current = data;
                             setGameState(data);
 
                             if (
                                 Array.isArray(data.dice_pair) &&
                                 data.dice_pair.length === 2
                             ) {
-                                setDicePair([
+                                setDisplayedDice([
                                     clampDieFace(data.dice_pair[0], 1),
                                     clampDieFace(data.dice_pair[1], 1),
                                 ]);
                             }
 
                             if (data.room_id) {
-                                const nextId = String(data.room_id);
-                                roomIdRef.current = nextId;
-                                setRoomId(nextId);
+                                setRoomId(String(data.room_id));
                             }
-                            if (!connectedRef.current) {
-                                connectedRef.current = true;
+                            if (!isConnected) {
                                 setIsConnected(true);
                                 setConnectionMessage("Partida conectada");
                             }
@@ -984,12 +922,12 @@ export default function ParchisGamePage() {
 
                         if (data.type === "ERROR") {
                             setRollingDice(false);
-                            setConnectingFlag(false);
+                            setIsConnecting(false);
                             showAlert(
                                 "Error del servidor",
                                 data.message || "No se pudo completar la acción."
                             );
-                            if (!connectedRef.current) {
+                            if (!isConnected) {
                                 void exitParchisGame();
                             }
                         }
@@ -1003,10 +941,8 @@ export default function ParchisGamePage() {
                         clearInterval(heartbeatTimer);
                         heartbeatTimer = null;
                     }
-                    if (socketRef.current === ws) {
-                        setRollingDice(false);
-                        setConnectionMessage("Reintentando enlace...");
-                    }
+                    setRollingDice(false);
+                    setConnectionMessage("Reintentando enlace...");
                 };
 
                 ws.onclose = (event) => {
@@ -1014,21 +950,19 @@ export default function ParchisGamePage() {
                         clearInterval(heartbeatTimer);
                         heartbeatTimer = null;
                     }
-                    if (socketRef.current !== ws) return;
 
-                    setConnectingFlag(false);
-                    socketRef.current = null;
-                    connectedRef.current = false;
+                    setIsConnecting(false);
+                    setActiveSocket(null);
                     setRollingDice(false);
                     setIsConnected(false);
 
-                    if (!closingByUserRef.current) {
+                    if (!closingByUser) {
                         setIsInGame(false);
                         if (event.code !== 1000) {
                             showAlert(
                                 "Partida interrumpida",
                                 event.reason ||
-                                `Se cerró la sesión de juego (${event.code}).`
+                                    `Se cerró la sesión de juego (${event.code}).`
                             );
                         }
                     }
@@ -1041,8 +975,8 @@ export default function ParchisGamePage() {
                     heartbeatTimer = null;
                 }
                 console.error("Error creando WebSocket Parchís:", error);
-                setConnectingFlag(false);
-                socketRef.current = null;
+                setIsConnecting(false);
+                setActiveSocket(null);
                 setIsInGame(false);
                 showAlert(
                     "Error de conexión",
@@ -1051,24 +985,28 @@ export default function ParchisGamePage() {
             }
         },
         [
+            accessToken,
+            activeSocket,
             bonusBalance,
+            closingByUser,
             docNumber,
             exitParchisGame,
             getWebSocketUrl,
+            isConnected,
+            isConnecting,
             loadUserBalances,
             maxPlayers,
             playBalance,
             playerName,
             selectedBet,
             selectedWallet,
-            setConnectingFlag,
-            setDicePair,
             showAlert,
+            userId,
         ]
     );
 
     const handleCreatePrivateOrCustomRoom = async () => {
-        if (!accessTokenRef.current) {
+        if (!accessToken) {
             showAlert("Sesión requerida", "Inicia sesión para crear una sala.");
             return;
         }
@@ -1099,7 +1037,7 @@ export default function ParchisGamePage() {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
-                    Authorization: `Bearer ${accessTokenRef.current}`,
+                    Authorization: `Bearer ${accessToken}`,
                 },
                 body: JSON.stringify({
                     bet: betAmount,
@@ -1136,21 +1074,20 @@ export default function ParchisGamePage() {
     };
 
     const sendRollDice = () => {
-        const ws = socketRef.current;
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        rollCounterRef.current += 1;
+        if (!activeSocket || activeSocket.readyState !== WebSocket.OPEN) return;
         setRollingDice(true);
-        ws.send(JSON.stringify({ type: "ROLL_DICE" }));
+        activeSocket.send(JSON.stringify({ type: "ROLL_DICE" }));
     };
 
     const sendMovePiece = (pieceId: number, diceValue: number) => {
-        const ws = socketRef.current;
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        ws.send(JSON.stringify({
-            type: "MOVE_PIECE",
-            piece_id: pieceId,
-            dice_value: diceValue,
-        }));
+        if (!activeSocket || activeSocket.readyState !== WebSocket.OPEN) return;
+        activeSocket.send(
+            JSON.stringify({
+                type: "MOVE_PIECE",
+                piece_id: pieceId,
+                dice_value: diceValue,
+            })
+        );
     };
 
     const renderBoard = useCallback(() => {
@@ -1284,12 +1221,12 @@ export default function ParchisGamePage() {
             }
         }
 
-        const state = gameStateRef.current;
         const players: ParchisPlayerState[] =
-            state && Array.isArray(state.players) ? state.players : [];
-        const currentUid = userIdRef.current;
+            gameState && Array.isArray(gameState.players)
+                ? gameState.players
+                : [];
         const me = players.find(
-            (pl: ParchisPlayerState) => pl.user_id === currentUid
+            (pl: ParchisPlayerState) => pl.user_id === userId
         );
         const mySeat = me ? me.seat_index : null;
 
@@ -1419,16 +1356,19 @@ export default function ParchisGamePage() {
             ctx.stroke();
         }
 
-        if (!state || players.length === 0) return;
+        if (!gameState || players.length === 0) return;
 
-        const isMyTurn =
-            state.status === "playing" &&
+        const isMyTurnNow =
+            gameState.status === "playing" &&
             me &&
-            state.turn_seat === me.seat_index &&
-            state.must_move &&
-            (state.dice_remaining?.length || 0) > 0;
+            gameState.turn_seat === me.seat_index &&
+            gameState.must_move &&
+            (gameState.dice_remaining?.length || 0) > 0;
 
         const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.009);
+        const nextCoords: Record<string, { x: number; y: number }> = {
+            ...pieceCoords,
+        };
 
         for (const p of players) {
             const corner = getPlayerVisualCorner(
@@ -1441,20 +1381,19 @@ export default function ParchisGamePage() {
             for (const piece of p.pieces || []) {
                 const target = getPieceBoardPoint(piece, corner, size);
                 const key = `${p.user_id}-${piece.id}`;
-                const prev = pieceCoordsMapRef.current.get(key);
+                const prev = nextCoords[key];
                 const cur = prev
                     ? {
-                        x: prev.x + (target.x - prev.x) * 0.28,
-                        y: prev.y + (target.y - prev.y) * 0.28,
-                    }
+                          x: prev.x + (target.x - prev.x) * 0.28,
+                          y: prev.y + (target.y - prev.y) * 0.28,
+                      }
                     : target;
-                pieceCoordsMapRef.current.set(key, cur);
+                nextCoords[key] = cur;
 
-                const movable = Boolean(
-                    isMyTurn &&
-                    p.user_id === currentUid &&
-                    getMovableDice(piece, state.dice_remaining).length > 0
-                );
+                const movable =
+                    isMyTurnNow &&
+                    p.user_id === userId &&
+                    getMovableDice(piece, gameState.dice_remaining).length > 0;
 
                 const radius = Math.max(8.5, cell * 0.37);
 
@@ -1512,7 +1451,7 @@ export default function ParchisGamePage() {
                 ctx.restore();
             }
         }
-    }, []);
+    }, [gameState, pieceCoords, userId]);
 
     useEffect(() => {
         if (!isInGame) return;
@@ -1520,37 +1459,68 @@ export default function ParchisGamePage() {
         const loop = () => {
             if (!running) return;
             renderBoard();
-            animationFrameRef.current = requestAnimationFrame(loop);
+            const id = requestAnimationFrame(loop);
+            setAnimFrameId(id);
         };
-        animationFrameRef.current = requestAnimationFrame(loop);
+        const firstId = requestAnimationFrame(loop);
+        setAnimFrameId(firstId);
         return () => {
             running = false;
-            if (animationFrameRef.current !== null) {
-                cancelAnimationFrame(animationFrameRef.current);
-                animationFrameRef.current = null;
+            if (animFrameId !== null) {
+                cancelAnimationFrame(animFrameId);
             }
         };
-    }, [isInGame, renderBoard]);
+    }, [isInGame, renderBoard, animFrameId]);
 
     const handleBoardPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
-        const state = gameStateRef.current;
-        const currentUid = userIdRef.current;
-        if (!state || !currentUid || state.status !== "playing") return;
+        if (!gameState || !userId || gameState.status !== "playing") return;
 
-        const players: ParchisPlayerState[] = Array.isArray(state.players)
-            ? state.players
+        const players: ParchisPlayerState[] = Array.isArray(gameState.players)
+            ? gameState.players
             : [];
         const me = players.find(
-            (pl: ParchisPlayerState) => pl.user_id === currentUid
+            (pl: ParchisPlayerState) => pl.user_id === userId
         );
-        if (
-            !me ||
-            state.turn_seat !== me.seat_index ||
-            !state.must_move ||
-            !(state.dice_remaining?.length)
-        ) {
+        if (!me || gameState.turn_seat !== me.seat_index) {
             return;
         }
+        if (gameState.penalty_pending) {
+            const canvas = boardCanvasRef.current;
+            if (!canvas) return;
+            const rect = canvas.getBoundingClientRect();
+            const size = Math.max(
+                240,
+                Math.floor(Math.min(rect.width, rect.height || rect.width))
+            );
+            const corner = getPlayerVisualCorner(
+                me.seat_index,
+                me.seat_index,
+                players.length
+            );
+            let chosen = -1;
+            let closest = 34;
+            for (const piece of me.pieces || []) {
+                if (piece.stage === -1) continue;
+                const pt = getPieceBoardPoint(piece, corner, size);
+                const dist = Math.hypot(
+                    e.clientX - rect.left - pt.x,
+                    e.clientY - rect.top - pt.y
+                );
+                if (dist < closest) {
+                    closest = dist;
+                    chosen = piece.id;
+                }
+            }
+            if (chosen >= 0)
+                activeSocket?.send(
+                    JSON.stringify({
+                        type: "SELECT_PENALTY_PIECE",
+                        piece_id: chosen,
+                    })
+                );
+            return;
+        }
+        if (!gameState.must_move || !gameState.dice_remaining?.length) return;
 
         const canvas = boardCanvasRef.current;
         if (!canvas) return;
@@ -1571,7 +1541,10 @@ export default function ParchisGamePage() {
         let minDist = 30;
 
         for (const piece of me.pieces || []) {
-            const availableDice = getMovableDice(piece, state.dice_remaining);
+            const availableDice = getMovableDice(
+                piece,
+                gameState.dice_remaining
+            );
             if (availableDice.length === 0) continue;
             const pt = getPieceBoardPoint(piece, corner, size);
             const dist = Math.hypot(clickX - pt.x, clickY - pt.y);
@@ -1582,9 +1555,11 @@ export default function ParchisGamePage() {
         }
 
         if (closestId >= 0) {
-            const selectedPiece = me.pieces.find((piece) => piece.id === closestId);
+            const selectedPiece = me.pieces.find(
+                (piece) => piece.id === closestId
+            );
             const die = selectedPiece
-                ? getMovableDice(selectedPiece, state.dice_remaining)[0]
+                ? getMovableDice(selectedPiece, gameState.dice_remaining)[0]
                 : undefined;
             if (die !== undefined) sendMovePiece(closestId, die);
         }
@@ -1633,18 +1608,15 @@ export default function ParchisGamePage() {
         null;
     const mySeatIndex = myPlayer ? myPlayer.seat_index : null;
 
-    const isMyTurn = Boolean(
-        gameState &&
+    const isMyTurn =
+        gameState !== null &&
         gameState.status === "playing" &&
-        myPlayer &&
-        gameState.turn_seat === myPlayer.seat_index
-    );
-    const isHost = Boolean(
-        gameState &&
-        (gameState.host_user_id === userId || myPlayer?.seat_index === 0)
-    );
+        myPlayer !== null &&
+        gameState.turn_seat === myPlayer.seat_index;
+    const isHost =
+        gameState !== null &&
+        (gameState.host_user_id === userId || myPlayer?.seat_index === 0);
     const mainName = (playerName.trim() || "Jugador").split(/\s+/)[0];
-    const visibleUserId = docNumber.trim() || "-";
     const [d1, d2] = displayedDice;
 
     const bottomPlayer =
@@ -1672,31 +1644,29 @@ export default function ParchisGamePage() {
 
     const bottomCorner = bottomPlayer
         ? getPlayerVisualCorner(
-            bottomPlayer.seat_index,
-            mySeatIndex,
-            activePlayers.length
-        )
+              bottomPlayer.seat_index,
+              mySeatIndex,
+              activePlayers.length
+          )
         : 3;
     const topCorner = topPlayer
         ? getPlayerVisualCorner(
-            topPlayer.seat_index,
-            mySeatIndex,
-            activePlayers.length
-        )
+              topPlayer.seat_index,
+              mySeatIndex,
+              activePlayers.length
+          )
         : 1;
 
-    const topIsTurn = Boolean(
-        gameState &&
+    const topIsTurn =
+        gameState !== null &&
         gameState.status === "playing" &&
-        topPlayer &&
-        gameState.turn_seat === topPlayer.seat_index
-    );
-    const bottomIsTurn = Boolean(
-        gameState &&
+        topPlayer !== null &&
+        gameState.turn_seat === topPlayer.seat_index;
+    const bottomIsTurn =
+        gameState !== null &&
         gameState.status === "playing" &&
-        bottomPlayer &&
-        gameState.turn_seat === bottomPlayer.seat_index
-    );
+        bottomPlayer !== null &&
+        gameState.turn_seat === bottomPlayer.seat_index;
 
     const bottomName =
         bottomPlayer?.user_id === userId
@@ -1708,9 +1678,10 @@ export default function ParchisGamePage() {
 
     const movablePieces =
         isMyTurn && gameState?.must_move && myPlayer
-            ? (myPlayer.pieces || []).filter((pc) =>
-                getMovableDice(pc, gameState.dice_remaining).length > 0
-            )
+            ? (myPlayer.pieces || []).filter(
+                  (pc) =>
+                      getMovableDice(pc, gameState.dice_remaining).length > 0
+              )
             : [];
 
     return (
@@ -1738,162 +1709,264 @@ export default function ParchisGamePage() {
             <Header />
 
             <main
-                className={`flex-1 w-full mx-auto flex flex-col ${isInGame
+                className={`flex-1 w-full mx-auto flex flex-col ${
+                    isInGame
                         ? "max-w-xl px-2.5 sm:px-6 py-2 sm:py-4 items-center justify-center"
-                        : "max-w-6xl px-3 sm:px-6 py-4 sm:py-8 items-center justify-center"
-                    }`}
+                        : "max-w-3xl px-2 sm:px-4 py-3 sm:py-5 items-center justify-center"
+                }`}
             >
                 {!isInGame ? (
-                    <div className="w-full max-w-3xl mx-auto bg-zinc-950 border border-zinc-800 rounded-3xl p-4 sm:p-6 space-y-5 shadow-2xl">
-                        <div className="border-b border-zinc-900 pb-4">
+                    <div className="w-full max-w-md mx-auto rounded-2xl border border-zinc-800 bg-zinc-950 p-3 sm:p-4 space-y-3">
+                        <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
                             <Link
                                 href="/"
-                                className="inline-flex items-center gap-2 text-xs text-zinc-400 hover:text-emerald-400 font-bold uppercase transition"
+                                className="rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1.5 text-[11px] font-bold text-zinc-300"
                             >
-                                <span>←</span> Volver al menú principal
+                                &lsaquo; Volver
                             </Link>
-                            <div className="mt-5 text-center">
-                                <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/5 px-3 py-1.5">
-                                    <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_10px_#34d399]" />
-                                    <span className="text-[9px] font-black uppercase tracking-[0.22em] text-emerald-400">AXIOM · Arena P2P</span>
-                                </div>
-                                <h2 className="mt-3 text-2xl sm:text-3xl font-black text-white uppercase tracking-wider">
-                                    Parchís <span className="text-emerald-400">Arena</span>
-                                </h2>
-                                <p className="mt-1 text-xs text-zinc-500">Crea una partida o entra a una sala disponible.</p>
-                            </div>
-                            <div className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-[10px]">
-                                <span className="text-zinc-500">Jugador: <strong className="text-zinc-200">{mainName}</strong></span>
-                                <span className="text-zinc-700">·</span>
-                                <span className="text-zinc-500">ID: <strong className="text-emerald-400">{visibleUserId}</strong></span>
+                            <h2 className="text-sm font-black uppercase tracking-wide text-emerald-400">
+                                Parchís P2P
+                            </h2>
+                            <span className="w-14" />
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="block text-[10px] font-bold uppercase text-zinc-500">
+                                Billetera
+                            </label>
+                            <div className="grid grid-cols-2 gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedWallet("play")}
+                                    className={`rounded-lg border px-2 py-2 text-xs font-bold ${
+                                        selectedWallet === "play"
+                                            ? "border-emerald-400 bg-emerald-500 text-black"
+                                            : "border-zinc-800 bg-black text-zinc-400"
+                                    }`}
+                                >
+                                    Jugar · {money(playBalance)}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedWallet("bonus")}
+                                    className={`rounded-lg border px-2 py-2 text-xs font-bold ${
+                                        selectedWallet === "bonus"
+                                            ? "border-yellow-300 bg-yellow-400 text-black"
+                                            : "border-zinc-800 bg-black text-zinc-400"
+                                    }`}
+                                >
+                                    Bono · {money(bonusBalance)}
+                                </button>
                             </div>
                         </div>
 
-                        <section className="space-y-4">
-                            <div className="flex items-center justify-between gap-3">
-                                <div>
-                                    <p className="text-[9px] text-emerald-400 uppercase font-black tracking-[0.2em]">Nueva partida</p>
-                                    <h3 className="mt-1 text-sm font-black text-white uppercase">Crear sala</h3>
-                                </div>
-                                <span className="rounded-lg border border-zinc-800 bg-black px-2.5 py-1.5 text-[9px] font-black text-zinc-400 uppercase">P2P</span>
-                            </div>
-
-                            <div>
-                                <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">Selecciona tu billetera</label>
-                                <div className="grid grid-cols-2 gap-2">
-                                    <button
-                                        type="button"
-                                        onClick={() => setSelectedWallet("play")}
-                                        className={`rounded-xl border p-3 text-left transition ${selectedWallet === "play" ? "border-emerald-500 bg-emerald-500/10" : "border-zinc-800 bg-black hover:border-zinc-700"}`}
-                                    >
-                                        <span className="block text-[9px] text-zinc-500 uppercase font-bold">Saldo para jugar</span>
-                                        <span className={`mt-1 block text-lg font-black tabular-nums ${selectedWallet === "play" ? "text-emerald-400" : "text-white"}`}>{money(playBalance)}</span>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setSelectedWallet("bonus")}
-                                        className={`rounded-xl border p-3 text-left transition ${selectedWallet === "bonus" ? "border-yellow-500 bg-yellow-500/10" : "border-zinc-800 bg-black hover:border-zinc-700"}`}
-                                    >
-                                        <span className="block text-[9px] text-zinc-500 uppercase font-bold">Saldo bono</span>
-                                        <span className={`mt-1 block text-lg font-black tabular-nums ${selectedWallet === "bonus" ? "text-yellow-400" : "text-white"}`}>{money(bonusBalance)}</span>
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                <div>
-                                    <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">Apuesta por jugador</label>
-                                    <div className="grid grid-cols-3 gap-2">
-                                        {(["0.25", "1.00", "10.00"] as ParchisBet[]).map((amt) => (
-                                            <button key={amt} type="button" onClick={() => setSelectedBet(amt)} className={`rounded-xl border py-3 text-xs font-black transition ${selectedBet === amt ? "border-emerald-500 bg-emerald-500 text-black" : "border-zinc-800 bg-black text-zinc-400 hover:border-emerald-500/50 hover:text-white"}`}>
-                                                ${amt}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                                <div>
-                                    <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">Cantidad de jugadores</label>
-                                    <div className="grid grid-cols-3 gap-2">
-                                        {([2, 3, 4] as MaxPlayers[]).map((cnt) => (
-                                            <button key={cnt} type="button" onClick={() => setMaxPlayers(cnt)} className={`rounded-xl border py-3 text-xs font-black transition ${maxPlayers === cnt ? "border-emerald-500 bg-emerald-500 text-black" : "border-zinc-800 bg-black text-zinc-400 hover:border-emerald-500/50 hover:text-white"}`}>
-                                                {cnt}P
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="rounded-xl border border-zinc-800 bg-black p-3">
-                                <label className="flex cursor-pointer items-center justify-between gap-3">
-                                    <span>
-                                        <span className="block text-xs font-bold text-white">Sala privada</span>
-                                        <span className="mt-0.5 block text-[10px] text-zinc-500">Protege la entrada con un código</span>
-                                    </span>
-                                    <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} className="h-5 w-5 accent-emerald-500" />
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-2">
+                                <label className="block text-[10px] font-bold uppercase text-zinc-500">
+                                    Apuesta
                                 </label>
-                                {isPrivate && (
-                                    <input type="text" value={roomPassword} onChange={(e) => setRoomPassword(e.target.value)} placeholder="Código de acceso (opcional)" className="mt-3 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-white outline-none placeholder:text-zinc-600 focus:border-emerald-500" />
-                                )}
+                                <div className="grid grid-cols-3 gap-1.5">
+                                    {(
+                                        ["0.25", "1.00", "10.00"] as ParchisBet[]
+                                    ).map((amt) => (
+                                        <button
+                                            key={amt}
+                                            type="button"
+                                            onClick={() => setSelectedBet(amt)}
+                                            className={`rounded-lg border py-2 text-[11px] font-bold ${
+                                                selectedBet === amt
+                                                    ? "border-emerald-400 bg-emerald-500 text-black"
+                                                    : "border-zinc-800 bg-black text-zinc-400"
+                                            }`}
+                                        >
+                                            ${amt}
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
+                            <div className="space-y-2">
+                                <label className="block text-[10px] font-bold uppercase text-zinc-500">
+                                    Jugadores
+                                </label>
+                                <div className="grid grid-cols-3 gap-1.5">
+                                    {([2, 3, 4] as MaxPlayers[]).map((cnt) => (
+                                        <button
+                                            key={cnt}
+                                            type="button"
+                                            onClick={() => setMaxPlayers(cnt)}
+                                            className={`rounded-lg border py-2 text-[11px] font-bold ${
+                                                maxPlayers === cnt
+                                                    ? "border-emerald-400 bg-emerald-500 text-black"
+                                                    : "border-zinc-800 bg-black text-zinc-400"
+                                            }`}
+                                        >
+                                            {cnt}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
 
-                            <button
-                                type="button"
-                                disabled={isConnecting || busyAction}
-                                onClick={handleCreatePrivateOrCustomRoom}
-                                className="w-full rounded-xl bg-emerald-500 hover:bg-emerald-400 active:scale-[0.99] px-4 py-3.5 text-xs font-black uppercase tracking-wider text-black transition disabled:opacity-50 disabled:cursor-not-allowed"
+                        <div className="flex items-center gap-2">
+                            <input
+                                id="parchis-private"
+                                type="checkbox"
+                                checked={isPrivate}
+                                onChange={(e) => setIsPrivate(e.target.checked)}
+                                className="h-4 w-4 accent-emerald-500"
+                            />
+                            <label
+                                htmlFor="parchis-private"
+                                className="text-xs text-zinc-300"
                             >
-                                {busyAction || isConnecting ? "Preparando sala..." : isPrivate ? "Crear sala privada" : "Crear sala pública"}
-                            </button>
-                            <p className="text-center text-[9px] leading-relaxed text-zinc-600">La apuesta se descuenta al entrar a la sala. La comisión se aplica mediante la liquidación configurada en AXIOM.</p>
-                        </section>
+                                Sala privada
+                            </label>
+                            {isPrivate && (
+                                <input
+                                    type="text"
+                                    value={roomPassword}
+                                    onChange={(e) =>
+                                        setRoomPassword(e.target.value)
+                                    }
+                                    placeholder="Contraseña"
+                                    className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-black px-2.5 py-2 text-xs text-white outline-none focus:border-emerald-500"
+                                />
+                            )}
+                        </div>
 
-                        <div className="border-t border-zinc-900 pt-4 space-y-4">
-                            <div className="flex items-center justify-between gap-3">
-                                <div>
-                                    <p className="text-[9px] text-emerald-400 uppercase font-black tracking-[0.2em]">Encuentra rivales</p>
-                                    <h3 className="mt-1 text-sm font-black text-white uppercase">Salas públicas</h3>
-                                </div>
-                                <button type="button" onClick={() => void fetchPublicRooms()} className="rounded-lg border border-zinc-800 bg-black px-3 py-2 text-[9px] font-black uppercase text-emerald-400 hover:border-emerald-500/40 transition">Actualizar</button>
+                        <button
+                            type="button"
+                            disabled={isConnecting || busyAction}
+                            onClick={handleCreatePrivateOrCustomRoom}
+                            className="w-full rounded-xl bg-emerald-500 py-3 text-xs font-black uppercase text-black hover:bg-emerald-400 disabled:opacity-50"
+                        >
+                            {busyAction || isConnecting
+                                ? "Preparando..."
+                                : "Crear sala"}
+                        </button>
+
+                        <div className="border-t border-zinc-800 pt-3 space-y-2">
+                            <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-white">
+                                    Salas disponibles
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={() => void fetchPublicRooms()}
+                                    className="text-[10px] font-bold text-emerald-400"
+                                >
+                                    Actualizar
+                                </button>
                             </div>
-                            <input type="text" value={searchId} onChange={(e) => setSearchId(e.target.value)} placeholder="Buscar por ID del anfitrión..." className="w-full rounded-xl border border-zinc-800 bg-black px-3 py-3 text-xs text-white outline-none placeholder:text-zinc-600 focus:border-emerald-500" />
+                            <input
+                                type="text"
+                                value={searchId}
+                                onChange={(e) => setSearchId(e.target.value)}
+                                placeholder="Buscar por ID de jugador"
+                                className="w-full rounded-lg border border-zinc-800 bg-black px-3 py-2 text-xs text-white outline-none focus:border-emerald-500"
+                            />
                             {publicRooms.length === 0 ? (
-                                <div className="rounded-xl border border-dashed border-zinc-800 bg-black/60 px-4 py-7 text-center">
-                                    <span className="text-2xl text-zinc-700">♟</span>
-                                    <p className="mt-2 text-xs font-bold text-zinc-300">{roomsUnavailable ? "Salas temporalmente no disponibles" : "No hay salas públicas disponibles"}</p>
-                                    <p className="mt-1 text-[10px] text-zinc-600">Crea una sala o únete usando su ID.</p>
-                                </div>
+                                <p className="py-3 text-center text-[11px] text-zinc-500">
+                                    {roomsUnavailable
+                                        ? "Salas no disponibles"
+                                        : "No hay salas públicas"}
+                                </p>
                             ) : (
-                                <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
-                                    {publicRooms.filter((item) => {
-                                        const hostId = String(item.host_doc_number || item.host_cedula || "");
-                                        return !searchId.trim() || hostId.toLowerCase().includes(searchId.trim().toLowerCase());
-                                    }).map((item) => {
-                                        const itemId = item.host_doc_number || item.host_cedula;
-                                        const itemName = (item.host_name || "Jugador").split(/\s+/)[0];
-                                        return (
-                                            <div key={item.room_id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-black p-3 hover:border-zinc-700 transition">
-                                                <div className="min-w-0">
-                                                    <span className="block truncate text-xs font-black text-white">{itemName}</span>
-                                                    <span className="mt-1 block text-[10px] text-zinc-500">{itemId ? `ID ${itemId} · ` : ""}{item.players_count}/{item.max_players} jugadores · ${item.bet.toFixed(2)}</span>
+                                <div className="max-h-40 space-y-1.5 overflow-y-auto">
+                                    {publicRooms
+                                        .filter((item) => {
+                                            const hostId = String(
+                                                item.host_doc_number ||
+                                                    item.host_cedula ||
+                                                    ""
+                                            );
+                                            return (
+                                                !searchId.trim() ||
+                                                hostId
+                                                    .toLowerCase()
+                                                    .includes(
+                                                        searchId
+                                                            .trim()
+                                                            .toLowerCase()
+                                                    )
+                                            );
+                                        })
+                                        .map((item) => {
+                                            const itemId =
+                                                item.host_doc_number ||
+                                                item.host_cedula;
+                                            const itemName = (
+                                                item.host_name || "Jugador"
+                                            ).split(/\s+/)[0];
+                                            return (
+                                                <div
+                                                    key={item.room_id}
+                                                    className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-black px-2.5 py-2"
+                                                >
+                                                    <div className="min-w-0">
+                                                        <p className="truncate text-[11px] font-bold text-white">
+                                                            {itemName}
+                                                        </p>
+                                                        <p className="text-[10px] text-zinc-500">
+                                                            {itemId
+                                                                ? `${itemId} · `
+                                                                : ""}
+                                                            {item.players_count}/
+                                                            {item.max_players} · $
+                                                            {item.bet.toFixed(2)}
+                                                        </p>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                            connectToRoom(
+                                                                item.room_id,
+                                                                "",
+                                                                item.bet,
+                                                                item.max_players as MaxPlayers
+                                                            )
+                                                        }
+                                                        className="rounded-md bg-emerald-500 px-3 py-1.5 text-[10px] font-black uppercase text-black"
+                                                    >
+                                                        Entrar
+                                                    </button>
                                                 </div>
-                                                <button type="button" onClick={() => connectToRoom(item.room_id, "", item.bet, item.max_players as MaxPlayers)} className="w-full sm:w-auto shrink-0 rounded-lg bg-emerald-500 px-5 py-2.5 text-[10px] font-black uppercase text-black hover:bg-emerald-400 transition">Entrar</button>
-                                            </div>
-                                        );
-                                    })}
+                                            );
+                                        })}
                                 </div>
                             )}
                         </div>
 
-                        <div className="border-t border-zinc-900 pt-4 space-y-3">
-                            <div>
-                                <p className="text-[9px] text-emerald-400 uppercase font-black tracking-[0.2em]">Acceso directo</p>
-                                <h3 className="mt-1 text-sm font-black text-white uppercase">Unirse a una sala</h3>
-                            </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2">
-                                <input type="text" value={joinRoomId} onChange={(e) => setJoinRoomId(e.target.value)} placeholder="ID de sala" className="min-w-0 w-full rounded-xl border border-zinc-800 bg-black px-3 py-3 text-xs text-white outline-none placeholder:text-zinc-600 focus:border-emerald-500" />
-                                <input type="text" value={joinPassword} onChange={(e) => setJoinPassword(e.target.value)} placeholder="Código (si es privada)" className="min-w-0 w-full rounded-xl border border-zinc-800 bg-black px-3 py-3 text-xs text-white outline-none placeholder:text-zinc-600 focus:border-emerald-500" />
-                                <button type="button" disabled={!joinRoomId.trim() || isConnecting} onClick={() => connectToRoom(joinRoomId.trim(), joinPassword.trim())} className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-5 py-3 text-[10px] font-black uppercase text-emerald-400 hover:bg-emerald-500 hover:text-black transition disabled:opacity-40">Unirse</button>
-                            </div>
+                        <div className="flex gap-2 border-t border-zinc-800 pt-3">
+                            <input
+                                type="text"
+                                value={joinRoomId}
+                                onChange={(e) => setJoinRoomId(e.target.value)}
+                                placeholder="ID de sala"
+                                className="min-w-0 w-full rounded-lg border border-zinc-800 bg-black px-2.5 py-2 text-xs text-white outline-none focus:border-emerald-500"
+                            />
+                            <input
+                                type="text"
+                                value={joinPassword}
+                                onChange={(e) =>
+                                    setJoinPassword(e.target.value)
+                                }
+                                placeholder="Clave"
+                                className="min-w-0 w-full rounded-lg border border-zinc-800 bg-black px-2.5 py-2 text-xs text-white outline-none focus:border-emerald-500"
+                            />
+                            <button
+                                type="button"
+                                disabled={!joinRoomId.trim() || isConnecting}
+                                onClick={() =>
+                                    connectToRoom(
+                                        joinRoomId.trim(),
+                                        joinPassword.trim()
+                                    )
+                                }
+                                className="rounded-lg bg-zinc-800 px-3 py-2 text-[10px] font-bold text-white disabled:opacity-40"
+                            >
+                                Unirse
+                            </button>
                         </div>
                     </div>
                 ) : (
@@ -1966,17 +2039,19 @@ export default function ParchisGamePage() {
                                     d2={d2}
                                     rolling={rollingDice && topIsTurn}
                                     isActiveTurn={topIsTurn}
-                                    canRoll={Boolean(
-                                        topPlayer &&
+                                    canRoll={
+                                        topPlayer !== null &&
                                         topPlayer.user_id === userId &&
                                         isMyTurn &&
                                         !gameState.must_move
-                                    )}
-                                    mustMove={Boolean(
-                                        topIsTurn && gameState.must_move
-                                    )}
+                                    }
+                                    mustMove={topIsTurn && gameState.must_move}
                                     onRoll={sendRollDice}
                                     position="top"
+                                    showDice={
+                                        isMyTurn &&
+                                        topPlayer?.user_id === userId
+                                    }
                                 />
 
                                 <div className="w-full min-w-0 flex items-center justify-center overflow-hidden">
@@ -1984,7 +2059,10 @@ export default function ParchisGamePage() {
                                         ref={boardCanvasRef}
                                         onPointerDown={handleBoardPointerDown}
                                         className="block w-full aspect-square max-h-[min(92vw,68vh)] rounded-2xl border border-emerald-500/20 bg-[#090d0b] shadow-2xl cursor-pointer touch-none"
-                                        style={{ touchAction: "none", maxWidth: "min(100%, 68vh)" }}
+                                        style={{
+                                            touchAction: "none",
+                                            maxWidth: "min(100%, 68vh)",
+                                        }}
                                     />
                                 </div>
 
@@ -2000,32 +2078,55 @@ export default function ParchisGamePage() {
                                     d2={d2}
                                     rolling={rollingDice && bottomIsTurn}
                                     isActiveTurn={bottomIsTurn}
-                                    canRoll={Boolean(
-                                        bottomPlayer &&
+                                    canRoll={
+                                        bottomPlayer !== null &&
                                         bottomPlayer.user_id === userId &&
                                         isMyTurn &&
                                         !gameState.must_move
-                                    )}
-                                    mustMove={Boolean(
+                                    }
+                                    mustMove={
                                         bottomIsTurn && gameState.must_move
-                                    )}
+                                    }
                                     onRoll={sendRollDice}
                                     position="bottom"
+                                    showDice={
+                                        isMyTurn &&
+                                        bottomPlayer?.user_id === userId
+                                    }
                                 />
 
+                                {gameState.penalty_pending && isMyTurn && (
+                                    <div className="w-full rounded-lg border border-red-500/40 bg-red-950/30 p-2 text-center text-xs font-bold text-red-300">
+                                        Tres dobles seguidos: toca en el tablero
+                                        la ficha que quieres enviar a casa.
+                                    </div>
+                                )}
                                 {movablePieces.length > 0 && (
                                     <div className="flex flex-wrap items-center gap-1.5 pt-1">
                                         <span className="text-[10px] font-bold uppercase text-zinc-400">
                                             Mover:
                                         </span>
                                         {movablePieces.map((pc) => (
-                                            <div key={pc.id} className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/10 bg-black/30 p-2">
-                                                <span className="px-1 text-[10px] font-black uppercase text-white">Ficha #{pc.id + 1}</span>
-                                                {getMovableDice(pc, gameState.dice_remaining).map((die, dieIndex) => (
+                                            <div
+                                                key={pc.id}
+                                                className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/10 bg-black/30 p-2"
+                                            >
+                                                <span className="px-1 text-[10px] font-black uppercase text-white">
+                                                    Ficha #{pc.id + 1}
+                                                </span>
+                                                {getMovableDice(
+                                                    pc,
+                                                    gameState.dice_remaining
+                                                ).map((die, dieIndex) => (
                                                     <button
                                                         key={`${pc.id}-${dieIndex}-${die}`}
                                                         type="button"
-                                                        onClick={() => sendMovePiece(pc.id, die)}
+                                                        onClick={() =>
+                                                            sendMovePiece(
+                                                                pc.id,
+                                                                die
+                                                            )
+                                                        }
                                                         className="min-w-9 rounded-lg bg-emerald-400 px-2.5 py-2 text-[10px] font-black text-black transition hover:bg-emerald-300 active:scale-95"
                                                     >
                                                         Dado: {die}
