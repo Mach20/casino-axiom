@@ -1744,147 +1744,156 @@ export default function ParchisGamePage() {
                     }`}
             >
                 {!isInGame ? (
-                    <div className="w-full max-w-6xl space-y-5 sm:space-y-6">
-                        <div className="relative overflow-hidden rounded-[28px] border border-emerald-500/20 bg-[#080d0b] p-5 sm:p-7 shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
-                            <div className="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full bg-emerald-500/10 blur-3xl" />
-                            <div className="relative flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-                                <div className="space-y-3">
-                                    <Link href="/" className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] font-black uppercase tracking-wider text-zinc-300 transition hover:border-emerald-400/40 hover:text-emerald-300">
-                                        <span>‹</span> Volver a AXIOM
-                                    </Link>
-                                    <div>
-                                        <div className="mb-2 flex items-center gap-2">
-                                            <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_14px_#34d399]" />
-                                            <span className="text-[10px] font-black uppercase tracking-[0.28em] text-emerald-400">AXIOM · Arena P2P</span>
-                                        </div>
-                                        <h2 className="text-3xl font-black uppercase tracking-tight text-white sm:text-4xl">
-                                            Parchís <span className="text-emerald-400">Arena</span>
-                                        </h2>
-                                        <p className="mt-2 max-w-xl text-xs leading-relaxed text-zinc-400 sm:text-sm">
-                                            Crea una mesa, invita a tus rivales y juega por el pozo. Cada movimiento y cada dado se validan en el servidor.
-                                        </p>
-                                    </div>
+                    <div className="w-full max-w-3xl mx-auto bg-zinc-950 border border-zinc-800 rounded-3xl p-4 sm:p-6 space-y-5 shadow-2xl">
+                        <div className="border-b border-zinc-900 pb-4">
+                            <Link
+                                href="/"
+                                className="inline-flex items-center gap-2 text-xs text-zinc-400 hover:text-emerald-400 font-bold uppercase transition"
+                            >
+                                <span>←</span> Volver al menú principal
+                            </Link>
+                            <div className="mt-5 text-center">
+                                <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/5 px-3 py-1.5">
+                                    <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_10px_#34d399]" />
+                                    <span className="text-[9px] font-black uppercase tracking-[0.22em] text-emerald-400">AXIOM · Arena P2P</span>
                                 </div>
-                                <div className="rounded-2xl border border-white/10 bg-black/40 p-4 sm:min-w-56">
-                                    <p className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500">Sesión activa</p>
-                                    <p className="mt-1 truncate text-lg font-black text-white">{mainName}</p>
-                                    <p className="mt-1 text-[10px] font-bold text-emerald-400">ID · {visibleUserId}</p>
-                                </div>
+                                <h2 className="mt-3 text-2xl sm:text-3xl font-black text-white uppercase tracking-wider">
+                                    Parchís <span className="text-emerald-400">Arena</span>
+                                </h2>
+                                <p className="mt-1 text-xs text-zinc-500">Crea una partida o entra a una sala disponible.</p>
+                            </div>
+                            <div className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-[10px]">
+                                <span className="text-zinc-500">Jugador: <strong className="text-zinc-200">{mainName}</strong></span>
+                                <span className="text-zinc-700">·</span>
+                                <span className="text-zinc-500">ID: <strong className="text-emerald-400">{visibleUserId}</strong></span>
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.02fr_0.98fr]">
-                            <section className="rounded-[26px] border border-white/10 bg-[#0b0e0d] p-4 shadow-xl sm:p-5">
-                                <div className="mb-5 flex items-center justify-between gap-3">
-                                    <div>
-                                        <p className="text-[9px] font-black uppercase tracking-[0.24em] text-emerald-400">Configura tu partida</p>
-                                        <h3 className="mt-1 text-lg font-black uppercase text-white">Crear una sala</h3>
-                                    </div>
-                                    <span className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1.5 text-[9px] font-black uppercase text-emerald-300">P2P</span>
+                        <section className="space-y-4">
+                            <div className="flex items-center justify-between gap-3">
+                                <div>
+                                    <p className="text-[9px] text-emerald-400 uppercase font-black tracking-[0.2em]">Nueva partida</p>
+                                    <h3 className="mt-1 text-sm font-black text-white uppercase">Crear sala</h3>
                                 </div>
+                                <span className="rounded-lg border border-zinc-800 bg-black px-2.5 py-1.5 text-[9px] font-black text-zinc-400 uppercase">P2P</span>
+                            </div>
 
-                                <div className="space-y-5">
-                                    <div>
-                                        <label className="mb-2 block text-[9px] font-black uppercase tracking-[0.18em] text-zinc-500">Selecciona billetera</label>
-                                        <div className="grid grid-cols-2 gap-2">
-                                            <button type="button" onClick={() => setSelectedWallet("play")} className={`rounded-2xl border p-3 text-left transition ${selectedWallet === "play" ? "border-emerald-400 bg-emerald-500/10" : "border-white/10 bg-black/30 hover:border-white/20"}`}>
-                                                <span className="block text-[9px] font-black uppercase tracking-wider text-zinc-500">Saldo para jugar</span>
-                                                <span className={`mt-1 block text-lg font-black tabular-nums ${selectedWallet === "play" ? "text-emerald-300" : "text-white"}`}>{money(playBalance)}</span>
-                                            </button>
-                                            <button type="button" onClick={() => setSelectedWallet("bonus")} className={`rounded-2xl border p-3 text-left transition ${selectedWallet === "bonus" ? "border-yellow-400 bg-yellow-400/10" : "border-white/10 bg-black/30 hover:border-white/20"}`}>
-                                                <span className="block text-[9px] font-black uppercase tracking-wider text-zinc-500">Saldo bono</span>
-                                                <span className={`mt-1 block text-lg font-black tabular-nums ${selectedWallet === "bonus" ? "text-yellow-300" : "text-white"}`}>{money(bonusBalance)}</span>
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                                        <div>
-                                            <label className="mb-2 block text-[9px] font-black uppercase tracking-[0.18em] text-zinc-500">Apuesta por jugador</label>
-                                            <div className="grid grid-cols-3 gap-2">
-                                                {(["0.25", "1.00", "10.00"] as ParchisBet[]).map((amt) => (
-                                                    <button key={amt} type="button" onClick={() => setSelectedBet(amt)} className={`rounded-xl border py-3 text-xs font-black transition ${selectedBet === amt ? "border-emerald-400 bg-emerald-400 text-black shadow-[0_0_22px_rgba(16,185,129,0.15)]" : "border-white/10 bg-black/40 text-zinc-400 hover:border-emerald-500/50 hover:text-white"}`}>${amt}</button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                        <div>
-                                            <label className="mb-2 block text-[9px] font-black uppercase tracking-[0.18em] text-zinc-500">Jugadores</label>
-                                            <div className="grid grid-cols-3 gap-2">
-                                                {([2, 3, 4] as MaxPlayers[]).map((cnt) => (
-                                                    <button key={cnt} type="button" onClick={() => setMaxPlayers(cnt)} className={`rounded-xl border py-3 text-xs font-black transition ${maxPlayers === cnt ? "border-emerald-400 bg-emerald-400 text-black" : "border-white/10 bg-black/40 text-zinc-400 hover:border-emerald-500/50 hover:text-white"}`}>{cnt}P</button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div className="rounded-2xl border border-white/10 bg-black/30 p-3.5">
-                                        <label className="flex cursor-pointer items-center justify-between gap-3">
-                                            <span>
-                                                <span className="block text-xs font-black text-white">Sala privada</span>
-                                                <span className="mt-0.5 block text-[10px] text-zinc-500">Solo podrán entrar quienes tengan el código</span>
-                                            </span>
-                                            <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} className="h-5 w-5 accent-emerald-500" />
-                                        </label>
-                                        {isPrivate && (
-                                            <input type="text" value={roomPassword} onChange={(e) => setRoomPassword(e.target.value)} placeholder="Código personalizado (opcional)" className="mt-3 w-full rounded-xl border border-white/10 bg-[#080a09] px-3 py-3 text-sm text-white outline-none transition placeholder:text-zinc-600 focus:border-emerald-500" />
-                                        )}
-                                    </div>
-
-                                    <button type="button" disabled={isConnecting || busyAction} onClick={handleCreatePrivateOrCustomRoom} className="w-full rounded-2xl bg-emerald-400 px-4 py-4 text-xs font-black uppercase tracking-[0.16em] text-black shadow-[0_8px_30px_rgba(16,185,129,0.16)] transition hover:bg-emerald-300 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50">
-                                        {busyAction || isConnecting ? "Preparando sala..." : isPrivate ? "Crear sala privada" : "Crear sala pública"}
+                            <div>
+                                <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">Selecciona tu billetera</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setSelectedWallet("play")}
+                                        className={`rounded-xl border p-3 text-left transition ${selectedWallet === "play" ? "border-emerald-500 bg-emerald-500/10" : "border-zinc-800 bg-black hover:border-zinc-700"}`}
+                                    >
+                                        <span className="block text-[9px] text-zinc-500 uppercase font-bold">Saldo para jugar</span>
+                                        <span className={`mt-1 block text-lg font-black tabular-nums ${selectedWallet === "play" ? "text-emerald-400" : "text-white"}`}>{money(playBalance)}</span>
                                     </button>
-                                    <p className="text-center text-[9px] leading-relaxed text-zinc-600">La apuesta se descuenta al entrar a la sala. La comisión se aplica mediante la liquidación configurada en AXIOM.</p>
+                                    <button
+                                        type="button"
+                                        onClick={() => setSelectedWallet("bonus")}
+                                        className={`rounded-xl border p-3 text-left transition ${selectedWallet === "bonus" ? "border-yellow-500 bg-yellow-500/10" : "border-zinc-800 bg-black hover:border-zinc-700"}`}
+                                    >
+                                        <span className="block text-[9px] text-zinc-500 uppercase font-bold">Saldo bono</span>
+                                        <span className={`mt-1 block text-lg font-black tabular-nums ${selectedWallet === "bonus" ? "text-yellow-400" : "text-white"}`}>{money(bonusBalance)}</span>
+                                    </button>
                                 </div>
-                            </section>
+                            </div>
 
-                            <section className="space-y-5">
-                                <div className="rounded-[26px] border border-white/10 bg-[#0b0e0d] p-4 shadow-xl sm:p-5">
-                                    <div className="mb-4 flex items-center justify-between gap-3">
-                                        <div>
-                                            <p className="text-[9px] font-black uppercase tracking-[0.24em] text-emerald-400">Encuentra rivales</p>
-                                            <h3 className="mt-1 text-lg font-black uppercase text-white">Salas públicas</h3>
-                                        </div>
-                                        <button type="button" onClick={() => void fetchPublicRooms()} className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[9px] font-black uppercase tracking-wider text-emerald-300 transition hover:border-emerald-400/40">Actualizar</button>
-                                    </div>
-                                    <input type="text" value={searchId} onChange={(e) => setSearchId(e.target.value)} placeholder="Filtrar por ID de anfitrión..." className="mb-3 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-xs text-white outline-none placeholder:text-zinc-600 focus:border-emerald-500" />
-                                    {publicRooms.length === 0 ? (
-                                        <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-4 py-8 text-center">
-                                            <span className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-white/[0.04] text-xl">♟</span>
-                                            <p className="text-xs font-bold text-zinc-300">{roomsUnavailable ? "Lista de salas temporalmente no disponible" : "No hay salas públicas disponibles"}</p>
-                                            <p className="mt-1 text-[10px] text-zinc-600">Puedes crear una sala o entrar mediante su ID.</p>
-                                        </div>
-                                    ) : (
-                                        <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
-                                            {publicRooms.filter((item) => {
-                                                const hostId = String(item.host_doc_number || item.host_cedula || "");
-                                                return !searchId.trim() || hostId.toLowerCase().includes(searchId.trim().toLowerCase());
-                                            }).map((item) => {
-                                                const itemId = item.host_doc_number || item.host_cedula;
-                                                const itemName = (item.host_name || "Jugador").split(/\s+/)[0];
-                                                return (
-                                                    <div key={item.room_id} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/30 p-3 transition hover:border-emerald-500/30">
-                                                        <div className="min-w-0">
-                                                            <span className="block truncate text-xs font-black text-white">{itemName}</span>
-                                                            <span className="mt-1 block truncate text-[10px] text-zinc-500">{itemId ? `ID ${itemId} · ` : ""}{item.players_count}/{item.max_players} jugadores · ${item.bet.toFixed(2)}</span>
-                                                        </div>
-                                                        <button type="button" onClick={() => connectToRoom(item.room_id, "", item.bet, item.max_players as MaxPlayers)} className="shrink-0 rounded-xl bg-emerald-400 px-4 py-2.5 text-[9px] font-black uppercase tracking-wider text-black transition hover:bg-emerald-300">Entrar</button>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    )}
-                                </div>
-
-                                <div className="rounded-[26px] border border-white/10 bg-[#0b0e0d] p-4 shadow-xl sm:p-5">
-                                    <p className="text-[9px] font-black uppercase tracking-[0.24em] text-emerald-400">Acceso directo</p>
-                                    <h3 className="mt-1 text-lg font-black uppercase text-white">Unirse a una sala</h3>
-                                    <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
-                                        <input type="text" value={joinRoomId} onChange={(e) => setJoinRoomId(e.target.value)} placeholder="ID de sala" className="min-w-0 rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-xs text-white outline-none placeholder:text-zinc-600 focus:border-emerald-500" />
-                                        <input type="text" value={joinPassword} onChange={(e) => setJoinPassword(e.target.value)} placeholder="Código (si es privada)" className="min-w-0 rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-xs text-white outline-none placeholder:text-zinc-600 focus:border-emerald-500" />
-                                        <button type="button" disabled={!joinRoomId.trim() || isConnecting} onClick={() => connectToRoom(joinRoomId.trim(), joinPassword.trim())} className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-5 py-3 text-[10px] font-black uppercase tracking-wider text-emerald-300 transition hover:bg-emerald-400 hover:text-black disabled:opacity-40">Unirse</button>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">Apuesta por jugador</label>
+                                    <div className="grid grid-cols-3 gap-2">
+                                        {(["0.25", "1.00", "10.00"] as ParchisBet[]).map((amt) => (
+                                            <button key={amt} type="button" onClick={() => setSelectedBet(amt)} className={`rounded-xl border py-3 text-xs font-black transition ${selectedBet === amt ? "border-emerald-500 bg-emerald-500 text-black" : "border-zinc-800 bg-black text-zinc-400 hover:border-emerald-500/50 hover:text-white"}`}>
+                                                ${amt}
+                                            </button>
+                                        ))}
                                     </div>
                                 </div>
-                            </section>
+                                <div>
+                                    <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">Cantidad de jugadores</label>
+                                    <div className="grid grid-cols-3 gap-2">
+                                        {([2, 3, 4] as MaxPlayers[]).map((cnt) => (
+                                            <button key={cnt} type="button" onClick={() => setMaxPlayers(cnt)} className={`rounded-xl border py-3 text-xs font-black transition ${maxPlayers === cnt ? "border-emerald-500 bg-emerald-500 text-black" : "border-zinc-800 bg-black text-zinc-400 hover:border-emerald-500/50 hover:text-white"}`}>
+                                                {cnt}P
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="rounded-xl border border-zinc-800 bg-black p-3">
+                                <label className="flex cursor-pointer items-center justify-between gap-3">
+                                    <span>
+                                        <span className="block text-xs font-bold text-white">Sala privada</span>
+                                        <span className="mt-0.5 block text-[10px] text-zinc-500">Protege la entrada con un código</span>
+                                    </span>
+                                    <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} className="h-5 w-5 accent-emerald-500" />
+                                </label>
+                                {isPrivate && (
+                                    <input type="text" value={roomPassword} onChange={(e) => setRoomPassword(e.target.value)} placeholder="Código de acceso (opcional)" className="mt-3 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-white outline-none placeholder:text-zinc-600 focus:border-emerald-500" />
+                                )}
+                            </div>
+
+                            <button
+                                type="button"
+                                disabled={isConnecting || busyAction}
+                                onClick={handleCreatePrivateOrCustomRoom}
+                                className="w-full rounded-xl bg-emerald-500 hover:bg-emerald-400 active:scale-[0.99] px-4 py-3.5 text-xs font-black uppercase tracking-wider text-black transition disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {busyAction || isConnecting ? "Preparando sala..." : isPrivate ? "Crear sala privada" : "Crear sala pública"}
+                            </button>
+                            <p className="text-center text-[9px] leading-relaxed text-zinc-600">La apuesta se descuenta al entrar a la sala. La comisión se aplica mediante la liquidación configurada en AXIOM.</p>
+                        </section>
+
+                        <div className="border-t border-zinc-900 pt-4 space-y-4">
+                            <div className="flex items-center justify-between gap-3">
+                                <div>
+                                    <p className="text-[9px] text-emerald-400 uppercase font-black tracking-[0.2em]">Encuentra rivales</p>
+                                    <h3 className="mt-1 text-sm font-black text-white uppercase">Salas públicas</h3>
+                                </div>
+                                <button type="button" onClick={() => void fetchPublicRooms()} className="rounded-lg border border-zinc-800 bg-black px-3 py-2 text-[9px] font-black uppercase text-emerald-400 hover:border-emerald-500/40 transition">Actualizar</button>
+                            </div>
+                            <input type="text" value={searchId} onChange={(e) => setSearchId(e.target.value)} placeholder="Buscar por ID del anfitrión..." className="w-full rounded-xl border border-zinc-800 bg-black px-3 py-3 text-xs text-white outline-none placeholder:text-zinc-600 focus:border-emerald-500" />
+                            {publicRooms.length === 0 ? (
+                                <div className="rounded-xl border border-dashed border-zinc-800 bg-black/60 px-4 py-7 text-center">
+                                    <span className="text-2xl text-zinc-700">♟</span>
+                                    <p className="mt-2 text-xs font-bold text-zinc-300">{roomsUnavailable ? "Salas temporalmente no disponibles" : "No hay salas públicas disponibles"}</p>
+                                    <p className="mt-1 text-[10px] text-zinc-600">Crea una sala o únete usando su ID.</p>
+                                </div>
+                            ) : (
+                                <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                                    {publicRooms.filter((item) => {
+                                        const hostId = String(item.host_doc_number || item.host_cedula || "");
+                                        return !searchId.trim() || hostId.toLowerCase().includes(searchId.trim().toLowerCase());
+                                    }).map((item) => {
+                                        const itemId = item.host_doc_number || item.host_cedula;
+                                        const itemName = (item.host_name || "Jugador").split(/\s+/)[0];
+                                        return (
+                                            <div key={item.room_id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-black p-3 hover:border-zinc-700 transition">
+                                                <div className="min-w-0">
+                                                    <span className="block truncate text-xs font-black text-white">{itemName}</span>
+                                                    <span className="mt-1 block text-[10px] text-zinc-500">{itemId ? `ID ${itemId} · ` : ""}{item.players_count}/{item.max_players} jugadores · ${item.bet.toFixed(2)}</span>
+                                                </div>
+                                                <button type="button" onClick={() => connectToRoom(item.room_id, "", item.bet, item.max_players as MaxPlayers)} className="w-full sm:w-auto shrink-0 rounded-lg bg-emerald-500 px-5 py-2.5 text-[10px] font-black uppercase text-black hover:bg-emerald-400 transition">Entrar</button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="border-t border-zinc-900 pt-4 space-y-3">
+                            <div>
+                                <p className="text-[9px] text-emerald-400 uppercase font-black tracking-[0.2em]">Acceso directo</p>
+                                <h3 className="mt-1 text-sm font-black text-white uppercase">Unirse a una sala</h3>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2">
+                                <input type="text" value={joinRoomId} onChange={(e) => setJoinRoomId(e.target.value)} placeholder="ID de sala" className="min-w-0 w-full rounded-xl border border-zinc-800 bg-black px-3 py-3 text-xs text-white outline-none placeholder:text-zinc-600 focus:border-emerald-500" />
+                                <input type="text" value={joinPassword} onChange={(e) => setJoinPassword(e.target.value)} placeholder="Código (si es privada)" className="min-w-0 w-full rounded-xl border border-zinc-800 bg-black px-3 py-3 text-xs text-white outline-none placeholder:text-zinc-600 focus:border-emerald-500" />
+                                <button type="button" disabled={!joinRoomId.trim() || isConnecting} onClick={() => connectToRoom(joinRoomId.trim(), joinPassword.trim())} className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-5 py-3 text-[10px] font-black uppercase text-emerald-400 hover:bg-emerald-500 hover:text-black transition disabled:opacity-40">Unirse</button>
+                            </div>
                         </div>
                     </div>
                 ) : (
