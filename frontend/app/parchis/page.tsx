@@ -79,6 +79,13 @@ interface ProfileRow {
     bonus_balance: number | null;
 }
 
+interface MoveOption {
+    diceValue: number;
+    usedDiceValues: number[];
+    label: string;
+    isExitFive: boolean;
+}
+
 const API_BASE =
     process.env.NEXT_PUBLIC_API_URL || "https://casino-axiom.ethiodeploy.app";
 
@@ -91,30 +98,30 @@ const PARCHIS_BETS: Record<ParchisBet, number> = {
 const CORNER_PALETTE = [
     {
         name: "Verde",
-        main: "#289c3e",
+        main: "#22a043",
         light: "#4ade80",
         dark: "#14532d",
         ring: "#bbf7d0",
     },
     {
         name: "Rojo",
-        main: "#e03131",
-        light: "#ff6b6b",
-        dark: "#7f1d1d",
-        ring: "#fecaca",
+        main: "#e11d48",
+        light: "#fb7185",
+        dark: "#881337",
+        ring: "#fecdd3",
     },
     {
         name: "Azul",
-        main: "#1971c2",
-        light: "#4dabf7",
+        main: "#2563eb",
+        light: "#60a5fa",
         dark: "#1e3a8a",
         ring: "#bfdbfe",
     },
     {
         name: "Amarillo",
-        main: "#f59f00",
-        light: "#ffd43b",
-        dark: "#78350f",
+        main: "#eab308",
+        light: "#fde047",
+        dark: "#713f12",
         ring: "#fef08a",
     },
 ];
@@ -287,27 +294,106 @@ function getPieceBoardPoint(
     };
 }
 
-// Regla solicitada: siempre se mueve una casilla más (ej. 1 -> 2, 4 -> 5, 12 -> 13)
+// Regla solicitada: siempre se mueve una casilla extra (ej. 1 -> 2, 4 -> 5, 12 -> 13)
 function getEffectiveSteps(diceValue: number | null): number {
-    if (typeof diceValue !== "number" || !Number.isFinite(diceValue)) return 0;
+    if (typeof diceValue !== "number" || !Number.isFinite(diceValue) || diceValue <= 0) {
+        return 0;
+    }
     return diceValue + 1;
 }
 
-function canPieceMove(piece: ParchisPiece, diceValue: number | null): boolean {
-    if (diceValue === null || diceValue < 1) return false;
-    const steps = getEffectiveSteps(diceValue);
-    if (piece.stage === -1) return diceValue === 5;
-    if (piece.stage === 0) return piece.steps_walked + steps <= 75;
-    if (piece.stage === 100) return piece.pos + steps <= 7;
+function hasFiveOrSumFive(diceValues: number[] | null | undefined): boolean {
+    if (!Array.isArray(diceValues) || diceValues.length === 0) return false;
+    if (diceValues.some((v) => v === 5)) return true;
+    for (let i = 0; i < diceValues.length; i++) {
+        for (let j = i + 1; j < diceValues.length; j++) {
+            if (diceValues[i] + diceValues[j] === 5) return true;
+        }
+    }
     return false;
 }
 
-function getMovableDice(
+function getPieceMoveOptions(
     piece: ParchisPiece,
     diceValues: number[] | null | undefined
-): number[] {
-    if (!Array.isArray(diceValues)) return [];
-    return diceValues.filter((value) => canPieceMove(piece, value));
+): MoveOption[] {
+    if (!Array.isArray(diceValues) || diceValues.length === 0) return [];
+
+    // Ficha en casa (-1): sale a la primera estrella de su color si hay 5 o suma de 5
+    if (piece.stage === -1) {
+        const options: MoveOption[] = [];
+        const fiveIdx = diceValues.findIndex((v) => v === 5);
+        if (fiveIdx >= 0) {
+            options.push({
+                diceValue: 5,
+                usedDiceValues: [5],
+                label: "Sacar (5)",
+                isExitFive: true,
+            });
+        }
+        for (let i = 0; i < diceValues.length; i++) {
+            for (let j = i + 1; j < diceValues.length; j++) {
+                if (diceValues[i] + diceValues[j] === 5) {
+                    const pairSum = diceValues[i] + diceValues[j];
+                    options.push({
+                        diceValue: pairSum,
+                        usedDiceValues: [diceValues[i], diceValues[j]],
+                        label: `Sacar (${diceValues[i]}+${diceValues[j]}=5)`,
+                        isExitFive: true,
+                    });
+                }
+            }
+        }
+        return options;
+    }
+
+    // Ficha ya en juego: puede moverse usando cada dado (+1 casilla extra)
+    const uniqueDice = Array.from(new Set(diceValues));
+    const options: MoveOption[] = [];
+    for (const val of uniqueDice) {
+        const steps = getEffectiveSteps(val);
+        if (piece.stage === 0 && piece.steps_walked + steps <= 75) {
+            options.push({
+                diceValue: val,
+                usedDiceValues: [val],
+                label: `Dado ${val} (+${steps})`,
+                isExitFive: false,
+            });
+        } else if (piece.stage === 100 && piece.pos + steps <= 7) {
+            options.push({
+                diceValue: val,
+                usedDiceValues: [val],
+                label: `Meta ${val} (+${steps})`,
+                isExitFive: false,
+            });
+        }
+    }
+
+    // Si la suma de dos dados es 5 y la ficha ya está en el tablero, también puede avanzar con esa suma (+1)
+    for (let i = 0; i < diceValues.length; i++) {
+        for (let j = i + 1; j < diceValues.length; j++) {
+            if (diceValues[i] + diceValues[j] === 5) {
+                const sumSteps = getEffectiveSteps(5);
+                if (piece.stage === 0 && piece.steps_walked + sumSteps <= 75) {
+                    options.push({
+                        diceValue: 5,
+                        usedDiceValues: [diceValues[i], diceValues[j]],
+                        label: `Suma 5 (+${sumSteps})`,
+                        isExitFive: false,
+                    });
+                } else if (piece.stage === 100 && piece.pos + sumSteps <= 7) {
+                    options.push({
+                        diceValue: 5,
+                        usedDiceValues: [diceValues[i], diceValues[j]],
+                        label: `Suma 5 (+${sumSteps})`,
+                        isExitFive: false,
+                    });
+                }
+            }
+        }
+    }
+
+    return options;
 }
 
 function money(value: number): string {
@@ -329,21 +415,28 @@ function randomDiePair(prev?: [number, number]): [number, number] {
     return [randomDieFace(prev?.[0]), randomDieFace(prev?.[1])];
 }
 
-// Calcula la posición en cada paso (0 -> 1 -> 2 -> ... -> dado + 1)
+// Calcula la posición en cada paso desde la salida/estrella o casilla actual
 function getStepPiecePose(
     startPiece: ParchisPiece,
     seatIndex: number,
-    stepOffset: number
+    stepOffset: number,
+    isExitFive: boolean
 ): ParchisPiece {
-    if (stepOffset <= 0) return startPiece;
+    const startSpot = START_SPOTS[seatIndex] ?? 0;
+
     if (startPiece.stage === -1) {
-        return {
+        // Sale directo a la primera estrella / casilla de salida de su color
+        const baseExitPiece: ParchisPiece = {
             ...startPiece,
             stage: 0,
-            pos: START_SPOTS[seatIndex] ?? 0,
+            pos: startSpot,
             steps_walked: 0,
         };
+        if (!isExitFive || stepOffset <= 0) return baseExitPiece;
+        return getStepPiecePose(baseExitPiece, seatIndex, stepOffset - 1, false);
     }
+
+    if (stepOffset <= 0) return startPiece;
 
     let stage = startPiece.stage;
     let pos = startPiece.pos;
@@ -450,14 +543,14 @@ function DragonTriangleDieBox({
     return (
         <div
             style={{ borderColor: accentColor }}
-            className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-zinc-950 border-2 p-1 flex items-center justify-center shadow-inner opacity-90"
+            className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-zinc-950 border-2 p-1 flex items-center justify-center shadow-inner opacity-95"
             title={`Dado en espera: ${face}`}
         >
             <svg viewBox="0 0 100 100" className="w-full h-full block">
                 <polygon
                     points="50,8 92,84 8,84"
                     fill={accentColor}
-                    fillOpacity="0.22"
+                    fillOpacity="0.24"
                     stroke={accentColor}
                     strokeWidth="5"
                     strokeLinejoin="round"
@@ -1237,16 +1330,19 @@ export default function ParchisGamePage() {
         activeSocket.send(JSON.stringify({ type: "ROLL_DICE" }));
     };
 
-    // Avanza una casilla adicional sobre el valor del dado (dado + 1), paso a paso desde el siguiente
+    // Avanza paso a paso: si sale de casa va a la estrella de su color; si avanza en pista hace dado + 1 casillas
     const sendMovePiece = useCallback(
-        (pieceId: number, diceValue: number) => {
+        (pieceId: number, option: MoveOption) => {
             if (!activeSocket || activeSocket.readyState !== WebSocket.OPEN)
                 return;
 
             const curState = gameStateRef.current;
             const me = curState?.players?.find((p) => p.user_id === userId);
             const startPiece = me?.pieces?.find((pc) => pc.id === pieceId);
-            const totalSteps = getEffectiveSteps(diceValue);
+            const totalSteps =
+                startPiece?.stage === -1 && option.isExitFive
+                    ? 1
+                    : getEffectiveSteps(option.diceValue);
 
             if (stepAnimTimerRef.current) {
                 clearTimeout(stepAnimTimerRef.current);
@@ -1262,7 +1358,8 @@ export default function ParchisGamePage() {
                         piece: getStepPiecePose(
                             startPiece,
                             me.seat_index,
-                            currentStep
+                            currentStep,
+                            Boolean(option.isExitFive)
                         ),
                     };
                     if (currentStep < totalSteps) {
@@ -1274,8 +1371,10 @@ export default function ParchisGamePage() {
                             JSON.stringify({
                                 type: "MOVE_PIECE",
                                 piece_id: pieceId,
-                                dice_value: diceValue,
-                                steps_moved: totalSteps,
+                                dice_value: option.diceValue,
+                                used_dice_values: option.usedDiceValues,
+                                steps_moved: getEffectiveSteps(option.diceValue),
+                                exit_to_start: Boolean(option.isExitFive),
                             })
                         );
                     }
@@ -1288,8 +1387,10 @@ export default function ParchisGamePage() {
                 JSON.stringify({
                     type: "MOVE_PIECE",
                     piece_id: pieceId,
-                    dice_value: diceValue,
-                    steps_moved: totalSteps,
+                    dice_value: option.diceValue,
+                    used_dice_values: option.usedDiceValues,
+                    steps_moved: getEffectiveSteps(option.diceValue),
+                    exit_to_start: Boolean(option.isExitFive),
                 })
             );
         },
@@ -1320,28 +1421,31 @@ export default function ParchisGamePage() {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, size, size);
 
+        // Marco exterior en madera oscura pulida
         const woodGrad = ctx.createLinearGradient(0, 0, size, size);
-        woodGrad.addColorStop(0, "#6f472b");
-        woodGrad.addColorStop(0.5, "#53331d");
-        woodGrad.addColorStop(1, "#3b2212");
+        woodGrad.addColorStop(0, "#784c2e");
+        woodGrad.addColorStop(0.5, "#54321c");
+        woodGrad.addColorStop(1, "#371f10");
         ctx.fillStyle = woodGrad;
         ctx.beginPath();
-        ctx.roundRect(0, 0, size, size, 18);
+        ctx.roundRect(0, 0, size, size, 20);
         ctx.fill();
 
-        ctx.strokeStyle = "#8c5b38";
+        ctx.strokeStyle = "#a16a43";
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.roundRect(1.5, 1.5, size - 3, size - 3, 17);
+        ctx.roundRect(1.5, 1.5, size - 3, size - 3, 19);
         ctx.stroke();
 
         const pad = size * 0.036;
         const inner = size - pad * 2;
         const cell = inner / 15;
 
-        ctx.fillStyle = "#f6f0e2";
+        // Superficie interior marfil suave
+        ctx.fillStyle = "#faf5e8";
         ctx.fillRect(pad, pad, inner, inner);
 
+        // Pasillos de llegada / meta por color
         for (let y = 1; y <= 6; y++) {
             ctx.fillStyle = CORNER_PALETTE[0].main;
             ctx.fillRect(pad + 7 * cell, pad + y * cell, cell, cell);
@@ -1359,7 +1463,8 @@ export default function ParchisGamePage() {
             ctx.fillRect(pad + x * cell, pad + 7 * cell, cell, cell);
         }
 
-        ctx.strokeStyle = "rgba(39, 39, 42, 0.38)";
+        // Grilla de casillas exteriores
+        ctx.strokeStyle = "rgba(24, 24, 27, 0.34)";
         ctx.lineWidth = 1;
         for (let r = 0; r < 15; r++) {
             for (let c = 0; c < 15; c++) {
@@ -1374,6 +1479,7 @@ export default function ParchisGamePage() {
             }
         }
 
+        // Casillas de pista, salidas de color y estrellas seguras
         for (let i = 0; i < TRACK_LEN; i++) {
             const g = TRACK_GRID[i];
             const px = pad + (g.gx + 0.5) * cell;
@@ -1395,7 +1501,7 @@ export default function ParchisGamePage() {
 
             if (SAFE_SPOTS.has(i)) {
                 if (!startEntry) {
-                    ctx.fillStyle = "#b8bec8";
+                    ctx.fillStyle = "#cbd5e1";
                     ctx.fillRect(
                         pad + g.gx * cell + 1.2,
                         pad + g.gy * cell + 1.2,
@@ -1405,7 +1511,7 @@ export default function ParchisGamePage() {
                 }
                 ctx.save();
                 ctx.beginPath();
-                const starR = Math.max(4, cell * 0.22);
+                const starR = Math.max(4.5, cell * 0.25);
                 for (let s = 0; s < 10; s++) {
                     const r = s % 2 === 0 ? starR : starR * 0.45;
                     const ang = (s * Math.PI) / 5 - Math.PI / 2;
@@ -1415,11 +1521,11 @@ export default function ParchisGamePage() {
                     else ctx.lineTo(sx, sy);
                 }
                 ctx.closePath();
-                ctx.fillStyle = startEntry ? "#ffffff" : "#3f3f46";
+                ctx.fillStyle = startEntry ? "#ffffff" : "#1e293b";
                 ctx.fill();
                 ctx.restore();
             } else {
-                ctx.fillStyle = "rgba(24, 24, 27, 0.55)";
+                ctx.fillStyle = "rgba(24, 24, 27, 0.58)";
                 ctx.font = `700 ${Math.max(7, Math.floor(cell * 0.27))}px sans-serif`;
                 ctx.textAlign = "center";
                 ctx.textBaseline = "middle";
@@ -1442,6 +1548,7 @@ export default function ParchisGamePage() {
             )
         );
 
+        // Casas de cada esquina
         const homes = [
             { corner: 0, gx: 0, gy: 0 },
             { corner: 1, gx: 9, gy: 0 },
@@ -1479,7 +1586,7 @@ export default function ParchisGamePage() {
 
             const inset = cell * 0.42;
             ctx.strokeStyle = isActive
-                ? "rgba(255,255,255,0.45)"
+                ? "rgba(255,255,255,0.5)"
                 : "rgba(255,255,255,0.12)";
             ctx.lineWidth = 1.5;
             ctx.beginPath();
@@ -1508,6 +1615,7 @@ export default function ParchisGamePage() {
             }
         }
 
+        // Centro de meta (4 triángulos de colores)
         const cLeft = pad + 6 * cell;
         const cTop = pad + 6 * cell;
         const cSize = cell * 3;
@@ -1571,6 +1679,7 @@ export default function ParchisGamePage() {
             state.must_move &&
             (state.dice_remaining?.length || 0) > 0;
 
+        // Fichas mejoradas con sombra, gradiente 3D y aro de selección
         for (const p of players) {
             const corner = getPlayerVisualCorner(
                 p.seat_index,
@@ -1591,54 +1700,55 @@ export default function ParchisGamePage() {
                 const movable =
                     isMyTurnNow &&
                     p.user_id === currentUid &&
-                    getMovableDice(piece, state.dice_remaining).length > 0;
+                    getPieceMoveOptions(piece, state.dice_remaining).length > 0;
 
-                const radius = Math.max(8.5, cell * 0.37);
+                const radius = Math.max(9, cell * 0.39);
 
                 if (movable) {
                     ctx.save();
                     ctx.beginPath();
-                    ctx.arc(pt.x, pt.y, radius + 4.5, 0, Math.PI * 2);
-                    ctx.strokeStyle = "#10b981";
-                    ctx.lineWidth = 2.8;
+                    ctx.arc(pt.x, pt.y, radius + 5, 0, Math.PI * 2);
+                    ctx.strokeStyle = "#34d399";
+                    ctx.lineWidth = 3;
                     ctx.stroke();
                     ctx.restore();
                 }
 
                 ctx.save();
                 ctx.beginPath();
-                ctx.arc(pt.x + 1.4, pt.y + 2.2, radius, 0, Math.PI * 2);
-                ctx.fillStyle = "rgba(0,0,0,0.48)";
+                ctx.arc(pt.x + 1.5, pt.y + 2.5, radius, 0, Math.PI * 2);
+                ctx.fillStyle = "rgba(0,0,0,0.52)";
                 ctx.fill();
 
                 const pieceGrad = ctx.createRadialGradient(
-                    pt.x - radius * 0.3,
-                    pt.y - radius * 0.3,
-                    radius * 0.15,
+                    pt.x - radius * 0.35,
+                    pt.y - radius * 0.35,
+                    radius * 0.12,
                     pt.x,
                     pt.y,
                     radius
                 );
                 pieceGrad.addColorStop(0, pal.light);
-                pieceGrad.addColorStop(0.65, pal.main);
+                pieceGrad.addColorStop(0.6, pal.main);
                 pieceGrad.addColorStop(1, pal.dark);
 
                 ctx.beginPath();
                 ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
                 ctx.fillStyle = pieceGrad;
                 ctx.fill();
-                ctx.lineWidth = movable ? 2.4 : 1.6;
-                ctx.strokeStyle = movable ? "#ffffff" : "#111827";
+                ctx.lineWidth = movable ? 2.6 : 1.8;
+                ctx.strokeStyle = movable ? "#ffffff" : "#09090b";
                 ctx.stroke();
 
+                // Corona / núcleo interior de la ficha
                 ctx.beginPath();
-                ctx.arc(pt.x, pt.y, radius * 0.52, 0, Math.PI * 2);
-                ctx.fillStyle = "#ffffff";
+                ctx.arc(pt.x, pt.y, radius * 0.56, 0, Math.PI * 2);
+                ctx.fillStyle = "rgba(255,255,255,0.92)";
                 ctx.fill();
 
                 ctx.beginPath();
-                ctx.arc(pt.x, pt.y, radius * 0.24, 0, Math.PI * 2);
-                ctx.fillStyle = pal.main;
+                ctx.arc(pt.x, pt.y, radius * 0.28, 0, Math.PI * 2);
+                ctx.fillStyle = pal.dark;
                 ctx.fill();
                 ctx.restore();
             }
@@ -1729,11 +1839,11 @@ export default function ParchisGamePage() {
         );
 
         let closestId = -1;
-        let minDist = 30;
+        let minDist = 32;
 
         for (const piece of me.pieces || []) {
-            const availableDice = getMovableDice(piece, state.dice_remaining);
-            if (availableDice.length === 0) continue;
+            const opts = getPieceMoveOptions(piece, state.dice_remaining);
+            if (opts.length === 0) continue;
             const pt = getPieceBoardPoint(piece, corner, size);
             const dist = Math.hypot(clickX - pt.x, clickY - pt.y);
             if (dist < minDist) {
@@ -1746,10 +1856,13 @@ export default function ParchisGamePage() {
             const selectedPiece = me.pieces.find(
                 (piece) => piece.id === closestId
             );
-            const die = selectedPiece
-                ? getMovableDice(selectedPiece, state.dice_remaining)[0]
-                : undefined;
-            if (die !== undefined) sendMovePiece(closestId, die);
+            if (selectedPiece) {
+                const opts = getPieceMoveOptions(
+                    selectedPiece,
+                    state.dice_remaining
+                );
+                if (opts[0]) sendMovePiece(closestId, opts[0]);
+            }
         }
     };
 
@@ -1864,11 +1977,17 @@ export default function ParchisGamePage() {
         ? getCleanPlayerLabel(topPlayer, "Rival")
         : "Esperando rival...";
 
+    const canExitHomeWithFive =
+        isMyTurn &&
+        Boolean(gameState?.must_move) &&
+        hasFiveOrSumFive(gameState?.dice_remaining);
+
     const movablePieces =
         isMyTurn && gameState?.must_move && myPlayer
             ? (myPlayer.pieces || []).filter(
                   (pc) =>
-                      getMovableDice(pc, gameState.dice_remaining).length > 0
+                      getPieceMoveOptions(pc, gameState.dice_remaining).length >
+                      0
               )
             : [];
 
@@ -2281,6 +2400,13 @@ export default function ParchisGamePage() {
                                         la ficha que quieres enviar a casa.
                                     </div>
                                 )}
+
+                                {canExitHomeWithFive && (
+                                    <div className="w-full rounded-lg border border-emerald-500/30 bg-emerald-950/25 px-3 py-1.5 text-center text-[11px] font-bold text-emerald-300">
+                                        Tienes 5 o suma 5: puedes sacar ficha a la estrella de tu color o mover una ficha en juego.
+                                    </div>
+                                )}
+
                                 {movablePieces.length > 0 && (
                                     <div className="flex flex-wrap items-center gap-1.5 pt-1">
                                         <span className="text-[10px] font-bold uppercase text-zinc-400">
@@ -2294,23 +2420,22 @@ export default function ParchisGamePage() {
                                                 <span className="px-1 text-[10px] font-black uppercase text-white">
                                                     Ficha #{pc.id + 1}
                                                 </span>
-                                                {getMovableDice(
+                                                {getPieceMoveOptions(
                                                     pc,
                                                     gameState.dice_remaining
-                                                ).map((die, dieIndex) => (
+                                                ).map((opt, optIndex) => (
                                                     <button
-                                                        key={`${pc.id}-${dieIndex}-${die}`}
+                                                        key={`${pc.id}-${optIndex}-${opt.label}`}
                                                         type="button"
                                                         onClick={() =>
                                                             sendMovePiece(
                                                                 pc.id,
-                                                                die
+                                                                opt
                                                             )
                                                         }
                                                         className="min-w-9 rounded-lg bg-emerald-400 px-2.5 py-2 text-[10px] font-black text-black transition hover:bg-emerald-300 active:scale-95"
                                                     >
-                                                        Dado {die} (+
-                                                        {getEffectiveSteps(die)})
+                                                        {opt.label}
                                                     </button>
                                                 ))}
                                             </div>
