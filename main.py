@@ -1,3 +1,4 @@
+
 import os
 import random
 import hmac
@@ -908,17 +909,6 @@ def _credit_crypto_deposit_to_user(
     Si creas una función RPC en Supabase (ej. `credit_crypto_deposit`),
     úsala aquí para garantizar atomicidad e idempotencia.
     """
-    # Opción recomendada: crear una RPC en Supabase llamada `credit_crypto_deposit`
-    # que verifique si ya fue acreditado y sume `balance` en `profiles`.
-    # Ejemplo de llamada RPC:
-    # return rpc_json("credit_crypto_deposit", {
-    #     "p_user_id": user_id,
-    #     "p_order_id": order_id,
-    #     "p_payment_id": payment_id,
-    #     "p_amount": round(float(amount_usd), 2),
-    # })
-
-    # Fallback directo si aún no creaste la RPC (menos atómico que un RPC SQL):
     profile_res = (
         supabase.table("profiles")
         .select("id,balance")
@@ -957,7 +947,6 @@ async def nowpayments_ipn(
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Payload inválido.")
 
-    # 1. Verificar firma HMAC-SHA512 de NOWPayments
     if not verify_nowpayments_signature(payload, x_nowpayments_sig or ""):
         print("ALERTA IPN: Firma de NOWPayments inválida.")
         raise HTTPException(status_code=401, detail="Firma IPN no válida.")
@@ -969,7 +958,6 @@ async def nowpayments_ipn(
     if not order_id:
         raise HTTPException(status_code=400, detail="Falta order_id.")
 
-    # 2. Buscar el depósito en Supabase
     dep_res = (
         supabase.table("crypto_deposits")
         .select("id,user_id,order_id,amount,payment_status,credited_at")
@@ -986,7 +974,6 @@ async def nowpayments_ipn(
     user_id = str(deposit["user_id"])
     amount_usd = float(deposit["amount"])
 
-    # 3. Actualizar estado del pago en crypto_deposits
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     update_fields = {
         "payment_status": payment_status or deposit.get("payment_status"),
@@ -995,8 +982,7 @@ async def nowpayments_ipn(
     if payment_id:
         update_fields["payment_id"] = payment_id
 
-    # 4. Acreditar solo cuando esté finalizado y aún no haya sido acreditado
-    final_statuses = {"finished"}  # Si quieres acreditar antes, añade "confirmed"
+    final_statuses = {"finished"}
     already_credited = bool(deposit.get("credited_at"))
 
     if payment_status in final_statuses and not already_credited:
@@ -1016,6 +1002,8 @@ async def nowpayments_ipn(
     )
 
     return {"ok": True, "order_id": order_id, "status": payment_status}
+
+
 @app.get("/crypto/deposits/{order_id}")
 async def get_crypto_deposit_status(
     order_id: str,
@@ -1055,6 +1043,8 @@ async def get_crypto_deposit_status(
         "credited": bool(row.get("credited_at")),
         "credited_at": row.get("credited_at"),
     }
+
+
 # ============================================================
 # WEBSOCKET LOBBY X VS O
 # ============================================================
@@ -1128,7 +1118,6 @@ async def lobby_endpoint(
             creator_name = str(data.get("creator") or "Jugador").strip()[:40] or "Jugador"
             host = xo_player(creator_id, wallet, bet, creator_name, True)
 
-            # El frontend ya ejecuta el débito antes de CREATE_ROOM.
             lobbies[room_id] = {
                 "room_id": room_id,
                 "creator": creator_name,
@@ -1243,7 +1232,6 @@ async def game_endpoint(
                     await websocket.close()
                     return
 
-                # El frontend ya descontó la apuesta al unirse.
                 player = xo_player(
                     str(user_id),
                     wallet,
@@ -1384,8 +1372,6 @@ async def game_endpoint(
                 await manager.broadcast_lobby()
                 continue
 
-            # El cierre voluntario se procesa en finally.
-            # Si la partida ya comenzó, el rival gana por abandono.
             if msg_type == "CLOSE_ROOM":
                 if not player.get("is_host"):
                     await send_error(websocket, "Solo el creador puede cerrar la sala.")
@@ -1411,18 +1397,13 @@ async def game_endpoint(
             async with lock:
                 current = room.get("players", {}).get(str(user_id))
 
-                # Evita que una conexión vieja desconecte una conexión nueva.
                 if current is player and current.get("websocket") is websocket:
                     current["connected"] = False
                     current["websocket"] = None
 
-                    # Si la partida ya terminó normalmente, no se declara
-                    # otro ganador por la desconexión posterior.
                     if room.get("finished"):
                         remove_room = True
 
-                    # PARTIDA EN CURSO:
-                    # el jugador que permanece conectado gana por abandono.
                     elif room.get("status") == "PLAYING":
                         winner_id = None
                         winner_player = None
@@ -1445,7 +1426,6 @@ async def game_endpoint(
                                 "reason": "abandonment",
                             })
 
-                        # También se intenta informar al jugador que abandona.
                         await xo_send(current, {
                             "type": "GAME_FINISHED",
                             "result": "lose",
@@ -1457,8 +1437,6 @@ async def game_endpoint(
                         remove_room = True
                         lobby_changed = True
 
-                    # SALA EN ESPERA:
-                    # si se va el creador, se elimina la sala sin ganador.
                     elif current.get("is_host"):
                         room["finished"] = True
                         room["status"] = "FINISHED"
@@ -1472,9 +1450,6 @@ async def game_endpoint(
                         remove_room = True
                         lobby_changed = True
 
-                    # SALA EN ESPERA:
-                    # si se va el invitado, se libera el espacio y el
-                    # creador puede seguir esperando a otro jugador.
                     else:
                         room["players"].pop(str(user_id), None)
                         room["board"] = [None] * 9
@@ -1521,36 +1496,29 @@ GAME_TICK = 1 / 30
 
 COIN_RADIUS = 16
 
-# ÚNICAS APUESTAS PERMITIDAS
 SNAKE_BETS = {
     "snake_020": 200_000,
     "snake_1000": 10_000_000,
     "snake_5000": 50_000_000,
 }
 
-# VALOR DE LAS MONEDAS SEGÚN LA SALA
 SNAKE_COIN_VALUES = {
     "snake_020": 10_000,
     "snake_1000": 500_000,
     "snake_5000": 2_500_000,
 }
 
-# Una moneda cada cuarto de segundo mientras se mantiene el impulso.
 BOOST_COIN_INTERVAL = 0.25
-
-# Tiempo de supervivencia para completar el retiro.
 CASHOUT_COUNTDOWN_SECONDS = 20
 
 FOOD_RADIUS = 9
 FOOD_INITIAL_COUNT = 200
 MAX_SNAKE_PLAYERS = 30
 
-# CRECIMIENTO AL COMER
 FOOD_GROWTH = 3
 FOOD_RADIUS_GROWTH = 0.30
 SNAKE_MAX_RADIUS = 21.0
 
-# REDUCCIÓN DE TAMAÑO AL IMPULSARSE
 BOOST_RADIUS_MULTIPLIER = 0.10
 
 FOOD_COLORS = [
@@ -1613,11 +1581,6 @@ def get_snake_bet_category(bet: float):
 
 
 def get_available_snake_room_locked(category: str):
-    """
-    Esta función debe llamarse teniendo adquirido
-    snake_rooms_lock.
-    """
-
     available_rooms = []
 
     for room_id, room in snake_rooms.items():
@@ -1684,32 +1647,19 @@ class SnakeRoom:
 
         self.spawn_food(FOOD_INITIAL_COUNT)
 
-    # ========================================================
-    # VALOR DE MONEDA SEGÚN LA SALA
-    # ========================================================
-
     def get_coin_value(self) -> int:
         return SNAKE_COIN_VALUES.get(
             self.category,
             10_000
         )
 
-    # ========================================================
-    # TAMAÑO ACTUAL DE LA SERPIENTE
-    # ========================================================
-
     def get_snake_radius(self, snake: dict) -> float:
         radius = float(snake.get("radius", 7.0))
 
-        # Al impulsarse reduce temporalmente su grosor un 20%.
         if snake.get("boosting"):
             radius *= BOOST_RADIUS_MULTIPLIER
 
         return radius
-
-    # ========================================================
-    # COMIDA
-    # ========================================================
 
     def spawn_food(self, amount: int = 1):
         for _ in range(amount):
@@ -1719,14 +1669,8 @@ class SnakeRoom:
                 "y": random.uniform(30, WORLD_HEIGHT - 30),
                 "color": random.choice(FOOD_COLORS),
                 "radius": FOOD_RADIUS,
-
-                # Cada comida agrega 4 segmentos.
                 "growth": FOOD_GROWTH,
             })
-
-    # ========================================================
-    # POSICIÓN INICIAL
-    # ========================================================
 
     def create_spawn(self):
         positions = [
@@ -1775,10 +1719,6 @@ class SnakeRoom:
             random.uniform(-math.pi, math.pi)
         )
 
-    # ========================================================
-    # CREAR SERPIENTE
-    # ========================================================
-
     def add_snake(
         self,
         user_id: str,
@@ -1797,53 +1737,34 @@ class SnakeRoom:
 
         self.snakes[user_id] = {
             "session_id": session_id,
-
             "body": create_snake_body(x, y, angle),
             "angle": angle,
-
-            # Grosor inicial y máximo.
             "radius": 7.0,
             "max_radius": SNAKE_MAX_RADIUS,
-
             "score": 0,
             "kills": 0,
-
             "color": safe_color(color),
             "wallet": wallet,
-
             "bet": money_from_micros(bet_micros),
             "bet_micros": bet_micros,
-
-            # El 100% de la apuesta queda disponible.
             "balance_micros": playable_micros,
             "entry_remaining_micros": playable_micros,
             "collected_micros": 0,
-
             "earned_micros": 0,
             "earned": 0.0,
             "balance": playable_amount,
-
             "alive": True,
             "ready": False,
             "cashed_out": False,
-
             "boosting": False,
             "next_boost_coin_at": 0.0,
             "boost_spent_micros": 0,
-
             "grow_pending": 0,
-
-            # Estado del retiro.
             "cashout_pending": False,
             "cashout_pending_until": 0.0,
             "cashout_task_id": None,
-
             "created_at": time.time(),
         }
-
-    # ========================================================
-    # ACTUALIZAR SALDO
-    # ========================================================
 
     def update_balance(self, snake: dict):
         balance = max(
@@ -1861,10 +1782,6 @@ class SnakeRoom:
 
         snake["earned_micros"] = earned
         snake["earned"] = money_from_micros(earned)
-
-    # ========================================================
-    # SOLTAR MONEDAS AL MORIR
-    # ========================================================
 
     def drop_coins(self, snake: dict):
         if not snake.get("body"):
@@ -1918,15 +1835,10 @@ class SnakeRoom:
 
             remaining -= value
 
-        # Todo el saldo se convierte en monedas.
         snake["balance_micros"] = 0
         snake["entry_remaining_micros"] = 0
 
         self.update_balance(snake)
-
-    # ========================================================
-    # MORIR
-    # ========================================================
 
     def kill_snake(self, snake: dict):
         if not snake.get("alive"):
@@ -1934,16 +1846,10 @@ class SnakeRoom:
 
         snake["alive"] = False
         snake["boosting"] = False
-
-        # Cancela el retiro si muere durante la cuenta regresiva.
         snake["cashout_pending"] = False
         snake["cashout_pending_until"] = 0.0
 
         self.drop_coins(snake)
-
-    # ========================================================
-    # SOLTAR MONEDA AL IMPULSARSE
-    # ========================================================
 
     def drop_boost_coin(self, snake: dict) -> bool:
         coin_value = self.get_coin_value()
@@ -1960,7 +1866,6 @@ class SnakeRoom:
             snake["boosting"] = False
             return False
 
-        # Descuenta exactamente el valor de la moneda.
         snake["balance_micros"] -= coin_value
         snake["boost_spent_micros"] += coin_value
 
@@ -2005,10 +1910,6 @@ class SnakeRoom:
 
         return True
 
-    # ========================================================
-    # RECOGER MONEDAS Y CRECER
-    # ========================================================
-
     def collect_coins(self, snake: dict, head: dict):
         collected = []
 
@@ -2029,19 +1930,13 @@ class SnakeRoom:
 
             value = int(coin["value_micros"])
 
-            # Aumentar el saldo.
             snake["balance_micros"] += value
             snake["collected_micros"] += value
-
-            # Aumentar puntuación.
             snake["score"] += 1
-
-            # Una unidad de largo por cada moneda.
             snake["grow_pending"] = (
                 snake.get("grow_pending", 0) + 1
             )
 
-            # Aumentar ligeramente el grosor.
             current_radius = float(
                 snake.get("radius", 7.0)
             )
@@ -2056,10 +1951,6 @@ class SnakeRoom:
             )
 
         self.update_balance(snake)
-
-    # ========================================================
-    # COMER COMIDA Y CRECER
-    # ========================================================
 
     def collect_food(self, snake: dict, head: dict):
         collected = []
@@ -2084,11 +1975,9 @@ class SnakeRoom:
                 int(food.get("growth", FOOD_GROWTH))
             )
 
-            # CRECIMIENTO DE LARGO.
             snake["grow_pending"] += growth
             snake["score"] += growth
 
-            # CRECIMIENTO DE ANCHO Y ALTO.
             current_radius = float(
                 snake.get("radius", 7.0)
             )
@@ -2101,10 +1990,6 @@ class SnakeRoom:
                 max_radius,
                 current_radius + (FOOD_RADIUS_GROWTH * growth)
             )
-
-    # ========================================================
-    # COLISIONES
-    # ========================================================
 
     def check_collision(
         self,
@@ -2146,10 +2031,6 @@ class SnakeRoom:
 
         return None
 
-    # ========================================================
-    # ACTUALIZAR MOVIMIENTO
-    # ========================================================
-
     def update_snake(self, user_id: str):
         snake = self.snakes[user_id]
 
@@ -2162,7 +2043,6 @@ class SnakeRoom:
 
         now = time.monotonic()
 
-        # Mientras impulsa, suelta monedas cada 0.25 segundos.
         if snake.get("boosting"):
             if now >= snake.get("next_boost_coin_at", 0):
                 if self.drop_boost_coin(snake):
@@ -2211,10 +2091,6 @@ class SnakeRoom:
         else:
             snake["body"].pop()
 
-    # ========================================================
-    # ESTADO PÚBLICO
-    # ========================================================
-
     def public_state(self):
         public_snakes = {}
 
@@ -2234,33 +2110,23 @@ class SnakeRoom:
             public_snakes[uid] = {
                 "body": snake["body"],
                 "angle": snake["angle"],
-
-                # Envía el tamaño real, reducido durante el impulso.
                 "radius": self.get_snake_radius(snake),
-
                 "score": snake["score"],
                 "kills": snake["kills"],
-
                 "color": snake["color"],
                 "wallet": snake["wallet"],
-
                 "bet": snake["bet"],
-
                 "balance": snake["balance"],
                 "balance_micros": snake["balance_micros"],
-
                 "earned": snake["earned"],
                 "earned_micros": snake["earned_micros"],
-
                 "alive": snake["alive"],
                 "ready": snake["ready"],
                 "boosting": snake["boosting"],
-
                 "cashout_pending": snake.get(
                     "cashout_pending",
                     False
                 ),
-
                 "cashout_seconds": cashout_seconds,
             }
 
@@ -2268,24 +2134,16 @@ class SnakeRoom:
             "type": "GAME_STATE",
             "room_id": self.room_id,
             "bet": self.bet,
-
             "players_count": len(self.connections),
             "max_players": MAX_SNAKE_PLAYERS,
-
             "snakes": public_snakes,
-
             "foods": self.foods,
             "coins": self.coins,
-
             "world": {
                 "width": WORLD_WIDTH,
                 "height": WORLD_HEIGHT,
             },
         }
-
-    # ========================================================
-    # TRANSMITIR ESTADO
-    # ========================================================
 
     async def broadcast(self):
         message = self.public_state()
@@ -2295,10 +2153,6 @@ class SnakeRoom:
                 await ws.send_json(message)
             except Exception:
                 pass
-
-    # ========================================================
-    # BUCLE DEL JUEGO
-    # ========================================================
 
     async def game_loop(self):
         if self.is_running:
@@ -2400,10 +2254,6 @@ async def snake_game_endpoint(
     room = None
     reserved = False
 
-    # ========================================================
-    # ASIGNACIÓN Y RESERVA ATÓMICA
-    # ========================================================
-
     async with snake_rooms_lock:
         already_playing = any(
             user_id in existing_room.connections
@@ -2443,8 +2293,6 @@ async def snake_game_endpoint(
                 f"snake-entry:{room.room_id}:{user_id}:{session_id}"
             )
 
-            # La función SQL procesa la entrada.
-            # El saldo jugable devuelto se utiliza como saldo inicial.
             success, message, playable_micros = enter_snake_game(
                 user_id,
                 bet,
@@ -2489,10 +2337,6 @@ async def snake_game_endpoint(
     if not room.is_running:
         asyncio.create_task(room.game_loop())
 
-    # ========================================================
-    # MENSAJES DEL JUGADOR
-    # ========================================================
-
     try:
         while True:
             data = await websocket.receive_json()
@@ -2504,18 +2348,10 @@ async def snake_game_endpoint(
                 data.get("type", "")
             ).upper()
 
-            # ------------------------------------------------
-            # PING
-            # ------------------------------------------------
-
             if msg_type == "PING":
                 await websocket.send_json({
                     "type": "PONG"
                 })
-
-            # ------------------------------------------------
-            # READY
-            # ------------------------------------------------
 
             elif msg_type == "READY":
                 async with room.lock:
@@ -2525,10 +2361,6 @@ async def snake_game_endpoint(
                         snake["ready"] = True
 
                 await room.broadcast()
-
-            # ------------------------------------------------
-            # STEER
-            # ------------------------------------------------
 
             elif msg_type == "STEER":
                 try:
@@ -2545,15 +2377,10 @@ async def snake_game_endpoint(
                             and snake["alive"]
                             and snake["ready"]
                         ):
-                            # Durante el retiro puede seguir girando.
                             snake["angle"] = angle
 
                 except (ValueError, TypeError):
                     pass
-
-            # ------------------------------------------------
-            # BOOST START
-            # ------------------------------------------------
 
             elif msg_type == "BOOST_START":
                 async with room.lock:
@@ -2570,17 +2397,11 @@ async def snake_game_endpoint(
                     ):
                         if not snake.get("boosting"):
                             snake["boosting"] = True
-
-                            # Primera moneda al comenzar el impulso.
                             snake["next_boost_coin_at"] = (
                                 time.monotonic()
                             )
 
                 await room.broadcast()
-
-            # ------------------------------------------------
-            # BOOST STOP
-            # ------------------------------------------------
 
             elif msg_type == "BOOST_STOP":
                 async with room.lock:
@@ -2590,10 +2411,6 @@ async def snake_game_endpoint(
                         snake["boosting"] = False
 
                 await room.broadcast()
-
-            # ------------------------------------------------
-            # CASH OUT
-            # ------------------------------------------------
 
             elif msg_type == "CASH_OUT":
                 cashout_task_id = None
@@ -2618,10 +2435,6 @@ async def snake_game_endpoint(
                         )
 
                         snake["cashout_task_id"] = cashout_task_id
-
-                        # No puede seguir impulsándose durante
-                        # el proceso de retiro.
-                        # Sí puede moverse y recoger monedas.
                         snake["boosting"] = False
 
                 if cashout_task_id:
@@ -2636,10 +2449,6 @@ async def snake_game_endpoint(
                     })
 
                     await room.broadcast()
-
-                    # ========================================
-                    # PROCESAR RETIRO DESPUÉS DE 20 SEGUNDOS
-                    # ========================================
 
                     async def finish_cashout(
                         target_user_id: str,
@@ -2675,16 +2484,11 @@ async def snake_game_endpoint(
                                     )
                                 )
 
-                                # COMPROBAR SI EXISTE SALDO PARA RETIRAR.
                                 if balance_micros <= 0:
-
-                                    # No se mata la serpiente.
-                                    # El jugador puede continuar jugando.
                                     current_snake["cashout_pending"] = False
                                     current_snake["cashout_pending_until"] = 0
                                     current_snake["cashout_task_id"] = None
                                     current_snake["boosting"] = False
-
                                     no_balance = True
 
                                 else:
@@ -2698,11 +2502,9 @@ async def snake_game_endpoint(
                                         f"{current_snake['session_id']}"
                                     )
 
-                                    # La serpiente termina su partida.
                                     current_snake["alive"] = False
                                     current_snake["boosting"] = False
                                     current_snake["cashed_out"] = True
-
                                     current_snake["cashout_pending"] = False
                                     current_snake["cashout_pending_until"] = 0
 
@@ -2715,10 +2517,6 @@ async def snake_game_endpoint(
                             else:
                                 cashout_cancelled = True
 
-                        # ====================================================
-                        # SI NO TIENE SALDO, NO SE PROCESA NINGÚN RETIRO.
-                        # ====================================================
-
                         if no_balance:
                             try:
                                 await send_error(
@@ -2730,10 +2528,6 @@ async def snake_game_endpoint(
 
                             await room.broadcast()
                             return
-
-                        # ====================================================
-                        # SI MURIÓ O SE CANCELÓ ANTES DE TERMINAR LOS 20 SEG.
-                        # ====================================================
 
                         if cashout_data is None:
                             if cashout_cancelled:
@@ -2751,12 +2545,6 @@ async def snake_game_endpoint(
 
                             await room.broadcast()
                             return
-
-                        # ====================================================
-                        # PROCESAR LIQUIDACIÓN EN SUPABASE.
-                        # LA FUNCIÓN SQL CALCULA EL 6% DE COMISIÓN.
-                        # EL JUGADOR RECIBE EL 94% NETO.
-                        # ====================================================
 
                         paid, payment_message = settle_snake_cashout(
                             user_id=target_user_id,
@@ -2776,26 +2564,17 @@ async def snake_game_endpoint(
                                 if paid:
                                     current_snake["balance_micros"] = 0
                                     current_snake["entry_remaining_micros"] = 0
-
                                     current_snake["cashout_pending"] = False
                                     current_snake["cashout_pending_until"] = 0
                                     current_snake["cashout_task_id"] = None
-
                                     room.update_balance(current_snake)
 
                                 else:
-                                    # Si falla la liquidación,
-                                    # el jugador puede continuar jugando.
                                     current_snake["alive"] = True
                                     current_snake["cashed_out"] = False
-
                                     current_snake["cashout_pending"] = False
                                     current_snake["cashout_pending_until"] = 0
                                     current_snake["cashout_task_id"] = None
-
-                        # ====================================================
-                        # NOTIFICAR RESULTADO DEL RETIRO.
-                        # ====================================================
 
                         try:
                             if paid:
@@ -2847,10 +2626,6 @@ async def snake_game_endpoint(
             f"ERROR WebSocket Snake {room.room_id}: {exc!r}"
         )
 
-    # ========================================================
-    # DESCONECTAR JUGADOR
-    # ========================================================
-
     finally:
         async with room.lock:
             if room.connections.get(user_id) is websocket:
@@ -2858,655 +2633,26 @@ async def snake_game_endpoint(
 
             snake = room.snakes.get(user_id)
 
-            # Si se desconecta vivo, muere y su saldo cae
-            # en monedas. Si ya retiró, no se vuelve a liquidar.
             if snake and snake.get("alive"):
                 room.kill_snake(snake)
 
-            # La sala queda disponible para nuevos jugadores.
             if not room.connections:
                 room.is_running = False
-
                 room.snakes.clear()
                 room.coins.clear()
                 room.foods.clear()
-
                 room.spawn_food(FOOD_INITIAL_COUNT)
 
                 print(
                     f"SALA SNAKE DISPONIBLE: {room.room_id}"
                 )
 
+
 # ============================================================
-# ADMINISTRADOR AXIOM - NUEVO PANEL
-# Secciones: Resumen, Clientes, Bonos, Retiros y Depósitos
+# PARCHÍS: CONFIGURACIÓN Y LÓGICA
 # ============================================================
 
-from fastapi import Header, HTTPException
-
-
-def _admin_require(authorization: str):
-    """Verifica el token y que el usuario sea administrador habilitado."""
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="Debes iniciar sesión.")
-
-    token = authorization.split(" ", 1)[1].strip()
-
-    try:
-        auth_response = supabase.auth.get_user(token)
-        auth_user = getattr(auth_response, "user", None)
-
-        if not auth_user:
-            raise HTTPException(status_code=401, detail="Sesión no válida.")
-
-        admin_id = str(auth_user.id)
-
-        admin_response = (
-            supabase.table("admin_users")
-            .select("user_id")
-            .eq("user_id", admin_id)
-            .eq("enabled", True)
-            .limit(1)
-            .execute()
-        )
-
-        if not admin_response.data:
-            raise HTTPException(
-                status_code=403,
-                detail="No tienes permisos de administrador."
-            )
-
-        return admin_id
-
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=401, detail="No se pudo verificar la sesión.")
-
-
-def _admin_all_rows(table_name: str, columns: str = "*"):
-    """Obtiene todos los registros por páginas."""
-    results = []
-    start = 0
-    page_size = 1000
-
-    while True:
-        response = (
-            supabase.table(table_name)
-            .select(columns)
-            .range(start, start + page_size - 1)
-            .execute()
-        )
-
-        rows = response.data or []
-        results.extend(rows)
-
-        if len(rows) < page_size:
-            break
-
-        start += page_size
-
-    return results
-
-
-def _admin_attach_clients(rows):
-    """Agrega los datos del perfil a solicitudes de depósitos o retiros."""
-    user_ids = list({
-        row.get("user_id")
-        for row in rows
-        if row.get("user_id")
-    })
-
-    if not user_ids:
-        return rows
-
-    profiles = (
-        supabase.table("profiles")
-        .select(
-            "id,first_name,middle_name,last_name,second_last_name,"
-            "doc_type,doc_number,phone"
-        )
-        .in_("id", user_ids)
-        .execute()
-    )
-
-    profile_map = {
-        str(profile["id"]): profile
-        for profile in (profiles.data or [])
-    }
-
-    for row in rows:
-        row["client"] = profile_map.get(str(row.get("user_id")))
-
-    return rows
-
-
-# ------------------------------------------------------------
-# 1. RESUMEN GENERAL
-# ------------------------------------------------------------
-
-@app.get("/admin/summary")
-def admin_summary(authorization: str = Header(None)):
-    _admin_require(authorization)
-
-    admin_rows = _admin_all_rows("admin_users", "user_id")
-    admin_ids = {
-        str(row["user_id"])
-        for row in admin_rows
-        if row.get("user_id")
-    }
-
-    profiles = _admin_all_rows(
-        "profiles",
-        "id,balance,withdraw_balance,bonus_balance"
-    )
-
-    # Excluir las cuentas administrativas de todos los totales.
-    clients = [
-        profile for profile in profiles
-        if str(profile.get("id")) not in admin_ids
-    ]
-
-    commissions = _admin_all_rows(
-        "comisiones",
-        "comision_axiom"
-    )
-
-    return {
-        "total_clients": len(clients),
-        "money_play": round(sum(
-            float(p.get("balance") or 0) for p in clients
-        ), 2),
-        "money_withdraw": round(sum(
-            float(p.get("withdraw_balance") or 0) for p in clients
-        ), 2),
-        "money_bonus": round(sum(
-            float(p.get("bonus_balance") or 0) for p in clients
-        ), 2),
-        "axiom_commission": round(sum(
-            float(c.get("comision_axiom") or 0) for c in commissions
-        ), 2)
-    }
-
-
-# ------------------------------------------------------------
-# 2. CLIENTES
-# ------------------------------------------------------------
-
-@app.get("/admin/clients")
-def admin_clients(
-    q: str = "",
-    limit: int = 100,
-    offset: int = 0,
-    authorization: str = Header(None)
-):
-    admin_id = _admin_require(authorization)
-
-    limit = max(1, min(limit, 500))
-    offset = max(0, offset)
-
-    admin_rows = _admin_all_rows("admin_users", "user_id")
-    admin_ids = {
-        str(row["user_id"])
-        for row in admin_rows
-        if row.get("user_id")
-    }
-
-    profiles = _admin_all_rows("profiles")
-
-    profiles = [
-        p for p in profiles
-        if str(p.get("id")) not in admin_ids
-    ]
-
-    if q.strip():
-        term = q.strip().lower()
-
-        def matches(profile):
-            fields = [
-                profile.get("first_name"),
-                profile.get("middle_name"),
-                profile.get("last_name"),
-                profile.get("second_last_name"),
-                profile.get("doc_number"),
-                profile.get("phone"),
-                profile.get("referral_code")
-            ]
-
-            return any(
-                term in str(value or "").lower()
-                for value in fields
-            )
-
-        profiles = [p for p in profiles if matches(p)]
-
-    total = len(profiles)
-
-    return {
-        "total": total,
-        "clients": profiles[offset:offset + limit]
-    }
-
-
-@app.patch("/admin/clients/{user_id}")
-def admin_update_client(
-    user_id: str,
-    payload: dict,
-    authorization: str = Header(None)
-):
-    admin_id = _admin_require(authorization)
-
-    admin_check = (
-        supabase.table("admin_users")
-        .select("user_id")
-        .eq("user_id", user_id)
-        .limit(1)
-        .execute()
-    )
-
-    if admin_check.data:
-        raise HTTPException(
-            status_code=400,
-            detail="No se pueden modificar cuentas administrativas."
-        )
-
-    allowed_fields = {
-        "first_name",
-        "middle_name",
-        "last_name",
-        "second_last_name",
-        "doc_type",
-        "doc_number",
-        "phone",
-        "birth_date",
-        "bonus_code",
-        "referral_code",
-        "referred_by"
-    }
-
-    changes = {
-        key: value
-        for key, value in payload.items()
-        if key in allowed_fields
-    }
-
-    if not changes:
-        raise HTTPException(
-            status_code=400,
-            detail="No hay datos válidos para modificar."
-        )
-
-    result = (
-        supabase.table("profiles")
-        .update(changes)
-        .eq("id", user_id)
-        .execute()
-    )
-
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Cliente no encontrado.")
-
-    return {"success": True, "client": result.data[0]}
-
-
-@app.post("/admin/clients/{user_id}/balance")
-def admin_adjust_client_balance(
-    user_id: str,
-    payload: dict,
-    authorization: str = Header(None)
-):
-    admin_id = _admin_require(authorization)
-
-    wallet = payload.get("wallet")
-    amount = payload.get("amount")
-
-    if wallet not in ("play", "withdraw", "bonus"):
-        raise HTTPException(
-            status_code=400,
-            detail="Billetera no válida. Usa play, withdraw o bonus."
-        )
-
-    try:
-        amount = float(amount)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="Monto no válido.")
-
-    if amount == 0:
-        raise HTTPException(
-            status_code=400,
-            detail="El ajuste no puede ser cero."
-        )
-
-    return rpc_json(
-        "admin_adjust_client_balance",
-        {
-            "p_admin_user_id": admin_id,
-            "p_user_id": user_id,
-            "p_wallet": wallet,
-            "p_amount": amount
-        }
-    )
-
-
-# ------------------------------------------------------------
-# 3. BONOS
-# ------------------------------------------------------------
-
-@app.get("/admin/bonuses")
-def admin_bonuses(authorization: str = Header(None)):
-    _admin_require(authorization)
-
-    bonuses = _admin_all_rows("bonus_codes")
-    bonuses.sort(
-        key=lambda item: item.get("id") or 0,
-        reverse=True
-    )
-
-    return {"bonuses": bonuses}
-
-
-@app.post("/admin/bonuses")
-def admin_create_bonus(
-    payload: dict,
-    authorization: str = Header(None)
-):
-    _admin_require(authorization)
-
-    code = str(payload.get("code") or "").strip().upper()
-    amount = payload.get("amount")
-    max_uses = payload.get("max_uses")
-    starts_at = payload.get("starts_at")
-    expires_at = payload.get("expires_at")
-
-    if not code:
-        raise HTTPException(status_code=400, detail="Código obligatorio.")
-
-    try:
-        amount = float(amount)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="Monto no válido.")
-
-    if amount <= 0:
-        raise HTTPException(
-            status_code=400,
-            detail="El monto del bono debe ser mayor que cero."
-        )
-
-    if max_uses is not None:
-        try:
-            max_uses = int(max_uses)
-        except (TypeError, ValueError):
-            raise HTTPException(
-                status_code=400,
-                detail="El máximo de usos no es válido."
-            )
-
-        if max_uses <= 0:
-            raise HTTPException(
-                status_code=400,
-                detail="El máximo de usos debe ser mayor que cero."
-            )
-
-    existing = (
-        supabase.table("bonus_codes")
-        .select("id")
-        .eq("code", code)
-        .limit(1)
-        .execute()
-    )
-
-    if existing.data:
-        raise HTTPException(
-            status_code=409,
-            detail="Ese código de bono ya existe."
-        )
-
-    new_bonus = {
-        "code": code,
-        "amount": amount,
-        "is_active": bool(payload.get("is_active", True)),
-        "starts_at": starts_at,
-        "expires_at": expires_at,
-        "max_uses": max_uses,
-        "uses_count": 0
-    }
-
-    result = (
-        supabase.table("bonus_codes")
-        .insert(new_bonus)
-        .execute()
-    )
-
-    return {"success": True, "bonus": result.data[0]}
-
-
-@app.patch("/admin/bonuses/{bonus_id}")
-def admin_update_bonus(
-    bonus_id: int,
-    payload: dict,
-    authorization: str = Header(None)
-):
-    _admin_require(authorization)
-
-    allowed_fields = {
-        "amount",
-        "is_active",
-        "starts_at",
-        "expires_at",
-        "max_uses"
-    }
-
-    changes = {
-        key: value
-        for key, value in payload.items()
-        if key in allowed_fields
-    }
-
-    if not changes:
-        raise HTTPException(
-            status_code=400,
-            detail="No hay datos válidos para modificar."
-        )
-
-    if "amount" in changes:
-        try:
-            changes["amount"] = float(changes["amount"])
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="Monto no válido.")
-
-        if changes["amount"] <= 0:
-            raise HTTPException(
-                status_code=400,
-                detail="El monto debe ser mayor que cero."
-            )
-
-    if "max_uses" in changes and changes["max_uses"] is not None:
-        try:
-            changes["max_uses"] = int(changes["max_uses"])
-        except (TypeError, ValueError):
-            raise HTTPException(
-                status_code=400,
-                detail="Máximo de usos no válido."
-            )
-
-        if changes["max_uses"] <= 0:
-            raise HTTPException(
-                status_code=400,
-                detail="El máximo de usos debe ser mayor que cero."
-            )
-
-    result = (
-        supabase.table("bonus_codes")
-        .update(changes)
-        .eq("id", bonus_id)
-        .execute()
-    )
-
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Bono no encontrado.")
-
-    return {"success": True, "bonus": result.data[0]}
-
-
-# ------------------------------------------------------------
-# 4. RETIROS
-# ------------------------------------------------------------
-
-@app.get("/admin/withdrawals")
-def admin_withdrawals(
-    status: str = "",
-    limit: int = 100,
-    offset: int = 0,
-    authorization: str = Header(None)
-):
-    _admin_require(authorization)
-
-    limit = max(1, min(limit, 500))
-    offset = max(0, offset)
-
-    query = (
-        supabase.table("withdrawal_requests")
-        .select("*")
-        .order("created_at", desc=True)
-    )
-
-    if status:
-        query = query.eq("status", status)
-
-    result = query.range(offset, offset + limit - 1).execute()
-    rows = _admin_attach_clients(result.data or [])
-
-    return {
-        "withdrawals": rows,
-        "count": len(rows)
-    }
-
-
-@app.post("/admin/withdrawals/{withdrawal_id}/approve")
-def admin_approve_withdrawal(
-    withdrawal_id: str,
-    payload: dict = None,
-    authorization: str = Header(None)
-):
-    admin_id = _admin_require(authorization)
-    note = (payload or {}).get("admin_note")
-
-    return rpc_json(
-        "admin_approve_withdrawal",
-        {
-            "p_admin_user_id": admin_id,
-            "p_withdrawal_id": withdrawal_id,
-            "p_admin_note": note
-        }
-    )
-
-
-@app.post("/admin/withdrawals/{withdrawal_id}/reject")
-def admin_reject_withdrawal(
-    withdrawal_id: str,
-    payload: dict = None,
-    authorization: str = Header(None)
-):
-    admin_id = _admin_require(authorization)
-    note = (payload or {}).get("admin_note")
-
-    return rpc_json(
-        "admin_reject_withdrawal",
-        {
-            "p_admin_user_id": admin_id,
-            "p_withdrawal_id": withdrawal_id,
-            "p_admin_note": note
-        }
-    )
-
-
-@app.post("/admin/withdrawals/{withdrawal_id}/complete")
-def admin_complete_withdrawal(
-    withdrawal_id: str,
-    payload: dict = None,
-    authorization: str = Header(None)
-):
-    admin_id = _admin_require(authorization)
-    note = (payload or {}).get("admin_note")
-
-    return rpc_json(
-        "admin_complete_withdrawal",
-        {
-            "p_admin_user_id": admin_id,
-            "p_withdrawal_id": withdrawal_id,
-            "p_admin_note": note
-        }
-    )
-
-
-# ------------------------------------------------------------
-# 5. DEPÓSITOS
-# ------------------------------------------------------------
-
-@app.get("/admin/deposits")
-def admin_deposits(
-    status: str = "",
-    limit: int = 100,
-    offset: int = 0,
-    authorization: str = Header(None)
-):
-    _admin_require(authorization)
-
-    limit = max(1, min(limit, 500))
-    offset = max(0, offset)
-
-    query = (
-        supabase.table("deposit_requests")
-        .select("*")
-        .order("created_at", desc=True)
-    )
-
-    if status:
-        query = query.eq("status", status)
-
-    result = query.range(offset, offset + limit - 1).execute()
-    rows = _admin_attach_clients(result.data or [])
-
-    return {
-        "deposits": rows,
-        "count": len(rows)
-    }
-
-
-@app.post("/admin/deposits/{deposit_id}/approve")
-def admin_approve_deposit(
-    deposit_id: int,
-    authorization: str = Header(None)
-):
-    admin_id = _admin_require(authorization)
-
-    return rpc_json(
-        "admin_approve_deposit",
-        {
-            "p_admin_user_id": admin_id,
-            "p_deposit_id": deposit_id
-        }
-    )
-
-
-@app.post("/admin/deposits/{deposit_id}/reject")
-def admin_reject_deposit(
-    deposit_id: int,
-    payload: dict = None,
-    authorization: str = Header(None)
-):
-    admin_id = _admin_require(authorization)
-    note = (payload or {}).get("admin_note")
-
-    return rpc_json(
-        "admin_reject_deposit",
-        {
-            "p_admin_user_id": admin_id,
-            "p_deposit_id": deposit_id,
-            "p_admin_note": note
-        }
-    )
-    PARCHIS_BETS = (0.25, 1.00, 10.00)
+PARCHIS_BETS = (0.25, 1.00, 10.00)
 PARCHIS_TRACK_LEN = 68
 PARCHIS_HOME_STRETCH_LEN = 8
 PARCHIS_SAFE_SPOTS = {0, 5, 12, 17, 22, 29, 34, 39, 46, 51, 56, 63}
@@ -4079,3 +3225,633 @@ async def parchis_ws_endpoint(
             if p and p.get("websocket") is websocket:
                 p["connected"] = False
                 p["websocket"] = None
+
+
+# ============================================================
+# ADMINISTRADOR AXIOM - NUEVO PANEL
+# Secciones: Resumen, Clientes, Bonos, Retiros y Depósitos
+# ============================================================
+
+from fastapi import Header, HTTPException
+
+
+def _admin_require(authorization: str):
+    """Verifica el token y que el usuario sea administrador habilitado."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Debes iniciar sesión.")
+
+    token = authorization.split(" ", 1)[1].strip()
+
+    try:
+        auth_response = supabase.auth.get_user(token)
+        auth_user = getattr(auth_response, "user", None)
+
+        if not auth_user:
+            raise HTTPException(status_code=401, detail="Sesión no válida.")
+
+        admin_id = str(auth_user.id)
+
+        admin_response = (
+            supabase.table("admin_users")
+            .select("user_id")
+            .eq("user_id", admin_id)
+            .eq("enabled", True)
+            .limit(1)
+            .execute()
+        )
+
+        if not admin_response.data:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permisos de administrador."
+            )
+
+        return admin_id
+
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="No se pudo verificar la sesión.")
+
+
+def _admin_all_rows(table_name: str, columns: str = "*"):
+    """Obtiene todos los registros por páginas."""
+    results = []
+    start = 0
+    page_size = 1000
+
+    while True:
+        response = (
+            supabase.table(table_name)
+            .select(columns)
+            .range(start, start + page_size - 1)
+            .execute()
+        )
+
+        rows = response.data or []
+        results.extend(rows)
+
+        if len(rows) < page_size:
+            break
+
+        start += page_size
+
+    return results
+
+
+def _admin_attach_clients(rows):
+    """Agrega los datos del perfil a solicitudes de depósitos o retiros."""
+    user_ids = list({
+        row.get("user_id")
+        for row in rows
+        if row.get("user_id")
+    })
+
+    if not user_ids:
+        return rows
+
+    profiles = (
+        supabase.table("profiles")
+        .select(
+            "id,first_name,middle_name,last_name,second_last_name,"
+            "doc_type,doc_number,phone"
+        )
+        .in_("id", user_ids)
+        .execute()
+    )
+
+    profile_map = {
+        str(profile["id"]): profile
+        for profile in (profiles.data or [])
+    }
+
+    for row in rows:
+        row["client"] = profile_map.get(str(row.get("user_id")))
+
+    return rows
+
+
+# ------------------------------------------------------------
+# 1. RESUMEN GENERAL
+# ------------------------------------------------------------
+
+@app.get("/admin/summary")
+def admin_summary(authorization: str = Header(None)):
+    _admin_require(authorization)
+
+    admin_rows = _admin_all_rows("admin_users", "user_id")
+    admin_ids = {
+        str(row["user_id"])
+        for row in admin_rows
+        if row.get("user_id")
+    }
+
+    profiles = _admin_all_rows(
+        "profiles",
+        "id,balance,withdraw_balance,bonus_balance"
+    )
+
+    clients = [
+        profile for profile in profiles
+        if str(profile.get("id")) not in admin_ids
+    ]
+
+    commissions = _admin_all_rows(
+        "comisiones",
+        "comision_axiom"
+    )
+
+    return {
+        "total_clients": len(clients),
+        "money_play": round(sum(
+            float(p.get("balance") or 0) for p in clients
+        ), 2),
+        "money_withdraw": round(sum(
+            float(p.get("withdraw_balance") or 0) for p in clients
+        ), 2),
+        "money_bonus": round(sum(
+            float(p.get("bonus_balance") or 0) for p in clients
+        ), 2),
+        "axiom_commission": round(sum(
+            float(c.get("comision_axiom") or 0) for c in commissions
+        ), 2)
+    }
+
+
+# ------------------------------------------------------------
+# 2. CLIENTES
+# ------------------------------------------------------------
+
+@app.get("/admin/clients")
+def admin_clients(
+    q: str = "",
+    limit: int = 100,
+    offset: int = 0,
+    authorization: str = Header(None)
+):
+    admin_id = _admin_require(authorization)
+
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+
+    admin_rows = _admin_all_rows("admin_users", "user_id")
+    admin_ids = {
+        str(row["user_id"])
+        for row in admin_rows
+        if row.get("user_id")
+    }
+
+    profiles = _admin_all_rows("profiles")
+
+    profiles = [
+        p for p in profiles
+        if str(p.get("id")) not in admin_ids
+    ]
+
+    if q.strip():
+        term = q.strip().lower()
+
+        def matches(profile):
+            fields = [
+                profile.get("first_name"),
+                profile.get("middle_name"),
+                profile.get("last_name"),
+                profile.get("second_last_name"),
+                profile.get("doc_number"),
+                profile.get("phone"),
+                profile.get("referral_code")
+            ]
+
+            return any(
+                term in str(value or "").lower()
+                for value in fields
+            )
+
+        profiles = [p for p in profiles if matches(p)]
+
+    total = len(profiles)
+
+    return {
+        "total": total,
+        "clients": profiles[offset:offset + limit]
+    }
+
+
+@app.patch("/admin/clients/{user_id}")
+def admin_update_client(
+    user_id: str,
+    payload: dict,
+    authorization: str = Header(None)
+):
+    admin_id = _admin_require(authorization)
+
+    admin_check = (
+        supabase.table("admin_users")
+        .select("user_id")
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    )
+
+    if admin_check.data:
+        raise HTTPException(
+            status_code=400,
+            detail="No se pueden modificar cuentas administrativas."
+        )
+
+    allowed_fields = {
+        "first_name",
+        "middle_name",
+        "last_name",
+        "second_last_name",
+        "doc_type",
+        "doc_number",
+        "phone",
+        "birth_date",
+        "bonus_code",
+        "referral_code",
+        "referred_by"
+    }
+
+    changes = {
+        key: value
+        for key, value in payload.items()
+        if key in allowed_fields
+    }
+
+    if not changes:
+        raise HTTPException(
+            status_code=400,
+            detail="No hay datos válidos para modificar."
+        )
+
+    result = (
+        supabase.table("profiles")
+        .update(changes)
+        .eq("id", user_id)
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado.")
+
+    return {"success": True, "client": result.data[0]}
+
+
+@app.post("/admin/clients/{user_id}/balance")
+def admin_adjust_client_balance(
+    user_id: str,
+    payload: dict,
+    authorization: str = Header(None)
+):
+    admin_id = _admin_require(authorization)
+
+    wallet = payload.get("wallet")
+    amount = payload.get("amount")
+
+    if wallet not in ("play", "withdraw", "bonus"):
+        raise HTTPException(
+            status_code=400,
+            detail="Billetera no válida. Usa play, withdraw o bonus."
+        )
+
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Monto no válido.")
+
+    if amount == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="El ajuste no puede ser cero."
+        )
+
+    return rpc_json(
+        "admin_adjust_client_balance",
+        {
+            "p_admin_user_id": admin_id,
+            "p_user_id": user_id,
+            "p_wallet": wallet,
+            "p_amount": amount
+        }
+    )
+
+
+# ------------------------------------------------------------
+# 3. BONOS
+# ------------------------------------------------------------
+
+@app.get("/admin/bonuses")
+def admin_bonuses(authorization: str = Header(None)):
+    _admin_require(authorization)
+
+    bonuses = _admin_all_rows("bonus_codes")
+    bonuses.sort(
+        key=lambda item: item.get("id") or 0,
+        reverse=True
+    )
+
+    return {"bonuses": bonuses}
+
+
+@app.post("/admin/bonuses")
+def admin_create_bonus(
+    payload: dict,
+    authorization: str = Header(None)
+):
+    _admin_require(authorization)
+
+    code = str(payload.get("code") or "").strip().upper()
+    amount = payload.get("amount")
+    max_uses = payload.get("max_uses")
+    starts_at = payload.get("starts_at")
+    expires_at = payload.get("expires_at")
+
+    if not code:
+        raise HTTPException(status_code=400, detail="Código obligatorio.")
+
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Monto no válido.")
+
+    if amount <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="El monto del bono debe ser mayor que cero."
+        )
+
+    if max_uses is not None:
+        try:
+            max_uses = int(max_uses)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail="El máximo de usos no es válido."
+            )
+
+        if max_uses <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="El máximo de usos debe ser mayor que cero."
+            )
+
+    existing = (
+        supabase.table("bonus_codes")
+        .select("id")
+        .eq("code", code)
+        .limit(1)
+        .execute()
+    )
+
+    if existing.data:
+        raise HTTPException(
+            status_code=409,
+            detail="Ese código de bono ya existe."
+        )
+
+    new_bonus = {
+        "code": code,
+        "amount": amount,
+        "is_active": bool(payload.get("is_active", True)),
+        "starts_at": starts_at,
+        "expires_at": expires_at,
+        "max_uses": max_uses,
+        "uses_count": 0
+    }
+
+    result = (
+        supabase.table("bonus_codes")
+        .insert(new_bonus)
+        .execute()
+    )
+
+    return {"success": True, "bonus": result.data[0]}
+
+
+@app.patch("/admin/bonuses/{bonus_id}")
+def admin_update_bonus(
+    bonus_id: int,
+    payload: dict,
+    authorization: str = Header(None)
+):
+    _admin_require(authorization)
+
+    allowed_fields = {
+        "amount",
+        "is_active",
+        "starts_at",
+        "expires_at",
+        "max_uses"
+    }
+
+    changes = {
+        key: value
+        for key, value in payload.items()
+        if key in allowed_fields
+    }
+
+    if not changes:
+        raise HTTPException(
+            status_code=400,
+            detail="No hay datos válidos para modificar."
+        )
+
+    if "amount" in changes:
+        try:
+            changes["amount"] = float(changes["amount"])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Monto no válido.")
+
+        if changes["amount"] <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="El monto debe ser mayor que cero."
+            )
+
+    if "max_uses" in changes and changes["max_uses"] is not None:
+        try:
+            changes["max_uses"] = int(changes["max_uses"])
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail="Máximo de usos no válido."
+            )
+
+        if changes["max_uses"] <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="El máximo de usos debe ser mayor que cero."
+            )
+
+    result = (
+        supabase.table("bonus_codes")
+        .update(changes)
+        .eq("id", bonus_id)
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Bono no encontrado.")
+
+    return {"success": True, "bonus": result.data[0]}
+
+
+# ------------------------------------------------------------
+# 4. RETIROS
+# ------------------------------------------------------------
+
+@app.get("/admin/withdrawals")
+def admin_withdrawals(
+    status: str = "",
+    limit: int = 100,
+    offset: int = 0,
+    authorization: str = Header(None)
+):
+    _admin_require(authorization)
+
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+
+    query = (
+        supabase.table("withdrawal_requests")
+        .select("*")
+        .order("created_at", desc=True)
+    )
+
+    if status:
+        query = query.eq("status", status)
+
+    result = query.range(offset, offset + limit - 1).execute()
+    rows = _admin_attach_clients(result.data or [])
+
+    return {
+        "withdrawals": rows,
+        "count": len(rows)
+    }
+
+
+@app.post("/admin/withdrawals/{withdrawal_id}/approve")
+def admin_approve_withdrawal(
+    withdrawal_id: str,
+    payload: dict = None,
+    authorization: str = Header(None)
+):
+    admin_id = _admin_require(authorization)
+    note = (payload or {}).get("admin_note")
+
+    return rpc_json(
+        "admin_approve_withdrawal",
+        {
+            "p_admin_user_id": admin_id,
+            "p_withdrawal_id": withdrawal_id,
+            "p_admin_note": note
+        }
+    )
+
+
+@app.post("/admin/withdrawals/{withdrawal_id}/reject")
+def admin_reject_withdrawal(
+    withdrawal_id: str,
+    payload: dict = None,
+    authorization: str = Header(None)
+):
+    admin_id = _admin_require(authorization)
+    note = (payload or {}).get("admin_note")
+
+    return rpc_json(
+        "admin_reject_withdrawal",
+        {
+            "p_admin_user_id": admin_id,
+            "p_withdrawal_id": withdrawal_id,
+            "p_admin_note": note
+        }
+    )
+
+
+@app.post("/admin/withdrawals/{withdrawal_id}/complete")
+def admin_complete_withdrawal(
+    withdrawal_id: str,
+    payload: dict = None,
+    authorization: str = Header(None)
+):
+    admin_id = _admin_require(authorization)
+    note = (payload or {}).get("admin_note")
+
+    return rpc_json(
+        "admin_complete_withdrawal",
+        {
+            "p_admin_user_id": admin_id,
+            "p_withdrawal_id": withdrawal_id,
+            "p_admin_note": note
+        }
+    )
+
+
+# ------------------------------------------------------------
+# 5. DEPÓSITOS
+# ------------------------------------------------------------
+
+@app.get("/admin/deposits")
+def admin_deposits(
+    status: str = "",
+    limit: int = 100,
+    offset: int = 0,
+    authorization: str = Header(None)
+):
+    _admin_require(authorization)
+
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+
+    query = (
+        supabase.table("deposit_requests")
+        .select("*")
+        .order("created_at", desc=True)
+    )
+
+    if status:
+        query = query.eq("status", status)
+
+    result = query.range(offset, offset + limit - 1).execute()
+    rows = _admin_attach_clients(result.data or [])
+
+    return {
+        "deposits": rows,
+        "count": len(rows)
+    }
+
+
+@app.post("/admin/deposits/{deposit_id}/approve")
+def admin_approve_deposit(
+    deposit_id: int,
+    authorization: str = Header(None)
+):
+    admin_id = _admin_require(authorization)
+
+    return rpc_json(
+        "admin_approve_deposit",
+        {
+            "p_admin_user_id": admin_id,
+            "p_deposit_id": deposit_id
+        }
+    )
+
+
+@app.post("/admin/deposits/{deposit_id}/reject")
+def admin_reject_deposit(
+    deposit_id: int,
+    payload: dict = None,
+    authorization: str = Header(None)
+):
+    admin_id = _admin_require(authorization)
+    note = (payload or {}).get("admin_note")
+
+    return rpc_json(
+        "admin_reject_deposit",
+        {
+            "p_admin_user_id": admin_id,
+            "p_deposit_id": deposit_id,
+            "p_admin_note": note
+        }
+    )
