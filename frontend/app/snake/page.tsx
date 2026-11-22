@@ -83,7 +83,7 @@ const SKIN_PRESETS: SkinPreset[] = [
 
 const WORLD_WIDTH = 20000;
 const WORLD_HEIGHT = 20000;
-const MIN_VISIBLE_SEGMENTS = 4;
+const MIN_VISIBLE_SEGMENTS = 5;
 
 const SNAKE_BETS: Record<SnakeBet, { amount: number; room: string }> = {
     "0.20": { amount: 0.2, room: "snake_020" },
@@ -104,8 +104,8 @@ function getCoinValue(item: any): number {
 
 /**
  * Recoge cada segmento del cuerpo hacia la cabeza según `sizeFactor` y limita
- * la cantidad de nodos para que la serpiente se haga pequeña en largo y grosor
- * sin estirarse al acelerar o perder monedas.
+ * la cantidad de nodos hasta `MIN_VISIBLE_SEGMENTS` (5) para que la serpiente
+ * se haga pequeña en largo y grosor sin estirarse al acelerar o soltar monedas.
  */
 function contractBodyTowardHead(
     rawBody: { x: number; y: number; radius?: number }[],
@@ -175,11 +175,11 @@ function drawSnakeVisual(
 
     if (!Array.isArray(body) || body.length === 0) return;
 
-    const clampedSize = Math.max(0.38, Math.min(1.4, sizeFactor));
+    const clampedSize = Math.max(0.45, Math.min(1.4, sizeFactor));
     const segLimit =
         typeof maxSegments === "number"
             ? Math.max(MIN_VISIBLE_SEGMENTS, Math.min(body.length, maxSegments))
-            : body.length;
+            : Math.max(MIN_VISIBLE_SEGMENTS, body.length);
 
     const drawBody = contractBodyTowardHead(body, clampedSize, segLimit);
     if (drawBody.length === 0) return;
@@ -195,7 +195,7 @@ function drawSnakeVisual(
         }
         ctx.strokeStyle = glowColor;
         ctx.globalAlpha = 0.22;
-        ctx.lineWidth = Math.max(4, effectiveBodyRadius * 1.65);
+        ctx.lineWidth = Math.max(4.5, effectiveBodyRadius * 1.65);
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
         ctx.stroke();
@@ -210,7 +210,7 @@ function drawSnakeVisual(
             ctx.lineTo(drawBody[i].x, drawBody[i].y);
         }
         ctx.strokeStyle = secondaryColor;
-        ctx.lineWidth = Math.max(5, effectiveBodyRadius * 1.8);
+        ctx.lineWidth = Math.max(5.5, effectiveBodyRadius * 1.8);
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
         ctx.stroke();
@@ -220,9 +220,9 @@ function drawSnakeVisual(
     for (let i = drawBody.length - 1; i >= 1; i--) {
         const seg = drawBody[i];
         const ratio = i / Math.max(drawBody.length, 1);
-        const taper = Math.max(0.45, 1 - ratio * 0.42);
+        const taper = Math.max(0.5, 1 - ratio * 0.4);
         const radius = Math.max(
-            2.5,
+            2.8,
             Number(seg.radius ?? baseBodyRadius) * clampedSize * taper
         );
         const fill = i % 2 === 0 ? primaryColor : secondaryColor;
@@ -254,7 +254,7 @@ function drawSnakeVisual(
         ctx.arc(
             seg.x - radius * 0.25,
             seg.y - radius * 0.25,
-            Math.max(1.2, radius * 0.2),
+            Math.max(1.3, radius * 0.2),
             0,
             Math.PI * 2
         );
@@ -265,7 +265,7 @@ function drawSnakeVisual(
 
     const head = drawBody[0];
     const headRadius = Math.max(
-        6.5,
+        7,
         Number(head.radius ?? baseHeadRadius) * clampedSize
     );
 
@@ -1308,29 +1308,42 @@ export default function SnakeGamePage() {
                 peakBalanceRef.current = balance;
             }
 
-            const referenceBalance = Math.max(
+            // Referencia real del saldo máximo alcanzado; no se detiene en 0.20
+            const peakRef = Math.max(
+                0.01,
                 selectedBetRef.current || 0.2,
                 peakBalanceRef.current
             );
 
-            // Escala por monedas (baja al soltar monedas, sube al ganar)
-            const coinScale =
-                referenceBalance > 0
-                    ? Math.max(0.52, Math.min(1.35, balance / referenceBalance))
-                    : 1;
+            // Proporción de monedas respecto al pico actual (0 si no hay monedas, >0 mientras haya)
+            const walletRatio =
+                balance > 0 ? Math.min(1.5, balance / peakRef) : 0;
 
-            // Al acelerar se recoge y se hace más pequeña sin estirarse
-            const boostShrink = snakeBoosting ? 0.7 : 1;
+            // Encogimiento gradual según el saldo (nunca se congela en 0.20)
+            const coinFactor =
+                0.55 + Math.pow(Math.max(0, Math.min(1.35, walletRatio)), 0.65) * 0.65;
+
+            // Al acelerar se recoge suavemente sin estirarse
+            const boostFactor = snakeBoosting ? 0.82 : 1;
+
             const sizeFactor = isOwnSnake
-                ? Math.max(0.4, Math.min(1.35, coinScale * boostShrink))
-                : boostShrink;
+                ? Math.max(0.48, Math.min(1.35, coinFactor * boostFactor))
+                : boostFactor;
+
+            // Cantidad de segmentos reducida lentamente hasta MIN_VISIBLE_SEGMENTS (5)
+            const segmentRatio =
+                0.22 + Math.pow(Math.max(0, Math.min(1.25, walletRatio)), 0.75) * 0.78;
 
             const maxSegments = isOwnSnake
                 ? Math.max(
                       MIN_VISIBLE_SEGMENTS,
-                      Math.round(
-                          value.body.length *
-                              Math.max(0.45, Math.min(1.2, coinScale * (snakeBoosting ? 0.75 : 1)))
+                      Math.min(
+                          value.body.length,
+                          Math.round(
+                              value.body.length *
+                                  segmentRatio *
+                                  (snakeBoosting ? 0.9 : 1)
+                          )
                       )
                   )
                 : value.body.length;
