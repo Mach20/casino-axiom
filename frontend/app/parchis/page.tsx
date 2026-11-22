@@ -81,6 +81,7 @@ interface ProfileRow {
 
 interface MoveOption {
     diceValue: number;
+    steps: number;
     usedDiceValues: number[];
     label: string;
     isExitFive: boolean;
@@ -294,8 +295,8 @@ function getPieceBoardPoint(
     };
 }
 
-// Avanza una casilla adicional sobre el valor del dado (1 -> 2, 4 -> 5, 12 -> 13)
-function getEffectiveSteps(diceValue: number | null): number {
+// Movimiento exacto del valor del dado (ej. 10 -> 10 casillas, 5 -> 5 casillas)
+function getExactSteps(diceValue: number | null): number {
     if (
         typeof diceValue !== "number" ||
         !Number.isFinite(diceValue) ||
@@ -303,7 +304,7 @@ function getEffectiveSteps(diceValue: number | null): number {
     ) {
         return 0;
     }
-    return diceValue + 1;
+    return Math.round(diceValue);
 }
 
 function hasFiveOrSumFive(diceValues: number[] | null | undefined): boolean {
@@ -323,12 +324,13 @@ function getPieceMoveOptions(
 ): MoveOption[] {
     if (!Array.isArray(diceValues) || diceValues.length === 0) return [];
 
-    // Ficha en casa (-1): sale a la primera estrella / salida de su color si hay 5 o suma 5
+    // Ficha en casa (-1): sale con 5 o suma de 5
     if (piece.stage === -1) {
         const options: MoveOption[] = [];
         if (diceValues.includes(5)) {
             options.push({
                 diceValue: 5,
+                steps: 5,
                 usedDiceValues: [5],
                 label: "Sacar (5)",
                 isExitFive: true,
@@ -339,6 +341,7 @@ function getPieceMoveOptions(
                 if (diceValues[i] + diceValues[j] === 5) {
                     options.push({
                         diceValue: 5,
+                        steps: 5,
                         usedDiceValues: [diceValues[i], diceValues[j]],
                         label: `Sacar (${diceValues[i]}+${diceValues[j]}=5)`,
                         isExitFive: true,
@@ -349,46 +352,50 @@ function getPieceMoveOptions(
         return options;
     }
 
-    // Ficha en juego: puede avanzar usando cualquiera de los dados (+1 casilla extra)
+    // Ficha en pista o meta: avanza exacto el número del dado (ej. 10 -> 10)
     const uniqueDice = Array.from(new Set(diceValues));
     const options: MoveOption[] = [];
 
     for (const val of uniqueDice) {
-        const steps = getEffectiveSteps(val);
+        const steps = getExactSteps(val);
+        if (steps <= 0) continue;
         if (piece.stage === 0 && piece.steps_walked + steps <= 75) {
             options.push({
                 diceValue: val,
+                steps,
                 usedDiceValues: [val],
-                label: `Dado ${val} (+${steps})`,
+                label: `Mover ${steps}`,
                 isExitFive: false,
             });
         } else if (piece.stage === 100 && piece.pos + steps <= 7) {
             options.push({
                 diceValue: val,
+                steps,
                 usedDiceValues: [val],
-                label: `Meta ${val} (+${steps})`,
+                label: `Meta ${steps}`,
                 isExitFive: false,
             });
         }
     }
 
-    // Si dos dados suman 5 y el jugador decide mover una ficha que ya tiene en juego
+    // Si dos dados suman 5 y la ficha ya está en juego, también puede avanzar 5 casillas
     for (let i = 0; i < diceValues.length; i++) {
         for (let j = i + 1; j < diceValues.length; j++) {
             if (diceValues[i] + diceValues[j] === 5) {
-                const steps = getEffectiveSteps(5);
-                if (piece.stage === 0 && piece.steps_walked + steps <= 75) {
+                if (piece.stage === 0 && piece.steps_walked + 5 <= 75) {
                     options.push({
                         diceValue: 5,
+                        steps: 5,
                         usedDiceValues: [diceValues[i], diceValues[j]],
-                        label: `Suma 5 (+${steps})`,
+                        label: "Suma 5 (mover 5)",
                         isExitFive: false,
                     });
-                } else if (piece.stage === 100 && piece.pos + steps <= 7) {
+                } else if (piece.stage === 100 && piece.pos + 5 <= 7) {
                     options.push({
                         diceValue: 5,
+                        steps: 5,
                         usedDiceValues: [diceValues[i], diceValues[j]],
-                        label: `Suma 5 (+${steps})`,
+                        label: "Suma 5 (meta 5)",
                         isExitFive: false,
                     });
                 }
@@ -418,32 +425,36 @@ function randomDiePair(prev?: [number, number]): [number, number] {
     return [randomDieFace(prev?.[0]), randomDieFace(prev?.[1])];
 }
 
+// Secuencia paso a paso empezando desde 0 (0 -> 1 -> 2 -> ... -> totalSteps)
 function getStepPiecePose(
     startPiece: ParchisPiece,
     seatIndex: number,
-    stepOffset: number,
+    stepIndex: number,
     isExitFive: boolean
 ): ParchisPiece {
     const startSpot = START_SPOTS[seatIndex] ?? 0;
 
+    if (stepIndex <= 0) {
+        return startPiece;
+    }
+
     if (startPiece.stage === -1) {
-        const exited: ParchisPiece = {
+        if (!isExitFive) return startPiece;
+        const afterExit: ParchisPiece = {
             ...startPiece,
             stage: 0,
             pos: startSpot,
             steps_walked: 0,
         };
-        if (!isExitFive || stepOffset <= 0) return exited;
-        return getStepPiecePose(exited, seatIndex, stepOffset - 1, false);
+        if (stepIndex === 1) return afterExit;
+        return getStepPiecePose(afterExit, seatIndex, stepIndex - 1, false);
     }
-
-    if (stepOffset <= 0) return startPiece;
 
     let stage = startPiece.stage;
     let pos = startPiece.pos;
     let stepsWalked = startPiece.steps_walked;
 
-    for (let s = 1; s <= stepOffset; s++) {
+    for (let s = 1; s <= stepIndex; s++) {
         if (stage === 0) {
             stepsWalked += 1;
             if (stepsWalked >= 63) {
@@ -511,7 +522,7 @@ function PipDieBox({
 
     return (
         <div
-            className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-zinc-100 border-2 border-zinc-500 p-1 flex items-center justify-center shadow-md transition-transform duration-150 ${
+            className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-zinc-100 border-2 border-zinc-400 p-1 flex items-center justify-center shadow-md transition-transform duration-150 ${
                 rolling ? "rotate-12 scale-105" : "rotate-0 scale-100"
             }`}
         >
@@ -532,46 +543,27 @@ function PipDieBox({
     );
 }
 
-function DragonTriangleDieBox({
-    num,
-    accentColor,
-}: {
-    num: number;
-    accentColor: string;
-}) {
+// Dados en negro cuando NO es el turno del jugador
+function BlackOffTurnDieBox({ num }: { num: number }) {
     const face = clampDieFace(num, 1);
 
     return (
         <div
-            style={{ borderColor: accentColor }}
-            className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-zinc-950 border-2 p-1 flex items-center justify-center shadow-inner opacity-95"
-            title={`Dado en espera: ${face}`}
+            className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-black border border-zinc-800 p-1 flex items-center justify-center shadow-inner"
+            title={`Turno inactivo · Dado ${face}`}
         >
             <svg viewBox="0 0 100 100" className="w-full h-full block">
-                <polygon
-                    points="50,8 92,84 8,84"
-                    fill={accentColor}
-                    fillOpacity="0.24"
-                    stroke={accentColor}
-                    strokeWidth="5"
-                    strokeLinejoin="round"
+                <rect
+                    x="2"
+                    y="2"
+                    width="96"
+                    height="96"
+                    rx="18"
+                    fill="#050505"
+                    stroke="#18181b"
+                    strokeWidth="3"
                 />
-                <polygon
-                    points="50,24 74,68 26,68"
-                    fill="#18181b"
-                    stroke={accentColor}
-                    strokeWidth="2.5"
-                />
-                <text
-                    x="50"
-                    y="58"
-                    textAnchor="middle"
-                    fill="#ffffff"
-                    fontSize="24"
-                    fontWeight="900"
-                >
-                    {face}
-                </text>
+                <circle cx="50" cy="50" r="9" fill="#09090b" />
             </svg>
         </div>
     );
@@ -646,9 +638,11 @@ function PlayerTurnRow({
                 onClick={onRoll}
                 aria-label="Lanzar dados"
                 style={{
-                    borderColor: isActiveTurn ? accentColor : "#3f3f46",
+                    borderColor: isActiveTurn ? accentColor : "#18181b",
                 }}
-                className="bg-zinc-900 border-2 rounded-2xl p-1.5 flex items-center gap-1.5 shadow-lg active:scale-95 transition-all disabled:cursor-default disabled:active:scale-100"
+                className={`${
+                    isActiveTurn ? "bg-zinc-900" : "bg-black"
+                } border-2 rounded-2xl p-1.5 flex items-center gap-1.5 shadow-lg active:scale-95 transition-all disabled:cursor-default disabled:active:scale-100`}
             >
                 {isActiveTurn ? (
                     <>
@@ -657,14 +651,8 @@ function PlayerTurnRow({
                     </>
                 ) : (
                     <>
-                        <DragonTriangleDieBox
-                            num={d1}
-                            accentColor={accentColor}
-                        />
-                        <DragonTriangleDieBox
-                            num={d2}
-                            accentColor={accentColor}
-                        />
+                        <BlackOffTurnDieBox num={d1} />
+                        <BlackOffTurnDieBox num={d2} />
                     </>
                 )}
             </button>
@@ -931,130 +919,129 @@ export default function ParchisGamePage() {
         socketRef.current = null;
     }, [clearAnimTimers]);
 
-    const exitParchisGame = useCallback(
-        async (reasonTitle?: string, reasonMessage?: string) => {
-            closingByUserRef.current = true;
+    const exitParchisGame = useCallback(async () => {
+        closingByUserRef.current = true;
 
-            const currentState = gameStateRef.current;
-            const activeRoomId = currentState?.room_id || roomId;
-            const mySeat = currentState?.players?.find(
-                (pl) => pl.user_id === userIdRef.current
+        const currentState = gameStateRef.current;
+        const activeRoomId = currentState?.room_id || roomId;
+        const mySeat = currentState?.players?.find(
+            (pl) => pl.user_id === userIdRef.current
+        );
+        const hostClosing =
+            currentState !== null &&
+            userIdRef.current !== null &&
+            (currentState.host_user_id === userIdRef.current ||
+                mySeat?.seat_index === 0);
+
+        const ws = socketRef.current;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            try {
+                ws.send(
+                    JSON.stringify({
+                        type: hostClosing ? "CLOSE_ROOM" : "LEAVE_ROOM",
+                        room_id: activeRoomId,
+                    })
+                );
+            } catch {}
+        }
+
+        if (hostClosing && activeRoomId && accessToken) {
+            try {
+                await fetch(
+                    `${API_BASE}/parchis/rooms/${encodeURIComponent(
+                        String(activeRoomId)
+                    )}/close`,
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            Authorization: `Bearer ${accessToken}`,
+                        },
+                    }
+                );
+            } catch {}
+        }
+
+        if (activeRoomId) {
+            setPublicRooms((prev) =>
+                prev.filter((r) => String(r.room_id) !== String(activeRoomId))
             );
-            const hostClosing =
-                currentState !== null &&
-                userIdRef.current !== null &&
-                (currentState.host_user_id === userIdRef.current ||
-                    mySeat?.seat_index === 0);
+        }
 
-            const ws = socketRef.current;
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                try {
-                    ws.send(
-                        JSON.stringify({
-                            type: hostClosing ? "CLOSE_ROOM" : "LEAVE_ROOM",
-                            room_id: activeRoomId,
-                        })
-                    );
-                } catch {}
-            }
+        resetSessionState();
 
-            if (hostClosing && activeRoomId && accessToken) {
-                try {
-                    await fetch(
-                        `${API_BASE}/parchis/rooms/${encodeURIComponent(
-                            String(activeRoomId)
-                        )}/close`,
-                        {
-                            method: "POST",
-                            headers: {
-                                "Content-Type": "application/json",
-                                Authorization: `Bearer ${accessToken}`,
-                            },
-                        }
-                    );
-                } catch {}
-            }
-
-            if (activeRoomId) {
-                setPublicRooms((prev) =>
-                    prev.filter((r) => String(r.room_id) !== String(activeRoomId))
+        if (ws) {
+            ws.onclose = null;
+            ws.onerror = null;
+            ws.onmessage = null;
+            if (
+                ws.readyState === WebSocket.OPEN ||
+                ws.readyState === WebSocket.CONNECTING
+            ) {
+                ws.close(
+                    1000,
+                    hostClosing
+                        ? "Anfitrión cerró la sala"
+                        : "Jugador salió de la partida"
                 );
             }
+        }
 
-            resetSessionState();
+        await loadUserBalances();
+        await fetchPublicRooms();
+    }, [
+        accessToken,
+        fetchPublicRooms,
+        loadUserBalances,
+        resetSessionState,
+        roomId,
+    ]);
 
-            if (ws) {
-                ws.onclose = null;
-                ws.onerror = null;
-                ws.onmessage = null;
-                if (
-                    ws.readyState === WebSocket.OPEN ||
-                    ws.readyState === WebSocket.CONNECTING
-                ) {
-                    ws.close(
-                        1000,
-                        hostClosing
-                            ? "Anfitrión cerró la sala"
-                            : "Jugador salió de la partida"
+    const applyIncomingGameState = useCallback(
+        (nextState: ParchisState) => {
+            if (nextState.status === "closed_by_host") {
+                if (nextState.room_id) {
+                    setPublicRooms((prev) =>
+                        prev.filter(
+                            (r) =>
+                                String(r.room_id) !== String(nextState.room_id)
+                        )
                     );
                 }
+                resetSessionState();
+                showAlert(
+                    "Sala cerrada",
+                    nextState.last_event ||
+                        "El anfitrión cerró la sala y se eliminó la partida."
+                );
+                return;
             }
 
-            await loadUserBalances();
-            await fetchPublicRooms();
+            clearAnimTimers();
+            gameStateRef.current = nextState;
+            setGameState(nextState);
+            setRollingDice(false);
 
-            if (reasonTitle && reasonMessage) {
-                showAlert(reasonTitle, reasonMessage);
+            if (
+                Array.isArray(nextState.dice_pair) &&
+                nextState.dice_pair.length === 2
+            ) {
+                setDisplayedDice([
+                    clampDieFace(nextState.dice_pair[0], 1),
+                    clampDieFace(nextState.dice_pair[1], 1),
+                ]);
+            } else if (
+                Array.isArray(nextState.dice_remaining) &&
+                nextState.dice_remaining.length >= 2
+            ) {
+                setDisplayedDice([
+                    clampDieFace(nextState.dice_remaining[0], 1),
+                    clampDieFace(nextState.dice_remaining[1], 1),
+                ]);
             }
         },
-        [
-            accessToken,
-            fetchPublicRooms,
-            loadUserBalances,
-            resetSessionState,
-            roomId,
-            showAlert,
-        ]
+        [clearAnimTimers, resetSessionState, showAlert]
     );
-
-    const applyIncomingGameState = useCallback((nextState: ParchisState) => {
-        if (nextState.status === "closed_by_host") {
-            if (nextState.room_id) {
-                setPublicRooms((prev) =>
-                    prev.filter(
-                        (r) => String(r.room_id) !== String(nextState.room_id)
-                    )
-                );
-            }
-            resetSessionState();
-            showAlert(
-                "Sala cerrada",
-                nextState.last_event ||
-                    "El anfitrión cerró la sala y se eliminó la partida."
-            );
-            return;
-        }
-
-        clearAnimTimers();
-        gameStateRef.current = nextState;
-        setGameState(nextState);
-        setRollingDice(false);
-
-        if (Array.isArray(nextState.dice_pair) && nextState.dice_pair.length === 2) {
-            setDisplayedDice([
-                clampDieFace(nextState.dice_pair[0], 1),
-                clampDieFace(nextState.dice_pair[1], 1),
-            ]);
-        } else if (
-            Array.isArray(nextState.dice_remaining) &&
-            nextState.dice_remaining.length >= 2
-        ) {
-            setDisplayedDice([
-                clampDieFace(nextState.dice_remaining[0], 1),
-                clampDieFace(nextState.dice_remaining[1], 1),
-            ]);
-        }
-    }, [clearAnimTimers, resetSessionState, showAlert]);
 
     const connectToRoom = useCallback(
         (
@@ -1152,16 +1139,12 @@ export default function ParchisGamePage() {
                                 clearInterval(heartbeatTimer);
                                 heartbeatTimer = null;
                             }
-                            if (data.room_id || targetRoomId) {
-                                const closedId = String(
-                                    data.room_id || targetRoomId
-                                );
-                                setPublicRooms((prev) =>
-                                    prev.filter(
-                                        (r) => String(r.room_id) !== closedId
-                                    )
-                                );
-                            }
+                            const closedId = String(
+                                data.room_id || targetRoomId
+                            );
+                            setPublicRooms((prev) =>
+                                prev.filter((r) => String(r.room_id) !== closedId)
+                            );
                             resetSessionState();
                             ws.onclose = null;
                             ws.close(1000, "Sala cerrada por el anfitrión");
@@ -1193,14 +1176,18 @@ export default function ParchisGamePage() {
                             setIsConnecting(false);
                             showAlert(
                                 "Error del servidor",
-                                data.message || "No se pudo completar la acción."
+                                data.message ||
+                                    "No se pudo completar la acción."
                             );
                             if (!gameStateRef.current) {
                                 resetSessionState();
                             }
                         }
                     } catch (error) {
-                        console.error("Error procesando mensaje Parchís:", error);
+                        console.error(
+                            "Error procesando mensaje Parchís:",
+                            error
+                        );
                     }
                 };
 
@@ -1225,10 +1212,11 @@ export default function ParchisGamePage() {
 
                     if (!wasUserClose) {
                         void fetchPublicRooms();
-                        const reasonText =
+                        showAlert(
+                            "Sala cerrada",
                             event.reason ||
-                            `Se cerró la sala (${event.code}).`;
-                        showAlert("Sala cerrada", reasonText);
+                                `Se cerró la sala (${event.code}).`
+                        );
                     }
 
                     void loadUserBalances();
@@ -1342,6 +1330,7 @@ export default function ParchisGamePage() {
         ws.send(JSON.stringify({ type: "ROLL_DICE" }));
     };
 
+    // Secuencia 0 -> 1 -> 2 -> ... -> steps (ej. si sale 10 se mueve 10; si sale 5 va 0..5)
     const sendMovePiece = useCallback(
         (pieceId: number, option: MoveOption) => {
             const ws = socketRef.current || activeSocket;
@@ -1352,10 +1341,7 @@ export default function ParchisGamePage() {
                 (p) => p.user_id === userIdRef.current
             );
             const startPiece = me?.pieces?.find((pc) => pc.id === pieceId);
-            const totalSteps =
-                startPiece?.stage === -1 && option.isExitFive
-                    ? 1
-                    : getEffectiveSteps(option.diceValue);
+            const exactSteps = getExactSteps(option.diceValue);
 
             if (stepAnimTimerRef.current) {
                 clearTimeout(stepAnimTimerRef.current);
@@ -1366,12 +1352,12 @@ export default function ParchisGamePage() {
                 type: "MOVE_PIECE",
                 piece_id: pieceId,
                 dice_value: option.diceValue,
+                steps_moved: exactSteps,
                 used_dice_values: option.usedDiceValues,
-                steps_moved: getEffectiveSteps(option.diceValue),
                 exit_to_start: Boolean(option.isExitFive),
             });
 
-            if (me && startPiece && totalSteps > 0) {
+            if (me && startPiece && exactSteps > 0) {
                 let currentStep = 0;
                 const runStep = () => {
                     animatedPieceRef.current = {
@@ -1384,9 +1370,9 @@ export default function ParchisGamePage() {
                             Boolean(option.isExitFive)
                         ),
                     };
-                    if (currentStep < totalSteps) {
+                    if (currentStep < exactSteps) {
                         currentStep += 1;
-                        stepAnimTimerRef.current = setTimeout(runStep, 110);
+                        stepAnimTimerRef.current = setTimeout(runStep, 85);
                     } else {
                         stepAnimTimerRef.current = null;
                         if (ws.readyState === WebSocket.OPEN) {
@@ -2387,9 +2373,8 @@ export default function ParchisGamePage() {
 
                                 {canExitHomeWithFive && (
                                     <div className="w-full rounded-lg border border-emerald-500/30 bg-emerald-950/25 px-3 py-1.5 text-center text-[11px] font-bold text-emerald-300">
-                                        Tienes 5 o suma 5: puedes sacar ficha a
-                                        la estrella de tu color o mover una
-                                        ficha en juego.
+                                        5 o suma 5: saca ficha o mueve una en
+                                        juego (0..5).
                                     </div>
                                 )}
 
