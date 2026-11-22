@@ -21,12 +21,12 @@ export default function Home() {
   }, [slides.length]);
 
   return (
-    <div className="min-h-dvh bg-black text-white flex flex-col justify-between select-none font-sans overflow-x-clip">
+    <div className="min-h-screen bg-black text-white flex flex-col justify-between select-none font-sans overflow-x-hidden">
       <Header />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-5 md:px-6 py-5 sm:py-8 space-y-6 sm:space-y-8 flex flex-col justify-center">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-5 md:px-6 py-5 sm:py-8 space-y-6 sm:space-y-8">
         {/* CARRUSEL / BANNER PRINCIPAL */}
-        <section className="relative overflow-hidden rounded-2xl sm:rounded-3xl border border-zinc-800 bg-zinc-950 h-52 xs:h-60 sm:h-72 md:h-[380px] lg:h-[440px]">
+        <section className="relative overflow-hidden rounded-2xl sm:rounded-3xl border border-zinc-800 bg-zinc-950 h-48 sm:h-64 md:h-[340px] lg:h-[380px]">
           {slides.map((imgUrl, index) => (
             <div
               key={index}
@@ -62,15 +62,15 @@ export default function Home() {
         </section>
 
         {/* SECCIÓN DE JUEGOS */}
-        <section className="min-w-0">
+        <section className="w-full min-w-0">
           <h3 className="text-xs sm:text-sm font-black text-zinc-300 uppercase tracking-wider mb-3.5 sm:mb-4 flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
             <span>Juegos Online</span>
           </h3>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-5 w-full">
             {/* TARJETA 1: X vs O */}
-            <div className="min-w-0 bg-zinc-950 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 hover:border-emerald-500/50 transition-all flex flex-col justify-between">
+            <div className="w-full min-w-0 bg-zinc-950 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 hover:border-emerald-500/50 transition-all flex flex-col justify-between">
               <div>
                 <div className="flex justify-between items-center gap-2 mb-3">
                   <span className="text-[10px] bg-emerald-950 text-emerald-400 font-bold px-2.5 py-1 rounded-lg border border-emerald-800/60 uppercase shrink-0">
@@ -100,7 +100,7 @@ export default function Home() {
             </div>
 
             {/* TARJETA 2: Snake Arena */}
-            <div className="min-w-0 bg-zinc-950 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 hover:border-emerald-500/50 transition-all flex flex-col justify-between">
+            <div className="w-full min-w-0 bg-zinc-950 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 hover:border-emerald-500/50 transition-all flex flex-col justify-between">
               <div>
                 <div className="flex justify-between items-center gap-2 mb-3">
                   <span className="text-[10px] bg-emerald-950 text-emerald-400 font-bold px-2.5 py-1 rounded-lg border border-emerald-800/60 uppercase shrink-0">
@@ -129,8 +129,8 @@ export default function Home() {
               </Link>
             </div>
 
-            {/* TARJETA 3: Billar (lista para completar) */}
-            <div className="min-w-0 bg-zinc-950 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 hover:border-emerald-500/50 transition-all flex flex-col justify-between">
+            {/* TARJETA 3: Parchis */}
+            <div className="w-full min-w-0 bg-zinc-950 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 hover:border-emerald-500/50 transition-all flex flex-col justify-between">
               <div>
                 <div className="flex justify-between items-center gap-2 mb-3">
                   <span className="text-[10px] bg-emerald-950 text-emerald-400 font-bold px-2.5 py-1 rounded-lg border border-emerald-800/60 uppercase shrink-0">
