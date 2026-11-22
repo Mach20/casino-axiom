@@ -25,6 +25,7 @@ interface ParchisPiece {
 interface ParchisPlayerState {
     user_id: string;
     player_name?: string;
+    doc_number?: string;
     cedula?: string;
     seat_index: number;
     team: string | null;
@@ -38,6 +39,7 @@ interface ParchisState {
     room_id: string;
     host_user_id?: string;
     host_name?: string;
+    host_doc_number?: string;
     host_cedula?: string;
     bet: number;
     max_players: number;
@@ -57,12 +59,23 @@ interface ParchisState {
 interface PublicRoomItem {
     room_id: string;
     host_name?: string;
+    host_doc_number?: string;
     host_cedula?: string;
     bet: number;
     max_players: number;
     players_count: number;
     team_mode: string;
     is_private: boolean;
+}
+
+interface ProfileRow {
+    first_name: string | null;
+    middle_name: string | null;
+    last_name: string | null;
+    second_last_name: string | null;
+    doc_number: string | null;
+    balance: number | null;
+    bonus_balance: number | null;
 }
 
 const API_BASE =
@@ -104,6 +117,22 @@ const SEAT_PALETTE = [
 const TRACK_LEN = 68;
 const SAFE_SPOTS = new Set([0, 5, 12, 17, 22, 29, 34, 39, 46, 51, 56, 63]);
 const START_SPOTS: Record<number, number> = { 0: 0, 1: 17, 2: 34, 3: 51 };
+
+function buildFullNameFromProfile(
+    profile: Partial<ProfileRow> | null,
+    fallback = "Jugador"
+): string {
+    if (!profile) return fallback;
+    const parts = [
+        profile.first_name,
+        profile.middle_name,
+        profile.last_name,
+        profile.second_last_name,
+    ]
+        .map((p) => (p || "").trim())
+        .filter(Boolean);
+    return parts.length > 0 ? parts.join(" ") : fallback;
+}
 
 function getVisualCorner(seatIndex: number, totalPlayers: number): number {
     if (totalPlayers === 2) {
@@ -373,8 +402,8 @@ export default function ParchisGamePage() {
     const [isAuthLoading, setIsAuthLoading] = useState(true);
 
     const [playerName, setPlayerName] = useState("");
-    const [cedula, setCedula] = useState("");
-    const [searchCedula, setSearchCedula] = useState("");
+    const [docNumber, setDocNumber] = useState("");
+    const [searchId, setSearchId] = useState("");
 
     const [playBalance, setPlayBalance] = useState(0);
     const [bonusBalance, setBonusBalance] = useState(0);
@@ -467,6 +496,8 @@ export default function ParchisGamePage() {
                 accessTokenRef.current = "";
                 setPlayBalance(0);
                 setBonusBalance(0);
+                setPlayerName("");
+                setDocNumber("");
                 return;
             }
 
@@ -477,27 +508,30 @@ export default function ParchisGamePage() {
             setAccessToken(token);
             accessTokenRef.current = token;
 
-            const fallbackName =
-                session.user?.user_metadata?.full_name ||
-                session.user?.user_metadata?.name ||
-                session.user?.email?.split("@")[0] ||
-                "Jugador";
-            setPlayerName((prev) => prev || fallbackName);
+            const emailFallback = session.user?.email?.split("@")[0] || "Jugador";
 
             const { data: profile, error } = await supabase
                 .from("profiles")
-                .select("balance, bonus_balance")
+                .select(
+                    "first_name, middle_name, last_name, second_last_name, doc_number, balance, bonus_balance"
+                )
                 .eq("id", currentUserId)
                 .maybeSingle();
 
             if (error) {
                 console.error("Error cargando perfil:", error);
+                setPlayerName((prev) => prev || emailFallback);
                 return;
             }
 
             if (profile) {
+                const fullName = buildFullNameFromProfile(profile, emailFallback);
+                setPlayerName(fullName);
+                setDocNumber(profile.doc_number ? String(profile.doc_number) : "");
                 setPlayBalance(Number(profile.balance ?? 0));
                 setBonusBalance(Number(profile.bonus_balance ?? 0));
+            } else {
+                setPlayerName((prev) => prev || emailFallback);
             }
         } catch (error) {
             console.error("Error cargando saldos:", error);
@@ -537,6 +571,8 @@ export default function ParchisGamePage() {
                 accessTokenRef.current = "";
                 setPlayBalance(0);
                 setBonusBalance(0);
+                setPlayerName("");
+                setDocNumber("");
             }
         });
 
@@ -549,13 +585,13 @@ export default function ParchisGamePage() {
     const fetchPublicRooms = useCallback(async () => {
         try {
             const amount = PARCHIS_BETS[selectedBet];
-            const cedulaParam = searchCedula.trim()
-                ? `&cedula=${encodeURIComponent(searchCedula.trim())}`
+            const idParam = searchId.trim()
+                ? `&doc_number=${encodeURIComponent(searchId.trim())}&cedula=${encodeURIComponent(searchId.trim())}`
                 : "";
             const res = await fetch(
                 `${API_BASE}/parchis/rooms?bet=${encodeURIComponent(
                     String(amount)
-                )}${cedulaParam}`
+                )}${idParam}`
             );
             if (!res.ok) {
                 setRoomsUnavailable(true);
@@ -569,7 +605,7 @@ export default function ParchisGamePage() {
             setRoomsUnavailable(true);
             setPublicRooms([]);
         }
-    }, [selectedBet, searchCedula]);
+    }, [selectedBet, searchId]);
 
     useEffect(() => {
         if (isInGame || !userId) return;
@@ -663,14 +699,15 @@ export default function ParchisGamePage() {
             setConnectionMessage("Conectando con el servidor...");
 
             const cleanName = playerName.trim() || "Jugador";
-            const cleanCedula = cedula.trim();
+            const cleanId = docNumber.trim();
 
             const wsUrl = getWebSocketUrl(
                 `/ws/parchis/${encodeURIComponent(targetRoomId)}` +
                     `?user_id=${encodeURIComponent(userIdRef.current)}` +
                     `&access_token=${encodeURIComponent(accessTokenRef.current)}` +
                     `&player_name=${encodeURIComponent(cleanName)}` +
-                    `&cedula=${encodeURIComponent(cleanCedula)}` +
+                    `&doc_number=${encodeURIComponent(cleanId)}` +
+                    `&cedula=${encodeURIComponent(cleanId)}` +
                     `&bet=${encodeURIComponent(String(betAmount))}` +
                     `&max_players=${encodeURIComponent(String(playersCount))}` +
                     `&wallet=${encodeURIComponent(selectedWallet)}` +
@@ -804,7 +841,7 @@ export default function ParchisGamePage() {
         },
         [
             bonusBalance,
-            cedula,
+            docNumber,
             exitParchisGame,
             getWebSocketUrl,
             loadUserBalances,
@@ -822,10 +859,10 @@ export default function ParchisGamePage() {
             showAlert("Sesión requerida", "Inicia sesión para crear una sala.");
             return;
         }
-        if (!cedula.trim()) {
+        if (!docNumber.trim()) {
             showAlert(
-                "Cédula requerida",
-                "Ingresa tu número de cédula para registrar y buscar la sala."
+                "ID requerido",
+                "Tu perfil no tiene ID registrado o está vacío."
             );
             return;
         }
@@ -857,7 +894,8 @@ export default function ParchisGamePage() {
                     is_private: isPrivate,
                     password: isPrivate ? roomPassword.trim() : "",
                     host_name: playerName.trim() || "Anfitrión",
-                    host_cedula: cedula.trim(),
+                    host_doc_number: docNumber.trim(),
+                    host_cedula: docNumber.trim(),
                 }),
             });
 
@@ -1064,7 +1102,7 @@ export default function ParchisGamePage() {
                 ctx.textAlign = "center";
                 ctx.textBaseline = "middle";
                 ctx.fillText(
-                    labelText.slice(0, 16),
+                    labelText.slice(0, 18),
                     hx0 + hSize / 2,
                     hy0 + 4 + (cell * 0.95) / 2
                 );
@@ -1338,6 +1376,7 @@ export default function ParchisGamePage() {
             (gameState.host_user_id === userId || myPlayer?.seat_index === 0)
     );
     const visibleUserName = playerName.trim() || "Jugador";
+    const visibleUserId = docNumber.trim() || "-";
 
     return (
         <div className="min-h-screen bg-black text-white flex flex-col select-none font-sans overflow-x-hidden">
@@ -1465,51 +1504,22 @@ export default function ParchisGamePage() {
                             </button>
                         </div>
 
-                        <div className="text-center">
+                        <div className="text-center space-y-1">
                             <h2 className="text-xl sm:text-2xl font-black text-emerald-400 uppercase tracking-wider">
                                 Parchís Arena P2P
                             </h2>
-                            <p className="text-xs text-zinc-400 mt-1">
-                                Jugador:{" "}
-                                <span className="text-white font-bold">
+                            <p className="text-xs text-zinc-400">
+                                <span className="text-white font-black">
                                     {visibleUserName}
+                                </span>{" "}
+                                · ID:{" "}
+                                <span className="text-emerald-400 font-bold">
+                                    {visibleUserId}
                                 </span>
                             </p>
                         </div>
 
                         <div className="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-4 space-y-5">
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                <div>
-                                    <label className="text-[10px] text-zinc-400 block mb-1.5 uppercase font-bold">
-                                        Nombre de Usuario
-                                    </label>
-                                    <input
-                                        type="text"
-                                        value={playerName}
-                                        onChange={(e) =>
-                                            setPlayerName(e.target.value)
-                                        }
-                                        placeholder="Tu nombre"
-                                        className="w-full bg-black border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
-                                    />
-                                </div>
-
-                                <div>
-                                    <label className="text-[10px] text-zinc-400 block mb-1.5 uppercase font-bold">
-                                        Cédula
-                                    </label>
-                                    <input
-                                        type="text"
-                                        value={cedula}
-                                        onChange={(e) =>
-                                            setCedula(e.target.value)
-                                        }
-                                        placeholder="Ej. 1712345678"
-                                        className="w-full bg-black border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
-                                    />
-                                </div>
-                            </div>
-
                             <div>
                                 <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">
                                     Billetera
@@ -1637,7 +1647,7 @@ export default function ParchisGamePage() {
                             <div className="border-t border-zinc-800 pt-4 space-y-2.5">
                                 <div className="flex items-center justify-between gap-2">
                                     <span className="text-[10px] text-zinc-400 uppercase font-bold">
-                                        Buscar sala por cédula
+                                        Buscar sala por ID
                                     </span>
                                     <button
                                         type="button"
@@ -1651,17 +1661,17 @@ export default function ParchisGamePage() {
                                 <div className="flex gap-2">
                                     <input
                                         type="text"
-                                        value={searchCedula}
+                                        value={searchId}
                                         onChange={(e) =>
-                                            setSearchCedula(e.target.value)
+                                            setSearchId(e.target.value)
                                         }
-                                        placeholder="Cédula del anfitrión..."
+                                        placeholder="ID del anfitrión..."
                                         className="flex-1 bg-black border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-emerald-500"
                                     />
-                                    {searchCedula && (
+                                    {searchId && (
                                         <button
                                             type="button"
-                                            onClick={() => setSearchCedula("")}
+                                            onClick={() => setSearchId("")}
                                             className="px-3 py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs font-bold rounded-xl border border-zinc-800"
                                         >
                                             Limpiar
@@ -1672,53 +1682,58 @@ export default function ParchisGamePage() {
                                 {publicRooms.length === 0 ? (
                                     <p className="text-xs text-zinc-500">
                                         {roomsUnavailable
-                                            ? "Lista de salas en mantenimiento; crea una sala o entra por ID."
+                                            ? "Lista de salas en mantenimiento; crea una sala o entra por ID de sala."
                                             : "No hay salas disponibles con ese filtro."}
                                     </p>
                                 ) : (
                                     <div className="space-y-2 max-h-44 overflow-y-auto">
-                                        {publicRooms.map((item) => (
-                                            <div
-                                                key={item.room_id}
-                                                className="flex items-center justify-between gap-3 bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs"
-                                            >
-                                                <div className="min-w-0">
-                                                    <span className="font-black text-white block truncate">
-                                                        {item.host_name ||
-                                                            "Jugador"}
-                                                    </span>
-                                                    <span className="text-[10px] text-zinc-400 block truncate">
-                                                        {item.host_cedula
-                                                            ? `CI: ${item.host_cedula} · `
-                                                            : ""}
-                                                        {item.players_count}/
-                                                        {item.max_players}P · $
-                                                        {item.bet.toFixed(2)}
-                                                    </span>
-                                                </div>
-                                                <button
-                                                    type="button"
-                                                    onClick={() =>
-                                                        connectToRoom(
-                                                            item.room_id,
-                                                            "",
-                                                            item.bet,
-                                                            item.max_players as MaxPlayers
-                                                        )
-                                                    }
-                                                    className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-[10px] uppercase rounded-xl shrink-0"
+                                        {publicRooms.map((item) => {
+                                            const itemId =
+                                                item.host_doc_number ||
+                                                item.host_cedula;
+                                            return (
+                                                <div
+                                                    key={item.room_id}
+                                                    className="flex items-center justify-between gap-3 bg-black border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs"
                                                 >
-                                                    Entrar
-                                                </button>
-                                            </div>
-                                        ))}
+                                                    <div className="min-w-0">
+                                                        <span className="font-black text-white block truncate">
+                                                            {item.host_name ||
+                                                                "Jugador"}
+                                                        </span>
+                                                        <span className="text-[10px] text-zinc-400 block truncate">
+                                                            {itemId
+                                                                ? `ID: ${itemId} · `
+                                                                : ""}
+                                                            {item.players_count}/
+                                                            {item.max_players}P · $
+                                                            {item.bet.toFixed(2)}
+                                                        </span>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                            connectToRoom(
+                                                                item.room_id,
+                                                                "",
+                                                                item.bet,
+                                                                item.max_players as MaxPlayers
+                                                            )
+                                                        }
+                                                        className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-[10px] uppercase rounded-xl shrink-0"
+                                                    >
+                                                        Entrar
+                                                    </button>
+                                                </div>
+                                            );
+                                        })}
                                     </div>
                                 )}
                             </div>
 
                             <div className="border-t border-zinc-800 pt-4 space-y-2">
                                 <span className="text-[10px] text-zinc-400 uppercase font-bold block">
-                                    Entrar por ID
+                                    Entrar por ID de sala
                                 </span>
                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                                     <input
@@ -1778,10 +1793,14 @@ export default function ParchisGamePage() {
                                             visibleUserName}
                                     </span>
                                     <span className="block text-[10px] text-zinc-400 truncate">
-                                        Jugador: {visibleUserName} · ID:{" "}
+                                        {visibleUserName} · Sala:{" "}
                                         {gameState?.room_id || roomId}
-                                        {gameState?.host_cedula
-                                            ? ` · CI: ${gameState.host_cedula}`
+                                        {gameState?.host_doc_number ||
+                                        gameState?.host_cedula
+                                            ? ` · ID: ${
+                                                  gameState.host_doc_number ||
+                                                  gameState.host_cedula
+                                              }`
                                             : ""}
                                     </span>
                                 </div>
