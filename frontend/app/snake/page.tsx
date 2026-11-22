@@ -1740,111 +1740,64 @@ export default function ParchisGamePage() {
             <main
                 className={`flex-1 w-full mx-auto flex flex-col ${isInGame
                         ? "max-w-xl px-2.5 sm:px-6 py-2 sm:py-4 items-center justify-center"
-                        : "max-w-4xl px-3 sm:px-6 py-4 sm:py-8 items-center justify-center"
+                        : "max-w-3xl px-2 sm:px-4 py-3 sm:py-5 items-center justify-center"
                     }`}
             >
                 {!isInGame ? (
-                    <div className="w-full max-w-xl mx-auto bg-zinc-950 border border-zinc-800 rounded-3xl p-4 sm:p-6 space-y-5 shadow-2xl">
-                        <div className="flex items-center justify-between gap-2 border-b border-zinc-900 pb-3.5">
-                            <Link
-                                href="/"
-                                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 hover:text-emerald-400 font-bold uppercase transition-colors"
-                            >
-                                <span>&lsaquo;</span><span>Volver</span>
-                            </Link>
-                            <div className="text-center">
-                                <h2 className="text-xl sm:text-2xl font-black text-emerald-400 uppercase tracking-wider">
-                                    Parchís Arena P2P
-                                </h2>
-                                <p className="text-xs text-zinc-400 mt-1">Elige tu billetera, configura la sala y entra a jugar.</p>
+                    <div className="w-full max-w-md mx-auto rounded-2xl border border-zinc-800 bg-zinc-950 p-3 sm:p-4 space-y-3">
+                        <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                            <Link href="/" className="rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1.5 text-[11px] font-bold text-zinc-300">&lsaquo; Volver</Link>
+                            <h2 className="text-sm font-black uppercase tracking-wide text-emerald-400">Parchís P2P</h2>
+                            <span className="w-14" />
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="block text-[10px] font-bold uppercase text-zinc-500">Billetera</label>
+                            <div className="grid grid-cols-2 gap-2">
+                                <button type="button" onClick={() => setSelectedWallet("play")} className={`rounded-lg border px-2 py-2 text-xs font-bold ${selectedWallet === "play" ? "border-emerald-400 bg-emerald-500 text-black" : "border-zinc-800 bg-black text-zinc-400"}`}>Jugar · {money(playBalance)}</button>
+                                <button type="button" onClick={() => setSelectedWallet("bonus")} className={`rounded-lg border px-2 py-2 text-xs font-bold ${selectedWallet === "bonus" ? "border-yellow-300 bg-yellow-400 text-black" : "border-zinc-800 bg-black text-zinc-400"}`}>Bono · {money(bonusBalance)}</button>
                             </div>
                         </div>
 
-                        <section className="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-4 space-y-5">
-                            <div>
-                                <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">Billetera</label>
-                                <div className="grid grid-cols-2 gap-2">
-                                    <button
-                                        type="button"
-                                        onClick={() => setSelectedWallet("play")}
-                                        className={`py-3 px-2 rounded-xl text-xs font-black uppercase border transition-all ${selectedWallet === "play" ? "bg-emerald-500 text-black border-emerald-400" : "bg-black text-zinc-400 hover:text-white border-zinc-800"}`}
-                                    >
-                                        Jugar ({money(playBalance)})
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setSelectedWallet("bonus")}
-                                        className={`py-3 px-2 rounded-xl text-xs font-black uppercase border transition-all ${selectedWallet === "bonus" ? "bg-yellow-400 text-black border-yellow-300" : "bg-black text-zinc-400 hover:text-white border-zinc-800"}`}
-                                    >
-                                        Bono ({money(bonusBalance)})
-                                    </button>
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-2">
+                                <label className="block text-[10px] font-bold uppercase text-zinc-500">Apuesta</label>
+                                <div className="grid grid-cols-3 gap-1.5">
+                                    {(["0.25", "1.00", "10.00"] as ParchisBet[]).map((amt) => (
+                                        <button key={amt} type="button" onClick={() => setSelectedBet(amt)} className={`rounded-lg border py-2 text-[11px] font-bold ${selectedBet === amt ? "border-emerald-400 bg-emerald-500 text-black" : "border-zinc-800 bg-black text-zinc-400"}`}>${amt}</button>
+                                    ))}
                                 </div>
                             </div>
-
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                <div>
-                                    <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">Sala</label>
-                                    <div className="grid grid-cols-3 gap-2">
-                                        {(["0.25", "1.00", "10.00"] as ParchisBet[]).map((amt) => (
-                                            <button key={amt} type="button" onClick={() => setSelectedBet(amt)} className={`py-3 rounded-xl text-sm font-black border transition-all ${selectedBet === amt ? "bg-emerald-500 text-black border-emerald-400" : "bg-black text-zinc-400 border-zinc-800 hover:border-emerald-500"}`}>
-                                                ${amt}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                                <div>
-                                    <label className="text-[10px] text-zinc-400 block mb-2 uppercase font-bold">Cantidad de jugadores</label>
-                                    <div className="grid grid-cols-3 gap-2">
-                                        {([2, 3, 4] as MaxPlayers[]).map((cnt) => (
-                                            <button key={cnt} type="button" onClick={() => setMaxPlayers(cnt)} className={`py-3 rounded-xl text-sm font-black border transition-all ${maxPlayers === cnt ? "bg-emerald-500 text-black border-emerald-400" : "bg-black text-zinc-400 border-zinc-800 hover:border-emerald-500"}`}>
-                                                {cnt}P
-                                            </button>
-                                        ))}
-                                    </div>
+                            <div className="space-y-2">
+                                <label className="block text-[10px] font-bold uppercase text-zinc-500">Jugadores</label>
+                                <div className="grid grid-cols-3 gap-1.5">
+                                    {([2, 3, 4] as MaxPlayers[]).map((cnt) => (
+                                        <button key={cnt} type="button" onClick={() => setMaxPlayers(cnt)} className={`rounded-lg border py-2 text-[11px] font-bold ${maxPlayers === cnt ? "border-emerald-400 bg-emerald-500 text-black" : "border-zinc-800 bg-black text-zinc-400"}`}>{cnt}</button>
+                                    ))}
                                 </div>
                             </div>
+                        </div>
 
-                            <div className="bg-black/70 border border-zinc-800 rounded-2xl p-3.5 space-y-3">
-                                <label className="flex cursor-pointer items-center justify-between gap-3">
-                                    <span>
-                                        <span className="block text-xs font-bold text-white">Sala privada</span>
-                                        <span className="mt-0.5 block text-[10px] text-zinc-500">Protege la entrada con un código</span>
-                                    </span>
-                                    <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} className="h-5 w-5 accent-emerald-500" />
-                                </label>
-                                {isPrivate && (
-                                    <input type="text" value={roomPassword} onChange={(e) => setRoomPassword(e.target.value)} placeholder="Código de acceso (opcional)" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-emerald-500" />
-                                )}
+                        <div className="flex items-center gap-2">
+                            <input id="parchis-private" type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} className="h-4 w-4 accent-emerald-500" />
+                            <label htmlFor="parchis-private" className="text-xs text-zinc-300">Sala privada</label>
+                            {isPrivate && <input type="text" value={roomPassword} onChange={(e) => setRoomPassword(e.target.value)} placeholder="Contraseña" className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-black px-2.5 py-2 text-xs text-white outline-none focus:border-emerald-500" />}
+                        </div>
+
+                        <button type="button" disabled={isConnecting || busyAction} onClick={handleCreatePrivateOrCustomRoom} className="w-full rounded-xl bg-emerald-500 py-3 text-xs font-black uppercase text-black hover:bg-emerald-400 disabled:opacity-50">
+                            {busyAction || isConnecting ? "Preparando..." : "Crear sala"}
+                        </button>
+
+                        <div className="border-t border-zinc-800 pt-3 space-y-2">
+                            <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-white">Salas disponibles</span>
+                                <button type="button" onClick={() => void fetchPublicRooms()} className="text-[10px] font-bold text-emerald-400">Actualizar</button>
                             </div>
-
-                            <button
-                                type="button"
-                                disabled={isConnecting || busyAction}
-                                onClick={handleCreatePrivateOrCustomRoom}
-                                className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-black text-xs uppercase tracking-wider rounded-2xl shadow-lg active:scale-95 transition-all"
-                            >
-                                {busyAction || isConnecting ? "Preparando sala..." : isPrivate ? "Crear Sala Privada" : "Crear Sala"}
-                            </button>
-                            <p className="text-center text-[9px] leading-relaxed text-zinc-600">La apuesta se descuenta al entrar a la sala. La comisión se aplica mediante la liquidación configurada en AXIOM.</p>
-                        </section>
-
-                        <div className="border-t border-zinc-900 pt-4 space-y-4">
-                            <div className="flex items-center justify-between gap-3">
-                                <div>
-                                    <p className="text-[9px] text-emerald-400 uppercase font-black tracking-[0.2em]">Encuentra rivales</p>
-                                    <h3 className="mt-1 text-sm font-black text-white uppercase">Salas públicas</h3>
-                                </div>
-                                <button type="button" onClick={() => void fetchPublicRooms()} className="rounded-lg border border-zinc-800 bg-black px-3 py-2 text-[9px] font-black uppercase text-emerald-400 hover:border-emerald-500/40 transition">Actualizar</button>
-                            </div>
-                            <input type="text" value={searchId} onChange={(e) => setSearchId(e.target.value)} placeholder="Buscar por ID del anfitrión..." className="w-full rounded-xl border border-zinc-800 bg-black px-3 py-3 text-xs text-white outline-none placeholder:text-zinc-600 focus:border-emerald-500" />
+                            <input type="text" value={searchId} onChange={(e) => setSearchId(e.target.value)} placeholder="Buscar por ID de jugador" className="w-full rounded-lg border border-zinc-800 bg-black px-3 py-2 text-xs text-white outline-none focus:border-emerald-500" />
                             {publicRooms.length === 0 ? (
-                                <div className="rounded-xl border border-dashed border-zinc-800 bg-black/60 px-4 py-7 text-center">
-                                    <span className="text-2xl text-zinc-700">♟</span>
-                                    <p className="mt-2 text-xs font-bold text-zinc-300">{roomsUnavailable ? "Salas temporalmente no disponibles" : "No hay salas públicas disponibles"}</p>
-                                    <p className="mt-1 text-[10px] text-zinc-600">Crea una sala o únete usando su ID.</p>
-                                </div>
+                                <p className="py-3 text-center text-[11px] text-zinc-500">{roomsUnavailable ? "Salas no disponibles" : "No hay salas públicas"}</p>
                             ) : (
-                                <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                                <div className="max-h-40 space-y-1.5 overflow-y-auto">
                                     {publicRooms.filter((item) => {
                                         const hostId = String(item.host_doc_number || item.host_cedula || "");
                                         return !searchId.trim() || hostId.toLowerCase().includes(searchId.trim().toLowerCase());
@@ -1852,12 +1805,12 @@ export default function ParchisGamePage() {
                                         const itemId = item.host_doc_number || item.host_cedula;
                                         const itemName = (item.host_name || "Jugador").split(/\s+/)[0];
                                         return (
-                                            <div key={item.room_id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-black p-3 hover:border-zinc-700 transition">
+                                            <div key={item.room_id} className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-black px-2.5 py-2">
                                                 <div className="min-w-0">
-                                                    <span className="block truncate text-xs font-black text-white">{itemName}</span>
-                                                    <span className="mt-1 block text-[10px] text-zinc-500">{itemId ? `ID ${itemId} · ` : ""}{item.players_count}/{item.max_players} jugadores · ${item.bet.toFixed(2)}</span>
+                                                    <p className="truncate text-[11px] font-bold text-white">{itemName}</p>
+                                                    <p className="text-[10px] text-zinc-500">{itemId ? `${itemId} · ` : ""}{item.players_count}/{item.max_players} · ${item.bet.toFixed(2)}</p>
                                                 </div>
-                                                <button type="button" onClick={() => connectToRoom(item.room_id, "", item.bet, item.max_players as MaxPlayers)} className="w-full sm:w-auto shrink-0 rounded-lg bg-emerald-500 px-5 py-2.5 text-[10px] font-black uppercase text-black hover:bg-emerald-400 transition">Entrar</button>
+                                                <button type="button" onClick={() => connectToRoom(item.room_id, "", item.bet, item.max_players as MaxPlayers)} className="rounded-md bg-emerald-500 px-3 py-1.5 text-[10px] font-black uppercase text-black">Entrar</button>
                                             </div>
                                         );
                                     })}
@@ -1865,16 +1818,10 @@ export default function ParchisGamePage() {
                             )}
                         </div>
 
-                        <div className="border-t border-zinc-900 pt-4 space-y-3">
-                            <div>
-                                <p className="text-[9px] text-emerald-400 uppercase font-black tracking-[0.2em]">Acceso directo</p>
-                                <h3 className="mt-1 text-sm font-black text-white uppercase">Unirse a una sala</h3>
-                            </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2">
-                                <input type="text" value={joinRoomId} onChange={(e) => setJoinRoomId(e.target.value)} placeholder="ID de sala" className="min-w-0 w-full rounded-xl border border-zinc-800 bg-black px-3 py-3 text-xs text-white outline-none placeholder:text-zinc-600 focus:border-emerald-500" />
-                                <input type="text" value={joinPassword} onChange={(e) => setJoinPassword(e.target.value)} placeholder="Código (si es privada)" className="min-w-0 w-full rounded-xl border border-zinc-800 bg-black px-3 py-3 text-xs text-white outline-none placeholder:text-zinc-600 focus:border-emerald-500" />
-                                <button type="button" disabled={!joinRoomId.trim() || isConnecting} onClick={() => connectToRoom(joinRoomId.trim(), joinPassword.trim())} className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-5 py-3 text-[10px] font-black uppercase text-emerald-400 hover:bg-emerald-500 hover:text-black transition disabled:opacity-40">Unirse</button>
-                            </div>
+                        <div className="flex gap-2 border-t border-zinc-800 pt-3">
+                            <input type="text" value={joinRoomId} onChange={(e) => setJoinRoomId(e.target.value)} placeholder="ID de sala" className="min-w-0 w-full rounded-lg border border-zinc-800 bg-black px-2.5 py-2 text-xs text-white outline-none focus:border-emerald-500" />
+                            <input type="text" value={joinPassword} onChange={(e) => setJoinPassword(e.target.value)} placeholder="Clave" className="min-w-0 w-full rounded-lg border border-zinc-800 bg-black px-2.5 py-2 text-xs text-white outline-none focus:border-emerald-500" />
+                            <button type="button" disabled={!joinRoomId.trim() || isConnecting} onClick={() => connectToRoom(joinRoomId.trim(), joinPassword.trim())} className="rounded-lg bg-zinc-800 px-3 py-2 text-[10px] font-bold text-white disabled:opacity-40">Unirse</button>
                         </div>
                     </div>
                 ) : (
