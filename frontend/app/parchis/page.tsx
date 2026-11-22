@@ -90,6 +90,8 @@ interface MoveOption {
 const API_BASE =
     process.env.NEXT_PUBLIC_API_URL || "https://casino-axiom.ethiodeploy.app";
 
+const TURN_TRANSITION_DELAY_MS = 2000;
+
 const PARCHIS_BETS: Record<ParchisBet, number> = {
     "0.25": 0.25,
     "1.00": 1.0,
@@ -421,7 +423,6 @@ function randomDiePair(prev?: [number, number]): [number, number] {
     return [randomDieFace(prev?.[0]), randomDieFace(prev?.[1])];
 }
 
-// Mueve desde la posición actual de la ficha (si pos es 0, parte desde 0: 0 -> 1 -> 2 -> ...)
 function getStepPiecePoseFromCurrent(
     startPiece: ParchisPiece,
     seatIndex: number,
@@ -475,6 +476,17 @@ function getStepPiecePoseFromCurrent(
         pos,
         steps_walked: stepsWalked,
     };
+}
+
+function getTurnFingerprint(st: ParchisState): string {
+    const piecesSig = (st.players || [])
+        .map((pl) =>
+            (pl.pieces || [])
+                .map((pc) => `${pc.id}:${pc.stage}:${pc.pos}:${pc.steps_walked}`)
+                .join(",")
+        )
+        .join("|");
+    return `${st.turn_seat}|${st.must_move}|${piecesSig}|${st.last_event || ""}`;
 }
 
 const PIP_COORDS: Record<number, Array<[number, number]>> = {
@@ -579,6 +591,7 @@ function PlayerTurnRow({
     isActiveTurn,
     canRoll,
     mustMove,
+    waitingTurn,
     onRoll,
     position,
 }: {
@@ -591,6 +604,7 @@ function PlayerTurnRow({
     isActiveTurn: boolean;
     canRoll: boolean;
     mustMove: boolean;
+    waitingTurn: boolean;
     onRoll: () => void;
     position: "top" | "bottom";
 }) {
@@ -622,7 +636,12 @@ function PlayerTurnRow({
             >
                 {colorName}
             </span>
-            {isActiveTurn && (
+            {waitingTurn && (
+                <span className="text-[10px] font-bold uppercase text-amber-400">
+                    · Esperando turno...
+                </span>
+            )}
+            {!waitingTurn && isActiveTurn && (
                 <span className="text-[10px] font-bold uppercase text-emerald-400">
                     {mustMove ? "· Mueve ficha" : "· Su turno"}
                 </span>
@@ -634,7 +653,7 @@ function PlayerTurnRow({
         <div className="flex items-center gap-2">
             <button
                 type="button"
-                disabled={!canRoll || rolling}
+                disabled={!canRoll || rolling || waitingTurn}
                 onClick={onRoll}
                 aria-label="Lanzar dados"
                 style={{
@@ -656,7 +675,7 @@ function PlayerTurnRow({
                     </>
                 )}
             </button>
-            {canRoll && (
+            {canRoll && !waitingTurn && (
                 <button
                     type="button"
                     disabled={rolling}
@@ -721,6 +740,7 @@ export default function ParchisGamePage() {
     const [busyAction, setBusyAction] = useState(false);
     const [rollingDice, setRollingDice] = useState(false);
     const [isConnecting, setIsConnecting] = useState(false);
+    const [isTurnWaiting, setIsTurnWaiting] = useState(false);
     const [activeSocket, setActiveSocket] = useState<WebSocket | null>(null);
 
     const [modal, setModal] = useState({
@@ -734,6 +754,8 @@ export default function ParchisGamePage() {
     const userIdRef = useRef<string | null>(null);
     const socketRef = useRef<WebSocket | null>(null);
     const closingByUserRef = useRef(false);
+    const turnDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const lastDelayedFingerprintRef = useRef<string>("");
     const stepAnimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const animatedPieceRef = useRef<{
         userId: string;
@@ -745,12 +767,18 @@ export default function ParchisGamePage() {
         userIdRef.current = userId;
     }, [userId]);
 
-    const clearAnimTimers = useCallback(() => {
+    const clearAllTimers = useCallback(() => {
+        if (turnDelayTimerRef.current) {
+            clearTimeout(turnDelayTimerRef.current);
+            turnDelayTimerRef.current = null;
+        }
         if (stepAnimTimerRef.current) {
             clearTimeout(stepAnimTimerRef.current);
             stepAnimTimerRef.current = null;
         }
         animatedPieceRef.current = null;
+        lastDelayedFingerprintRef.current = "";
+        setIsTurnWaiting(false);
     }, []);
 
     const showAlert = useCallback((title: string, message: string) => {
@@ -907,7 +935,7 @@ export default function ParchisGamePage() {
     }, [isInGame, userId, fetchPublicRooms]);
 
     const resetSessionState = useCallback(() => {
-        clearAnimTimers();
+        clearAllTimers();
         setIsConnecting(false);
         setIsConnected(false);
         setRollingDice(false);
@@ -917,7 +945,7 @@ export default function ParchisGamePage() {
         setRoomId("");
         setActiveSocket(null);
         socketRef.current = null;
-    }, [clearAnimTimers]);
+    }, [clearAllTimers]);
 
     const exitParchisGame = useCallback(async () => {
         closingByUserRef.current = true;
@@ -1017,30 +1045,66 @@ export default function ParchisGamePage() {
                 return;
             }
 
-            clearAnimTimers();
-            gameStateRef.current = nextState;
-            setGameState(nextState);
-            setRollingDice(false);
+            if (stepAnimTimerRef.current) {
+                clearTimeout(stepAnimTimerRef.current);
+                stepAnimTimerRef.current = null;
+            }
+            animatedPieceRef.current = null;
 
-            if (
-                Array.isArray(nextState.dice_pair) &&
-                nextState.dice_pair.length === 2
-            ) {
-                setDisplayedDice([
-                    clampDieFace(nextState.dice_pair[0], 1),
-                    clampDieFace(nextState.dice_pair[1], 1),
-                ]);
-            } else if (
-                Array.isArray(nextState.dice_remaining) &&
-                nextState.dice_remaining.length >= 2
-            ) {
-                setDisplayedDice([
-                    clampDieFace(nextState.dice_remaining[0], 1),
-                    clampDieFace(nextState.dice_remaining[1], 1),
-                ]);
+            const prevState = gameStateRef.current;
+            const fingerprint = getTurnFingerprint(nextState);
+            const turnChanged =
+                prevState !== null &&
+                prevState.status === "playing" &&
+                nextState.status === "playing" &&
+                prevState.turn_seat !== nextState.turn_seat &&
+                fingerprint !== lastDelayedFingerprintRef.current;
+
+            const commitState = () => {
+                turnDelayTimerRef.current = null;
+                setIsTurnWaiting(false);
+                gameStateRef.current = nextState;
+                setGameState(nextState);
+                setRollingDice(false);
+
+                if (
+                    Array.isArray(nextState.dice_pair) &&
+                    nextState.dice_pair.length === 2
+                ) {
+                    setDisplayedDice([
+                        clampDieFace(nextState.dice_pair[0], 1),
+                        clampDieFace(nextState.dice_pair[1], 1),
+                    ]);
+                } else if (
+                    Array.isArray(nextState.dice_remaining) &&
+                    nextState.dice_remaining.length >= 2
+                ) {
+                    setDisplayedDice([
+                        clampDieFace(nextState.dice_remaining[0], 1),
+                        clampDieFace(nextState.dice_remaining[1], 1),
+                    ]);
+                }
+            };
+
+            if (turnChanged) {
+                lastDelayedFingerprintRef.current = fingerprint;
+                if (turnDelayTimerRef.current) {
+                    clearTimeout(turnDelayTimerRef.current);
+                }
+                setIsTurnWaiting(true);
+                setRollingDice(false);
+                turnDelayTimerRef.current = setTimeout(
+                    commitState,
+                    TURN_TRANSITION_DELAY_MS
+                );
+                return;
+            }
+
+            if (!isTurnWaiting) {
+                commitState();
             }
         },
-        [clearAnimTimers, resetSessionState, showAlert]
+        [isTurnWaiting, resetSessionState, showAlert]
     );
 
     const connectToRoom = useCallback(
@@ -1079,7 +1143,7 @@ export default function ParchisGamePage() {
                 return;
             }
 
-            clearAnimTimers();
+            clearAllTimers();
             closingByUserRef.current = false;
             setIsConnecting(true);
             setIsConnected(false);
@@ -1238,7 +1302,7 @@ export default function ParchisGamePage() {
             accessToken,
             applyIncomingGameState,
             bonusBalance,
-            clearAnimTimers,
+            clearAllTimers,
             docNumber,
             fetchPublicRooms,
             getWebSocketUrl,
@@ -1324,6 +1388,7 @@ export default function ParchisGamePage() {
     };
 
     const sendRollDice = () => {
+        if (isTurnWaiting) return;
         const ws = socketRef.current || activeSocket;
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
         setRollingDice(true);
@@ -1332,6 +1397,7 @@ export default function ParchisGamePage() {
 
     const sendMovePiece = useCallback(
         (pieceId: number, option: MoveOption) => {
+            if (isTurnWaiting) return;
             const ws = socketRef.current || activeSocket;
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
@@ -1388,7 +1454,7 @@ export default function ParchisGamePage() {
 
             ws.send(payload);
         },
-        [activeSocket]
+        [activeSocket, isTurnWaiting]
     );
 
     const renderBoard = useCallback(() => {
@@ -1757,6 +1823,7 @@ export default function ParchisGamePage() {
     }, [isInGame, renderBoard]);
 
     const handleBoardPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
+        if (isTurnWaiting) return;
         const state = gameStateRef.current;
         const currentUid = userIdRef.current;
         const ws = socketRef.current || activeSocket;
@@ -1885,7 +1952,8 @@ export default function ParchisGamePage() {
         gameState !== null &&
         gameState.status === "playing" &&
         myPlayer !== null &&
-        gameState.turn_seat === myPlayer.seat_index;
+        gameState.turn_seat === myPlayer.seat_index &&
+        !isTurnWaiting;
     const isHost =
         gameState !== null &&
         (gameState.host_user_id === userId || myPlayer?.seat_index === 0);
@@ -2325,6 +2393,7 @@ export default function ParchisGamePage() {
                                         !gameState.must_move
                                     }
                                     mustMove={topIsTurn && gameState.must_move}
+                                    waitingTurn={isTurnWaiting}
                                     onRoll={sendRollDice}
                                     position="top"
                                 />
@@ -2362,6 +2431,7 @@ export default function ParchisGamePage() {
                                     mustMove={
                                         bottomIsTurn && gameState.must_move
                                     }
+                                    waitingTurn={isTurnWaiting}
                                     onRoll={sendRollDice}
                                     position="bottom"
                                 />
