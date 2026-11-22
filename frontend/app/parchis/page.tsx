@@ -295,7 +295,6 @@ function getPieceBoardPoint(
     };
 }
 
-// Movimiento exacto del valor del dado (ej. 10 -> 10 casillas, 5 -> 5 casillas)
 function getExactSteps(diceValue: number | null): number {
     if (
         typeof diceValue !== "number" ||
@@ -324,7 +323,6 @@ function getPieceMoveOptions(
 ): MoveOption[] {
     if (!Array.isArray(diceValues) || diceValues.length === 0) return [];
 
-    // Ficha en casa (-1): sale con 5 o suma de 5
     if (piece.stage === -1) {
         const options: MoveOption[] = [];
         if (diceValues.includes(5)) {
@@ -352,7 +350,6 @@ function getPieceMoveOptions(
         return options;
     }
 
-    // Ficha en pista o meta: avanza exacto el número del dado (ej. 10 -> 10)
     const uniqueDice = Array.from(new Set(diceValues));
     const options: MoveOption[] = [];
 
@@ -378,7 +375,6 @@ function getPieceMoveOptions(
         }
     }
 
-    // Si dos dados suman 5 y la ficha ya está en juego, también puede avanzar 5 casillas
     for (let i = 0; i < diceValues.length; i++) {
         for (let j = i + 1; j < diceValues.length; j++) {
             if (diceValues[i] + diceValues[j] === 5) {
@@ -425,36 +421,41 @@ function randomDiePair(prev?: [number, number]): [number, number] {
     return [randomDieFace(prev?.[0]), randomDieFace(prev?.[1])];
 }
 
-// Secuencia paso a paso empezando desde 0 (0 -> 1 -> 2 -> ... -> totalSteps)
-function getStepPiecePose(
+// Mueve desde la posición actual de la ficha (si pos es 0, parte desde 0: 0 -> 1 -> 2 -> ...)
+function getStepPiecePoseFromCurrent(
     startPiece: ParchisPiece,
     seatIndex: number,
-    stepIndex: number,
+    stepOffset: number,
     isExitFive: boolean
 ): ParchisPiece {
     const startSpot = START_SPOTS[seatIndex] ?? 0;
 
-    if (stepIndex <= 0) {
-        return startPiece;
-    }
-
     if (startPiece.stage === -1) {
-        if (!isExitFive) return startPiece;
-        const afterExit: ParchisPiece = {
+        if (!isExitFive || stepOffset <= 0) return startPiece;
+        const exitedAtZero: ParchisPiece = {
             ...startPiece,
             stage: 0,
             pos: startSpot,
             steps_walked: 0,
         };
-        if (stepIndex === 1) return afterExit;
-        return getStepPiecePose(afterExit, seatIndex, stepIndex - 1, false);
+        if (stepOffset === 1) return exitedAtZero;
+        return getStepPiecePoseFromCurrent(
+            exitedAtZero,
+            seatIndex,
+            stepOffset - 1,
+            false
+        );
+    }
+
+    if (stepOffset <= 0) {
+        return startPiece;
     }
 
     let stage = startPiece.stage;
     let pos = startPiece.pos;
     let stepsWalked = startPiece.steps_walked;
 
-    for (let s = 1; s <= stepIndex; s++) {
+    for (let s = 1; s <= stepOffset; s++) {
         if (stage === 0) {
             stepsWalked += 1;
             if (stepsWalked >= 63) {
@@ -543,7 +544,6 @@ function PipDieBox({
     );
 }
 
-// Dados en negro cuando NO es el turno del jugador
 function BlackOffTurnDieBox({ num }: { num: number }) {
     const face = clampDieFace(num, 1);
 
@@ -1330,7 +1330,6 @@ export default function ParchisGamePage() {
         ws.send(JSON.stringify({ type: "ROLL_DICE" }));
     };
 
-    // Secuencia 0 -> 1 -> 2 -> ... -> steps (ej. si sale 10 se mueve 10; si sale 5 va 0..5)
     const sendMovePiece = useCallback(
         (pieceId: number, option: MoveOption) => {
             const ws = socketRef.current || activeSocket;
@@ -1341,7 +1340,10 @@ export default function ParchisGamePage() {
                 (p) => p.user_id === userIdRef.current
             );
             const startPiece = me?.pieces?.find((pc) => pc.id === pieceId);
-            const exactSteps = getExactSteps(option.diceValue);
+            const totalSteps =
+                startPiece?.stage === -1 && option.isExitFive
+                    ? 1
+                    : getExactSteps(option.diceValue);
 
             if (stepAnimTimerRef.current) {
                 clearTimeout(stepAnimTimerRef.current);
@@ -1352,25 +1354,25 @@ export default function ParchisGamePage() {
                 type: "MOVE_PIECE",
                 piece_id: pieceId,
                 dice_value: option.diceValue,
-                steps_moved: exactSteps,
+                steps_moved: getExactSteps(option.diceValue),
                 used_dice_values: option.usedDiceValues,
                 exit_to_start: Boolean(option.isExitFive),
             });
 
-            if (me && startPiece && exactSteps > 0) {
+            if (me && startPiece && totalSteps > 0) {
                 let currentStep = 0;
                 const runStep = () => {
                     animatedPieceRef.current = {
                         userId: me.user_id,
                         pieceId,
-                        piece: getStepPiecePose(
+                        piece: getStepPiecePoseFromCurrent(
                             startPiece,
                             me.seat_index,
                             currentStep,
                             Boolean(option.isExitFive)
                         ),
                     };
-                    if (currentStep < exactSteps) {
+                    if (currentStep < totalSteps) {
                         currentStep += 1;
                         stepAnimTimerRef.current = setTimeout(runStep, 85);
                     } else {
@@ -2374,7 +2376,7 @@ export default function ParchisGamePage() {
                                 {canExitHomeWithFive && (
                                     <div className="w-full rounded-lg border border-emerald-500/30 bg-emerald-950/25 px-3 py-1.5 text-center text-[11px] font-bold text-emerald-300">
                                         5 o suma 5: saca ficha o mueve una en
-                                        juego (0..5).
+                                        juego desde su posición actual.
                                     </div>
                                 )}
 
