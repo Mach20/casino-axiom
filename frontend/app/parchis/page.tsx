@@ -85,30 +85,28 @@ const PARCHIS_BETS: Record<ParchisBet, number> = {
     "10.00": 10.0,
 };
 
+// 0 = Arriba Izquierda (Verde), 1 = Arriba Derecha (Rojo),
+// 2 = Abajo Derecha (Azul), 3 = Abajo Izquierda (Amarillo)
 const CORNER_PALETTE = [
     {
         name: "Verde",
         main: "#2d9a42",
         dark: "#185925",
-        soft: "rgba(45, 154, 66, 0.25)",
     },
     {
         name: "Rojo",
         main: "#e53935",
         dark: "#8e1c1a",
-        soft: "rgba(229, 57, 53, 0.25)",
     },
     {
         name: "Azul",
         main: "#1e88e5",
         dark: "#124e85",
-        soft: "rgba(30, 136, 229, 0.25)",
     },
     {
         name: "Amarillo",
         main: "#f4b400",
         dark: "#8c6600",
-        soft: "rgba(244, 180, 0, 0.25)",
     },
 ];
 
@@ -268,14 +266,21 @@ function clampDieFace(val: unknown, fallback = 1): number {
     return Math.min(6, Math.max(1, Math.round(n)));
 }
 
-function randomDiePair(): [number, number] {
-    return [
-        Math.floor(Math.random() * 6) + 1,
-        Math.floor(Math.random() * 6) + 1,
-    ];
+function randomDieFace(exclude?: number): number {
+    const candidates = [1, 2, 3, 4, 5, 6].filter((n) => n !== exclude);
+    return candidates[Math.floor(Math.random() * candidates.length)];
 }
 
-function randomPairForSum(totalValue: number): [number, number] {
+function randomDiePair(prev?: [number, number]): [number, number] {
+    const d1 = randomDieFace(prev?.[0]);
+    const d2 = randomDieFace(prev?.[1]);
+    return [d1, d2];
+}
+
+function randomPairForSum(
+    totalValue: number,
+    prev?: [number, number]
+): [number, number] {
     const t = Math.round(totalValue);
     const validPairs: Array<[number, number]> = [];
     for (let a = 1; a <= 6; a++) {
@@ -284,22 +289,53 @@ function randomPairForSum(totalValue: number): [number, number] {
         }
     }
     if (validPairs.length > 0) {
-        return validPairs[Math.floor(Math.random() * validPairs.length)];
+        const filtered = prev
+            ? validPairs.filter(
+                  ([a, b]) => !(a === prev[0] && b === prev[1])
+              )
+            : validPairs;
+        const pool = filtered.length > 0 ? filtered : validPairs;
+        return pool[Math.floor(Math.random() * pool.length)];
     }
     if (t >= 1 && t <= 6) {
-        const other = Math.floor(Math.random() * 6) + 1;
+        const other = randomDieFace(prev?.[1]);
         return Math.random() < 0.5 ? [t, other] : [other, t];
     }
-    return randomDiePair();
+    return randomDiePair(prev);
 }
 
-const PIP_POSITIONS: Record<number, number[]> = {
-    1: [4],
-    2: [2, 6],
-    3: [2, 4, 6],
-    4: [0, 2, 6, 8],
-    5: [0, 2, 4, 6, 8],
-    6: [0, 2, 3, 5, 6, 8],
+const PIP_COORDS: Record<number, Array<[number, number]>> = {
+    1: [[50, 50]],
+    2: [
+        [28, 28],
+        [72, 72],
+    ],
+    3: [
+        [28, 28],
+        [50, 50],
+        [72, 72],
+    ],
+    4: [
+        [28, 28],
+        [72, 28],
+        [28, 72],
+        [72, 72],
+    ],
+    5: [
+        [28, 28],
+        [72, 28],
+        [50, 50],
+        [28, 72],
+        [72, 72],
+    ],
+    6: [
+        [28, 26],
+        [72, 26],
+        [28, 50],
+        [72, 50],
+        [28, 74],
+        [72, 74],
+    ],
 };
 
 function PipDieBox({
@@ -310,27 +346,27 @@ function PipDieBox({
     rolling: boolean;
 }) {
     const face = clampDieFace(num, 1);
-    const pips = PIP_POSITIONS[face] || PIP_POSITIONS[1];
+    const dots = PIP_COORDS[face] || PIP_COORDS[1];
 
     return (
         <div
-            style={{ backgroundColor: "#f4f4f5", color: "#09090b" }}
-            className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl border-2 border-zinc-600 p-1.5 grid grid-cols-3 grid-rows-3 place-items-center shadow-md transition-transform duration-150 ${
+            className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-zinc-100 border-2 border-zinc-500 p-1 flex items-center justify-center shadow-md transition-transform duration-150 ${
                 rolling ? "rotate-12 scale-105" : "rotate-0 scale-100"
             }`}
         >
-            {Array.from({ length: 9 }).map((_, idx) => {
-                const active = pips.includes(idx);
-                return (
-                    <span
-                        key={idx}
-                        style={{
-                            backgroundColor: active ? "#09090b" : "transparent",
-                        }}
-                        className="w-2 h-2 rounded-full block"
-                    />
-                );
-            })}
+            <svg viewBox="0 0 100 100" className="w-full h-full block">
+                <rect
+                    x="2"
+                    y="2"
+                    width="96"
+                    height="96"
+                    rx="18"
+                    fill="#f4f4f5"
+                />
+                {dots.map(([cx, cy], idx) => (
+                    <circle key={idx} cx={cx} cy={cy} r="10.5" fill="#18181b" />
+                ))}
+            </svg>
         </div>
     );
 }
@@ -354,15 +390,13 @@ function PlayerTurnRow({
     onRoll: () => void;
     position: "top" | "bottom";
 }) {
-    const [spinDice, setSpinDice] = useState<[number, number]>(() =>
-        randomDiePair()
-    );
+    const [spinDice, setSpinDice] = useState<[number, number]>([3, 5]);
 
     useEffect(() => {
         if (!rolling) return;
         const timer = setInterval(() => {
-            setSpinDice(randomDiePair());
-        }, 70);
+            setSpinDice((prev) => randomDiePair(prev));
+        }, 75);
         return () => clearInterval(timer);
     }, [rolling]);
 
@@ -377,7 +411,8 @@ function PlayerTurnRow({
                         type="button"
                         disabled={!canRoll || rolling}
                         onClick={onRoll}
-                        className="bg-zinc-900 border border-zinc-700 rounded-2xl p-1.5 flex items-center gap-1.5 shadow-inner disabled:cursor-default"
+                        aria-label="Lanzar dados"
+                        className="bg-zinc-900 border border-zinc-700 rounded-2xl p-1.5 flex items-center gap-1.5 shadow-inner active:scale-95 transition-transform disabled:cursor-default disabled:active:scale-100"
                     >
                         <PipDieBox num={show1} rolling={rolling} />
                         <PipDieBox num={show2} rolling={rolling} />
@@ -387,7 +422,7 @@ function PlayerTurnRow({
                             type="button"
                             disabled={rolling}
                             onClick={onRoll}
-                            className="px-3.5 py-2.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-black font-black text-[11px] uppercase rounded-xl active:scale-95 transition-all"
+                            className="px-3 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-black font-black text-[11px] uppercase rounded-xl active:scale-95 transition-all"
                         >
                             {rolling ? "..." : "Lanzar"}
                         </button>
@@ -422,7 +457,8 @@ function PlayerTurnRow({
                     type="button"
                     disabled={!canRoll || rolling}
                     onClick={onRoll}
-                    className="bg-zinc-900 border border-zinc-700 rounded-2xl p-1.5 flex items-center gap-1.5 shadow-inner disabled:cursor-default"
+                    aria-label="Lanzar dados"
+                    className="bg-zinc-900 border border-zinc-700 rounded-2xl p-1.5 flex items-center gap-1.5 shadow-inner active:scale-95 transition-transform disabled:cursor-default disabled:active:scale-100"
                 >
                     <PipDieBox num={show1} rolling={rolling} />
                     <PipDieBox num={show2} rolling={rolling} />
@@ -432,7 +468,7 @@ function PlayerTurnRow({
                         type="button"
                         disabled={rolling}
                         onClick={onRoll}
-                        className="px-3.5 py-2.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-black font-black text-[11px] uppercase rounded-xl active:scale-95 transition-all"
+                        className="px-3 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-black font-black text-[11px] uppercase rounded-xl active:scale-95 transition-all"
                     >
                         {rolling ? "..." : "Lanzar"}
                     </button>
@@ -473,12 +509,11 @@ export default function ParchisGamePage() {
         "Preparando arena..."
     );
     const [gameState, setGameState] = useState<ParchisState | null>(null);
-    const [displayedDice, setDisplayedDice] = useState<[number, number]>(() =>
-        randomDiePair()
-    );
+    const [displayedDice, setDisplayedDice] = useState<[number, number]>([
+        3, 5,
+    ]);
     const [busyAction, setBusyAction] = useState(false);
     const [rollingDice, setRollingDice] = useState(false);
-    const [rulesOpen, setRulesOpen] = useState(false);
 
     const [modal, setModal] = useState({
         isOpen: false,
@@ -496,7 +531,14 @@ export default function ParchisGamePage() {
     const connectedRef = useRef(false);
     const closingByUserRef = useRef(false);
     const startingRef = useRef(false);
-    const lastDiceKeyRef = useRef<string>("");
+    const rollSeqRef = useRef(0);
+    const lastAppliedRollSeqRef = useRef(0);
+    const displayedDiceRef = useRef<[number, number]>([3, 5]);
+
+    const setDicePair = useCallback((pair: [number, number]) => {
+        displayedDiceRef.current = pair;
+        setDisplayedDice(pair);
+    }, []);
 
     const showAlert = useCallback((title: string, message: string) => {
         setModal({ isOpen: true, title, message });
@@ -724,7 +766,8 @@ export default function ParchisGamePage() {
         gameStateRef.current = null;
         roomIdRef.current = "";
         setRoomId("");
-        lastDiceKeyRef.current = "";
+        rollSeqRef.current = 0;
+        lastAppliedRollSeqRef.current = 0;
 
         if (animationFrameRef.current !== null) {
             cancelAnimationFrame(animationFrameRef.current);
@@ -792,7 +835,8 @@ export default function ParchisGamePage() {
             selectedBetRef.current = betAmount;
             closingByUserRef.current = false;
             connectedRef.current = false;
-            lastDiceKeyRef.current = "";
+            rollSeqRef.current = 0;
+            lastAppliedRollSeqRef.current = 0;
 
             roomIdRef.current = targetRoomId;
             setRoomId(targetRoomId);
@@ -800,7 +844,7 @@ export default function ParchisGamePage() {
             setIsConnected(false);
             setGameState(null);
             gameStateRef.current = null;
-            setDisplayedDice(randomDiePair());
+            setDicePair(randomDiePair());
             setConnectionMessage("Conectando con el servidor...");
 
             const cleanName = (playerName.trim() || "Jugador").split(/\s+/)[0];
@@ -867,21 +911,24 @@ export default function ParchisGamePage() {
                                 Array.isArray(data.dice_pair) &&
                                 data.dice_pair.length >= 2
                             ) {
-                                setDisplayedDice([
+                                setDicePair([
                                     clampDieFace(data.dice_pair[0], 1),
                                     clampDieFace(data.dice_pair[1], 1),
                                 ]);
                             } else if (
                                 typeof data.dice === "number" &&
-                                data.dice > 0
+                                data.dice > 0 &&
+                                rollSeqRef.current >
+                                    lastAppliedRollSeqRef.current
                             ) {
-                                const key = `${data.turn_seat}-${data.dice}-${data.last_event || ""}-${data.must_move}`;
-                                if (key !== lastDiceKeyRef.current) {
-                                    lastDiceKeyRef.current = key;
-                                    setDisplayedDice(
-                                        randomPairForSum(data.dice)
-                                    );
-                                }
+                                lastAppliedRollSeqRef.current =
+                                    rollSeqRef.current;
+                                setDicePair(
+                                    randomPairForSum(
+                                        data.dice,
+                                        displayedDiceRef.current
+                                    )
+                                );
                             }
 
                             if (data.room_id) {
@@ -979,6 +1026,7 @@ export default function ParchisGamePage() {
             playerName,
             selectedBet,
             selectedWallet,
+            setDicePair,
             showAlert,
         ]
     );
@@ -1054,7 +1102,7 @@ export default function ParchisGamePage() {
     const sendRollDice = () => {
         const ws = socketRef.current;
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        lastDiceKeyRef.current = "";
+        rollSeqRef.current += 1;
         setRollingDice(true);
         ws.send(JSON.stringify({ type: "ROLL_DICE" }));
     };
@@ -1074,7 +1122,7 @@ export default function ParchisGamePage() {
         const rect = canvas.getBoundingClientRect();
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         const size = Math.max(
-            240,
+            220,
             Math.floor(Math.min(rect.width, rect.height || rect.width))
         );
 
@@ -1387,7 +1435,7 @@ export default function ParchisGamePage() {
         if (!canvas) return;
         const rect = canvas.getBoundingClientRect();
         const size = Math.max(
-            240,
+            220,
             Math.floor(Math.min(rect.width, rect.height || rect.width))
         );
         const clickX = e.clientX - rect.left;
@@ -1506,73 +1554,6 @@ export default function ParchisGamePage() {
 
     return (
         <div className="min-h-screen bg-black text-white flex flex-col select-none font-sans overflow-x-hidden">
-            {rulesOpen && isInGame && (
-                <div className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-                    <div className="bg-zinc-950 border border-zinc-800 max-w-lg w-full rounded-3xl p-6 space-y-4 shadow-2xl">
-                        <div className="flex items-center justify-between border-b border-zinc-900 pb-3.5">
-                            <h3 className="text-sm sm:text-base font-black uppercase tracking-wider text-emerald-400">
-                                Reglas del Parchís
-                            </h3>
-                            <button
-                                type="button"
-                                onClick={() => setRulesOpen(false)}
-                                className="px-3 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-black text-zinc-300 hover:text-white transition-colors"
-                            >
-                                Listo
-                            </button>
-                        </div>
-
-                        <ul className="space-y-2.5 text-xs text-zinc-300 leading-relaxed list-disc pl-4">
-                            <li>
-                                <strong className="text-white">
-                                    Objetivo:
-                                </strong>{" "}
-                                Llevar tus 4 fichas desde casa hasta la meta
-                                central por tu pasillo de color.
-                            </li>
-                            <li>
-                                <strong className="text-white">
-                                    Salida con 5:
-                                </strong>{" "}
-                                Sacar{" "}
-                                <strong className="text-emerald-400">
-                                    5
-                                </strong>{" "}
-                                en el dado saca una ficha a tu salida.
-                            </li>
-                            <li>
-                                <strong className="text-white">
-                                    Casillas seguras:
-                                </strong>{" "}
-                                Protegen las fichas de ser capturadas.
-                            </li>
-                            <li>
-                                <strong className="text-white">
-                                    Capturas:
-                                </strong>{" "}
-                                Caer en una casilla no segura ocupada por un
-                                rival envía su ficha a casa.
-                            </li>
-                            <li>
-                                <strong className="text-white">
-                                    Anfitrión:
-                                </strong>{" "}
-                                Si el anfitrión cierra o sale, la sala se cierra
-                                para todos.
-                            </li>
-                        </ul>
-
-                        <button
-                            type="button"
-                            onClick={() => setRulesOpen(false)}
-                            className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase rounded-2xl transition-all"
-                        >
-                            Entendido
-                        </button>
-                    </div>
-                </div>
-            )}
-
             {modal.isOpen && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-4">
                     <div className="bg-zinc-950 border border-zinc-800 w-full max-w-sm rounded-3xl p-6 text-center space-y-4 shadow-2xl">
@@ -1598,7 +1579,7 @@ export default function ParchisGamePage() {
             <main
                 className={`flex-1 w-full mx-auto flex flex-col ${
                     isInGame
-                        ? "max-w-3xl px-2.5 sm:px-6 py-2.5 sm:py-5 items-center justify-center"
+                        ? "max-w-xl px-2.5 sm:px-6 py-2.5 sm:py-5 items-center justify-center"
                         : "max-w-4xl px-3 sm:px-6 py-4 sm:py-8 items-center justify-center"
                 }`}
             >
@@ -1887,8 +1868,8 @@ export default function ParchisGamePage() {
                         </div>
                     </div>
                 ) : (
-                    <div className="w-full max-w-xl bg-zinc-950 border border-zinc-800 rounded-3xl p-2.5 sm:p-4 flex flex-col gap-2.5 sm:gap-3 shadow-2xl">
-                        <div className="flex items-center justify-between gap-2 border-b border-zinc-900 pb-2.5">
+                    <div className="w-full max-w-md bg-zinc-950 border border-zinc-800 rounded-3xl p-2.5 sm:p-4 flex flex-col gap-2.5 shadow-2xl">
+                        <div className="flex items-center justify-between gap-2 border-b border-zinc-900 pb-2">
                             <button
                                 type="button"
                                 onClick={() => void exitParchisGame()}
@@ -1900,14 +1881,6 @@ export default function ParchisGamePage() {
                             <span className="text-xs font-black text-emerald-400">
                                 {money(gameState?.pot_total ?? 0)}
                             </span>
-
-                            <button
-                                type="button"
-                                onClick={() => setRulesOpen(true)}
-                                className="px-3 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[11px] text-zinc-200 font-black uppercase"
-                            >
-                                Reglas
-                            </button>
                         </div>
 
                         {!isConnected || !gameState ? (
@@ -1938,7 +1911,7 @@ export default function ParchisGamePage() {
                                     <canvas
                                         ref={boardCanvasRef}
                                         onPointerDown={handleBoardPointerDown}
-                                        className="w-full max-w-[min(88vw,540px)] sm:max-w-[540px] aspect-square rounded-2xl border-2 border-zinc-800 shadow-2xl cursor-pointer touch-none"
+                                        className="w-full aspect-square rounded-2xl border-2 border-zinc-800 shadow-2xl cursor-pointer touch-none"
                                         style={{ touchAction: "none" }}
                                     />
                                 </div>
@@ -1984,7 +1957,7 @@ export default function ParchisGamePage() {
                 )}
             </main>
 
-            <footer className="py-5 text-center text-[10px] text-zinc-600 font-bold uppercase tracking-widest">
+            <footer className="py-4 text-center text-[10px] text-zinc-600 font-bold uppercase tracking-widest">
                 AXIOM PARCHIS ARENA
             </footer>
         </div>
