@@ -308,17 +308,6 @@ function getExactSteps(diceValue: number | null): number {
     return Math.round(diceValue);
 }
 
-function hasFiveOrSumFive(diceValues: number[] | null | undefined): boolean {
-    if (!Array.isArray(diceValues) || diceValues.length === 0) return false;
-    if (diceValues.some((v) => v === 5)) return true;
-    for (let i = 0; i < diceValues.length; i++) {
-        for (let j = i + 1; j < diceValues.length; j++) {
-            if (diceValues[i] + diceValues[j] === 5) return true;
-        }
-    }
-    return false;
-}
-
 function getPieceMoveOptions(
     piece: ParchisPiece,
     diceValues: number[] | null | undefined
@@ -423,40 +412,36 @@ function randomDiePair(prev?: [number, number]): [number, number] {
     return [randomDieFace(prev?.[0]), randomDieFace(prev?.[1])];
 }
 
-function getStepPiecePoseFromCurrent(
+// Secuencia paso a paso 0, 1, 2, 3... desde la posición actual de la ficha
+function getStepSequencePose(
     startPiece: ParchisPiece,
     seatIndex: number,
-    stepOffset: number,
+    stepCount: number,
     isExitFive: boolean
 ): ParchisPiece {
     const startSpot = START_SPOTS[seatIndex] ?? 0;
 
+    if (stepCount <= 0) {
+        return startPiece;
+    }
+
     if (startPiece.stage === -1) {
-        if (!isExitFive || stepOffset <= 0) return startPiece;
-        const exitedAtZero: ParchisPiece = {
+        if (!isExitFive) return startPiece;
+        const exited: ParchisPiece = {
             ...startPiece,
             stage: 0,
             pos: startSpot,
             steps_walked: 0,
         };
-        if (stepOffset === 1) return exitedAtZero;
-        return getStepPiecePoseFromCurrent(
-            exitedAtZero,
-            seatIndex,
-            stepOffset - 1,
-            false
-        );
-    }
-
-    if (stepOffset <= 0) {
-        return startPiece;
+        if (stepCount === 1) return exited;
+        return getStepSequencePose(exited, seatIndex, stepCount - 1, false);
     }
 
     let stage = startPiece.stage;
     let pos = startPiece.pos;
     let stepsWalked = startPiece.steps_walked;
 
-    for (let s = 1; s <= stepOffset; s++) {
+    for (let s = 1; s <= stepCount; s++) {
         if (stage === 0) {
             stepsWalked += 1;
             if (stepsWalked >= 63) {
@@ -562,7 +547,7 @@ function BlackOffTurnDieBox({ num }: { num: number }) {
     return (
         <div
             className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-black border border-zinc-800 p-1 flex items-center justify-center shadow-inner"
-            title={`Turno inactivo · Dado ${face}`}
+            title={`Dado ${face}`}
         >
             <svg viewBox="0 0 100 100" className="w-full h-full block">
                 <rect
@@ -590,7 +575,6 @@ function PlayerTurnRow({
     rolling,
     isActiveTurn,
     canRoll,
-    mustMove,
     waitingTurn,
     onRoll,
     position,
@@ -603,7 +587,6 @@ function PlayerTurnRow({
     rolling: boolean;
     isActiveTurn: boolean;
     canRoll: boolean;
-    mustMove: boolean;
     waitingTurn: boolean;
     onRoll: () => void;
     position: "top" | "bottom";
@@ -636,16 +619,6 @@ function PlayerTurnRow({
             >
                 {colorName}
             </span>
-            {waitingTurn && (
-                <span className="text-[10px] font-bold uppercase text-amber-400">
-                    · Esperando turno...
-                </span>
-            )}
-            {!waitingTurn && isActiveTurn && (
-                <span className="text-[10px] font-bold uppercase text-emerald-400">
-                    {mustMove ? "· Mueve ficha" : "· Su turno"}
-                </span>
-            )}
         </div>
     );
 
@@ -1426,20 +1399,20 @@ export default function ParchisGamePage() {
             });
 
             if (me && startPiece && totalSteps > 0) {
-                let currentStep = 0;
+                let stepIdx = 0;
                 const runStep = () => {
                     animatedPieceRef.current = {
                         userId: me.user_id,
                         pieceId,
-                        piece: getStepPiecePoseFromCurrent(
+                        piece: getStepSequencePose(
                             startPiece,
                             me.seat_index,
-                            currentStep,
+                            stepIdx,
                             Boolean(option.isExitFive)
                         ),
                     };
-                    if (currentStep < totalSteps) {
-                        currentStep += 1;
+                    if (stepIdx < totalSteps) {
+                        stepIdx += 1;
                         stepAnimTimerRef.current = setTimeout(runStep, 85);
                     } else {
                         stepAnimTimerRef.current = null;
@@ -2017,20 +1990,6 @@ export default function ParchisGamePage() {
         ? getCleanPlayerLabel(topPlayer, "Rival")
         : "Esperando rival...";
 
-    const canExitHomeWithFive =
-        isMyTurn &&
-        Boolean(gameState?.must_move) &&
-        hasFiveOrSumFive(gameState?.dice_remaining);
-
-    const movablePieces =
-        isMyTurn && gameState?.must_move && myPlayer
-            ? (myPlayer.pieces || []).filter(
-                  (pc) =>
-                      getPieceMoveOptions(pc, gameState.dice_remaining).length >
-                      0
-              )
-            : [];
-
     return (
         <div className="min-h-screen bg-black text-white flex flex-col select-none font-sans overflow-x-hidden">
             {modal.isOpen && (
@@ -2392,7 +2351,6 @@ export default function ParchisGamePage() {
                                         isMyTurn &&
                                         !gameState.must_move
                                     }
-                                    mustMove={topIsTurn && gameState.must_move}
                                     waitingTurn={isTurnWaiting}
                                     onRoll={sendRollDice}
                                     position="top"
@@ -2428,63 +2386,10 @@ export default function ParchisGamePage() {
                                         isMyTurn &&
                                         !gameState.must_move
                                     }
-                                    mustMove={
-                                        bottomIsTurn && gameState.must_move
-                                    }
                                     waitingTurn={isTurnWaiting}
                                     onRoll={sendRollDice}
                                     position="bottom"
                                 />
-
-                                {gameState.penalty_pending && isMyTurn && (
-                                    <div className="w-full rounded-lg border border-red-500/40 bg-red-950/30 p-2 text-center text-xs font-bold text-red-300">
-                                        Tres dobles seguidos: toca en el tablero
-                                        la ficha que quieres enviar a casa.
-                                    </div>
-                                )}
-
-                                {canExitHomeWithFive && (
-                                    <div className="w-full rounded-lg border border-emerald-500/30 bg-emerald-950/25 px-3 py-1.5 text-center text-[11px] font-bold text-emerald-300">
-                                        5 o suma 5: saca ficha o mueve una en
-                                        juego desde su posición actual.
-                                    </div>
-                                )}
-
-                                {movablePieces.length > 0 && (
-                                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                                        <span className="text-[10px] font-bold uppercase text-zinc-400">
-                                            Mover:
-                                        </span>
-                                        {movablePieces.map((pc) => (
-                                            <div
-                                                key={pc.id}
-                                                className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/10 bg-black/30 p-2"
-                                            >
-                                                <span className="px-1 text-[10px] font-black uppercase text-white">
-                                                    Ficha #{pc.id + 1}
-                                                </span>
-                                                {getPieceMoveOptions(
-                                                    pc,
-                                                    gameState.dice_remaining
-                                                ).map((opt, optIndex) => (
-                                                    <button
-                                                        key={`${pc.id}-${optIndex}-${opt.label}`}
-                                                        type="button"
-                                                        onClick={() =>
-                                                            sendMovePiece(
-                                                                pc.id,
-                                                                opt
-                                                            )
-                                                        }
-                                                        className="min-w-9 rounded-lg bg-emerald-400 px-2.5 py-2 text-[10px] font-black text-black transition hover:bg-emerald-300 active:scale-95"
-                                                    >
-                                                        {opt.label}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
 
                                 {gameState.status === "finished" && (
                                     <div className="bg-zinc-900/70 border border-emerald-400 rounded-2xl p-3.5 text-center space-y-2">
