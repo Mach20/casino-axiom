@@ -80,6 +80,7 @@ interface ProfileRow {
 }
 
 interface MoveOption {
+    label: string;
     diceValue: number;
     steps: number;
     usedDiceValues: number[];
@@ -90,7 +91,7 @@ const API_BASE =
     process.env.NEXT_PUBLIC_API_URL || "https://casino-axiom.ethiodeploy.app";
 
 const TURN_TRANSITION_DELAY_MS = 1400;
-const STEP_INTERVAL_MS = 120;
+const STEP_INTERVAL_MS = 150;
 
 const PARCHIS_BETS: Record<ParchisBet, number> = {
     "0.25": 0.25,
@@ -136,7 +137,7 @@ const TRACK_LEN = 68;
 const GRAY_STAR_SPOTS = new Set([5, 12, 22, 29, 39, 46, 56, 63]);
 const SAFE_SPOTS = new Set([0, 5, 12, 17, 22, 29, 34, 39, 46, 51, 56, 63]);
 
-// Estrella gris fuera de cada casa (coincide 100% con PARCHIS_START_SPOTS del servidor)
+// Estrella gris fuera de cada casa (idéntico a PARCHIS_START_SPOTS del servidor)
 const SEAT_START_SPOTS: Record<number, number> = {
     0: 5,
     1: 22,
@@ -317,6 +318,7 @@ function getPieceMoveOptions(
         if (diceValues.includes(5)) {
             return [
                 {
+                    label: "Salir (5)",
                     diceValue: 5,
                     steps: 1,
                     usedDiceValues: [5],
@@ -335,6 +337,7 @@ function getPieceMoveOptions(
         if (steps <= 0) continue;
         if (piece.stage === 0 && piece.steps_walked + steps <= 70) {
             options.push({
+                label: `+${val}`,
                 diceValue: val,
                 steps,
                 usedDiceValues: [val],
@@ -342,6 +345,7 @@ function getPieceMoveOptions(
             });
         } else if (piece.stage === 100 && piece.pos + steps <= 7) {
             options.push({
+                label: `+${val}`,
                 diceValue: val,
                 steps,
                 usedDiceValues: [val],
@@ -372,7 +376,7 @@ function randomDiePair(prev?: [number, number]): [number, number] {
     return [randomDieFace(prev?.[0]), randomDieFace(prev?.[1])];
 }
 
-// Secuencia 0, 1, 2, 3... desde la posición actual de la ficha
+// Secuencia estricta 0 (casilla actual), 1, 2, 3... idéntica al cálculo del backend
 function getPoseAtStep(
     startPiece: ParchisPiece,
     seatIndex: number,
@@ -381,10 +385,12 @@ function getPoseAtStep(
 ): ParchisPiece {
     const startSpot = SEAT_START_SPOTS[seatIndex] ?? 5;
 
+    // 0 = casilla actual sin moverse todavía
     if (stepIndex <= 0) {
         return { ...startPiece };
     }
 
+    // Salir de casa a estrella gris fuera de su casa
     if (startPiece.stage === -1) {
         if (!isExitFive) return { ...startPiece };
         return {
@@ -429,7 +435,7 @@ function getTurnFingerprint(st: ParchisState): string {
                 .join(",")
         )
         .join("|");
-    return `${st.turn_seat}|${st.must_move}|${piecesSig}|${st.last_event || ""}`;
+    return `${st.turn_seat}|${st.must_move}|${(st.dice_remaining || []).join("-")}|${piecesSig}`;
 }
 
 const PIP_COORDS: Record<number, Array<[number, number]>> = {
@@ -697,7 +703,6 @@ export default function ParchisGamePage() {
     const [isMovingPiece, setIsMovingPiece] = useState(false);
     const [activeSocket, setActiveSocket] = useState<WebSocket | null>(null);
 
-    // Selector de dado cuando la ficha tocada puede moverse con ambos dados (ej. 2 y 6)
     const [pendingChoice, setPendingChoice] = useState<{
         pieceId: number;
         options: MoveOption[];
@@ -714,6 +719,7 @@ export default function ParchisGamePage() {
     const userIdRef = useRef<string | null>(null);
     const socketRef = useRef<WebSocket | null>(null);
     const closingByUserRef = useRef(false);
+    const isTurnWaitingRef = useRef(false);
     const turnDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastDelayedFingerprintRef = useRef<string>("");
     const stepAnimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -738,6 +744,7 @@ export default function ParchisGamePage() {
         }
         animatedPieceRef.current = null;
         lastDelayedFingerprintRef.current = "";
+        isTurnWaitingRef.current = false;
         setPendingChoice(null);
         setIsTurnWaiting(false);
         setIsMovingPiece(false);
@@ -1026,6 +1033,7 @@ export default function ParchisGamePage() {
 
             const commitState = () => {
                 turnDelayTimerRef.current = null;
+                isTurnWaitingRef.current = false;
                 setIsTurnWaiting(false);
                 gameStateRef.current = nextState;
                 setGameState(nextState);
@@ -1055,6 +1063,7 @@ export default function ParchisGamePage() {
                 if (turnDelayTimerRef.current) {
                     clearTimeout(turnDelayTimerRef.current);
                 }
+                isTurnWaitingRef.current = true;
                 setIsTurnWaiting(true);
                 setRollingDice(false);
                 turnDelayTimerRef.current = setTimeout(
@@ -1064,11 +1073,11 @@ export default function ParchisGamePage() {
                 return;
             }
 
-            if (!isTurnWaiting) {
+            if (!isTurnWaitingRef.current) {
                 commitState();
             }
         },
-        [isTurnWaiting, resetSessionState, showAlert]
+        [resetSessionState, showAlert]
     );
 
     const connectToRoom = useCallback(
@@ -1364,7 +1373,7 @@ export default function ParchisGamePage() {
         ws.send(JSON.stringify({ type: "ROLL_DICE" }));
     };
 
-    // Recorre 0, 1, 2, 3... desde la posición actual de la ficha y envía al terminar
+    // Recorre estrictamente 0 (casilla actual), 1, 2, 3... hasta completar el dado elegido
     const sendMovePiece = useCallback(
         (pieceId: number, option: MoveOption) => {
             if (isTurnWaiting || isMovingPiece) return;
@@ -1400,34 +1409,47 @@ export default function ParchisGamePage() {
 
             if (me && startPiece && totalSteps > 0) {
                 setIsMovingPiece(true);
-                let stepIdx = 0;
-                const runStep = () => {
-                    animatedPieceRef.current = {
-                        userId: me.user_id,
-                        pieceId,
-                        piece: getPoseAtStep(
-                            startPiece,
-                            seatIdx,
-                            stepIdx,
-                            Boolean(option.isExitFive)
-                        ),
-                    };
-                    if (stepIdx < totalSteps) {
-                        stepIdx += 1;
-                        stepAnimTimerRef.current = setTimeout(
-                            runStep,
-                            STEP_INTERVAL_MS
-                        );
-                    } else {
-                        stepAnimTimerRef.current = null;
-                        if (ws.readyState === WebSocket.OPEN) {
-                            ws.send(payload);
-                        } else {
-                            setIsMovingPiece(false);
-                        }
-                    }
+                // Paso 0: mantener en la posición actual antes de avanzar 1, 2, 3...
+                animatedPieceRef.current = {
+                    userId: me.user_id,
+                    pieceId,
+                    piece: getPoseAtStep(
+                        startPiece,
+                        seatIdx,
+                        0,
+                        Boolean(option.isExitFive)
+                    ),
                 };
-                runStep();
+
+                let stepIdx = 0;
+                const scheduleNext = () => {
+                    stepAnimTimerRef.current = setTimeout(() => {
+                        if (stepIdx < totalSteps) {
+                            stepIdx += 1;
+                            animatedPieceRef.current = {
+                                userId: me.user_id,
+                                pieceId,
+                                piece: getPoseAtStep(
+                                    startPiece,
+                                    seatIdx,
+                                    stepIdx,
+                                    Boolean(option.isExitFive)
+                                ),
+                            };
+                            scheduleNext();
+                        } else {
+                            stepAnimTimerRef.current = null;
+                            if (ws.readyState === WebSocket.OPEN) {
+                                ws.send(payload);
+                            } else {
+                                animatedPieceRef.current = null;
+                                setIsMovingPiece(false);
+                            }
+                        }
+                    }, STEP_INTERVAL_MS);
+                };
+
+                scheduleNext();
                 return;
             }
 
@@ -1918,7 +1940,6 @@ export default function ParchisGamePage() {
     const mainName = (playerName.trim() || "Jugador").split(/\s+/)[0];
     const [d1, d2] = displayedDice;
 
-    // Determinar visualmente qué dado ya se consumió en el turno actual
     const remainingPool = [...(gameState?.dice_remaining || [])];
     let d1Used = false;
     let d2Used = false;
@@ -2353,7 +2374,7 @@ export default function ParchisGamePage() {
                                                 }
                                                 className="px-4 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs shadow-lg active:scale-95 transition-all"
                                             >
-                                                +{opt.diceValue}
+                                                {opt.label}
                                             </button>
                                         ))}
                                     </div>
