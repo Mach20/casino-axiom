@@ -2681,6 +2681,15 @@ def _normalize_parchis_bet(bet: float) -> float | None:
     return val if val in PARCHIS_BETS else None
 
 
+def _parchis_seat_order_for_max_players(max_players: int) -> tuple[int, ...]:
+    # En 2 jugadores van en esquinas opuestas: 0 (Verde) y 2 (Azul)
+    if max_players == 2:
+        return (0, 2)
+    if max_players == 3:
+        return (0, 1, 2)
+    return (0, 1, 2, 3)
+
+
 def _parchis_team_for_seat(seat_index: int, max_players: int) -> str | None:
     if max_players == 4:
         return "A" if seat_index in (0, 2) else "B"
@@ -2764,7 +2773,6 @@ async def _parchis_broadcast(room: dict):
 
 
 def _parchis_can_move_piece(piece: dict, dice: int) -> bool:
-    """Comprueba si una ficha puede usar un dado concreto."""
     if not isinstance(dice, int) or dice < 1 or dice > 6:
         return False
 
@@ -2811,7 +2819,6 @@ def _parchis_apply_move(
     actor_uid: str,
     piece_id: int,
     dice: int,
-    exit_to_start: bool = False,
 ) -> tuple[bool, str]:
     actor = room["players"].get(actor_uid)
     if not actor:
@@ -2821,44 +2828,29 @@ def _parchis_apply_move(
         (pc for pc in actor["pieces"] if pc["id"] == piece_id),
         None,
     )
-    if not piece:
-        return False, "Ficha no encontrada."
+    if not piece or not _parchis_can_move_piece(piece, dice):
+        return False, "Movimiento no válido para esa ficha y ese dado."
 
     seat = actor["seat_index"]
     start_spot = PARCHIS_START_SPOTS.get(seat, 5)
     captured_msg = ""
 
     if piece["stage"] == -1:
-        if dice != 5:
-            return False, "Necesitas un 5 para sacar ficha."
         piece["stage"] = 0
         piece["pos"] = start_spot
         piece["steps_walked"] = 0
-        captured_msg = f"Asiento {seat + 1} sacó ficha en estrella {start_spot + 1}."
+        captured_msg = f"Asiento {seat + 1} sacó ficha con el 5."
     else:
-        if exit_to_start and dice == 5 and piece["pos"] == start_spot:
-            new_walked = piece["steps_walked"] + 5
-            if new_walked > 63 + PARCHIS_HOME_STRETCH_LEN - 1:
-                return False, "Movimiento excede la meta."
+        if piece["stage"] == 0:
+            new_walked = piece["steps_walked"] + dice
             piece["steps_walked"] = new_walked
             if new_walked >= 63:
                 piece["stage"] = 100
                 piece["pos"] = new_walked - 63
             else:
                 piece["pos"] = (start_spot + new_walked) % PARCHIS_TRACK_LEN
-        else:
-            if not _parchis_can_move_piece(piece, dice):
-                return False, "Movimiento no válido para esa ficha y ese dado."
-            if piece["stage"] == 0:
-                new_walked = piece["steps_walked"] + dice
-                piece["steps_walked"] = new_walked
-                if new_walked >= 63:
-                    piece["stage"] = 100
-                    piece["pos"] = new_walked - 63
-                else:
-                    piece["pos"] = (start_spot + new_walked) % PARCHIS_TRACK_LEN
-            elif piece["stage"] == 100:
-                piece["pos"] += dice
+        elif piece["stage"] == 100:
+            piece["pos"] += dice
 
         if piece["stage"] == 0 and piece["pos"] not in PARCHIS_SAFE_SPOTS:
             for other_uid, other_p in room["players"].items():
@@ -3179,7 +3171,8 @@ async def parchis_ws_endpoint(
                 return
 
             taken_seats = {p["seat_index"] for p in room["players"].values()}
-            seat_index = next(i for i in range(room["max_players"]) if i not in taken_seats)
+            seat_candidates = _parchis_seat_order_for_max_players(room["max_players"])
+            seat_index = next(i for i in seat_candidates if i not in taken_seats)
             team = _parchis_team_for_seat(seat_index, room["max_players"])
 
             room["players"][user_id] = {
@@ -3208,8 +3201,8 @@ async def parchis_ws_endpoint(
 
             if len(room["players"]) == room["max_players"]:
                 room["status"] = "playing"
-                room["turn_seat"] = 0
-                room["last_event"] = "¡Sala completa! Inicia el turno del asiento 1."
+                room["turn_seat"] = min(p["seat_index"] for p in room["players"].values())
+                room["last_event"] = "¡Sala completa! Inicia el turno."
                 try:
                     supabase.table("parchis_matches").update({"status": "playing"}).eq("id", room["room_id"]).execute()
                 except Exception:
@@ -3291,7 +3284,7 @@ async def parchis_ws_endpoint(
                         room["must_move"] = True
                         room["last_event"] = (
                             f"Asiento {actor['seat_index'] + 1} sacó "
-                            f"{die_one} y {die_two}. Usa los dados disponibles."
+                            f"{die_one} y {die_two}."
                         )
 
                     await _parchis_broadcast(room)
@@ -3333,7 +3326,6 @@ async def parchis_ws_endpoint(
                         piece_id = int(data.get("piece_id", -1))
                         raw_die = data.get("dice_value", data.get("steps_moved", 0))
                         requested_die = int(raw_die)
-                        exit_to_start = bool(data.get("exit_to_start", False))
                     except (TypeError, ValueError):
                         await send_error(websocket, "Ficha o dado inválido.")
                         continue
@@ -3364,7 +3356,6 @@ async def parchis_ws_endpoint(
                         user_id,
                         piece_id,
                         requested_die,
-                        exit_to_start=exit_to_start,
                     )
                     if not ok:
                         await send_error(websocket, status_code)
@@ -3388,11 +3379,6 @@ async def parchis_ws_endpoint(
                             remaining,
                         ):
                             room["must_move"] = True
-                            room["last_event"] += (
-                                f" Queda el dado {remaining[0]}"
-                                + (f" y {remaining[1]}" if len(remaining) > 1 else "")
-                                + "."
-                            )
                         else:
                             room["must_move"] = False
                             room["dice_remaining"] = []
