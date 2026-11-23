@@ -2656,7 +2656,7 @@ PARCHIS_BETS = (0.25, 1.00, 10.00)
 PARCHIS_TRACK_LEN = 68
 PARCHIS_HOME_STRETCH_LEN = 8
 PARCHIS_SAFE_SPOTS = {0, 5, 12, 17, 22, 29, 34, 39, 46, 51, 56, 63}
-PARCHIS_START_SPOTS = {0: 0, 1: 17, 2: 34, 3: 51}
+PARCHIS_START_SPOTS = {0: 5, 1: 22, 2: 39, 3: 56}
 PARCHIS_COMMISSION_RATE = Decimal("0.06")
 
 parchis_rooms: Dict[str, dict] = {}
@@ -2770,7 +2770,6 @@ def _parchis_can_move_piece(piece: dict, dice: int) -> bool:
 
     stage = piece.get("stage", -1)
     if stage == -1:
-        # En Parchís basta con que CUALQUIERA de los dos dados sea 5.
         return dice == 5
     if stage == 0:
         return piece.get("steps_walked", 0) + dice <= (
@@ -2812,6 +2811,7 @@ def _parchis_apply_move(
     actor_uid: str,
     piece_id: int,
     dice: int,
+    exit_to_start: bool = False,
 ) -> tuple[bool, str]:
     actor = room["players"].get(actor_uid)
     if not actor:
@@ -2821,30 +2821,44 @@ def _parchis_apply_move(
         (pc for pc in actor["pieces"] if pc["id"] == piece_id),
         None,
     )
-    if not piece or not _parchis_can_move_piece(piece, dice):
-        return False, "Movimiento no válido para esa ficha y ese dado."
+    if not piece:
+        return False, "Ficha no encontrada."
 
     seat = actor["seat_index"]
-    start_spot = PARCHIS_START_SPOTS[seat]
+    start_spot = PARCHIS_START_SPOTS.get(seat, 5)
     captured_msg = ""
 
     if piece["stage"] == -1:
-        # La salida consume el dado que mostró 5, no la suma de los dados.
+        if dice != 5:
+            return False, "Necesitas un 5 para sacar ficha."
         piece["stage"] = 0
         piece["pos"] = start_spot
         piece["steps_walked"] = 0
-        captured_msg = f"Asiento {seat + 1} sacó una ficha con el 5."
+        captured_msg = f"Asiento {seat + 1} sacó ficha en estrella {start_spot + 1}."
     else:
-        if piece["stage"] == 0:
-            new_walked = piece["steps_walked"] + dice
+        if exit_to_start and dice == 5 and piece["pos"] == start_spot:
+            new_walked = piece["steps_walked"] + 5
+            if new_walked > 63 + PARCHIS_HOME_STRETCH_LEN - 1:
+                return False, "Movimiento excede la meta."
             piece["steps_walked"] = new_walked
             if new_walked >= 63:
                 piece["stage"] = 100
                 piece["pos"] = new_walked - 63
             else:
                 piece["pos"] = (start_spot + new_walked) % PARCHIS_TRACK_LEN
-        elif piece["stage"] == 100:
-            piece["pos"] += dice
+        else:
+            if not _parchis_can_move_piece(piece, dice):
+                return False, "Movimiento no válido para esa ficha y ese dado."
+            if piece["stage"] == 0:
+                new_walked = piece["steps_walked"] + dice
+                piece["steps_walked"] = new_walked
+                if new_walked >= 63:
+                    piece["stage"] = 100
+                    piece["pos"] = new_walked - 63
+                else:
+                    piece["pos"] = (start_spot + new_walked) % PARCHIS_TRACK_LEN
+            elif piece["stage"] == 100:
+                piece["pos"] += dice
 
         if piece["stage"] == 0 and piece["pos"] not in PARCHIS_SAFE_SPOTS:
             for other_uid, other_p in room["players"].items():
@@ -3317,18 +3331,19 @@ async def parchis_ws_endpoint(
 
                     try:
                         piece_id = int(data.get("piece_id", -1))
-                        requested_die = int(data.get("dice_value", 0))
+                        raw_die = data.get("dice_value", data.get("steps_moved", 0))
+                        requested_die = int(raw_die)
+                        exit_to_start = bool(data.get("exit_to_start", False))
                     except (TypeError, ValueError):
                         await send_error(websocket, "Ficha o dado inválido.")
                         continue
 
-                    # Compatibilidad: si el cliente antiguo no manda dice_value,
-                    # seleccionamos el primer dado que permita mover esa ficha.
+                    piece = next(
+                        (pc for pc in actor["pieces"] if pc["id"] == piece_id),
+                        None,
+                    )
+
                     if requested_die not in dice_remaining:
-                        piece = next(
-                            (pc for pc in actor["pieces"] if pc["id"] == piece_id),
-                            None,
-                        )
                         requested_die = next(
                             (
                                 die for die in dice_remaining
@@ -3349,12 +3364,12 @@ async def parchis_ws_endpoint(
                         user_id,
                         piece_id,
                         requested_die,
+                        exit_to_start=exit_to_start,
                     )
                     if not ok:
                         await send_error(websocket, status_code)
                         continue
 
-                    # Consumir exactamente el dado utilizado (incluye dobles).
                     room["dice_remaining"].remove(requested_die)
 
                     try:
@@ -3379,7 +3394,6 @@ async def parchis_ws_endpoint(
                                 + "."
                             )
                         else:
-                            # Si el otro dado no sirve, se pierde y termina el turno.
                             room["must_move"] = False
                             room["dice_remaining"] = []
                             room["dice"] = None
@@ -3397,7 +3411,6 @@ async def parchis_ws_endpoint(
             if p and p.get("websocket") is websocket:
                 p["connected"] = False
                 p["websocket"] = None
-
 
 # ============================================================
 # ADMINISTRADOR AXIOM - NUEVO PANEL
