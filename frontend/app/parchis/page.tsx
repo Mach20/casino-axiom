@@ -48,8 +48,6 @@ interface ParchisState {
     room_code: string | null;
     status: string;
     turn_seat: number;
-    turn_deadline?: number | null;
-    turn_seconds_remaining?: number;
     dice: number | null;
     dice_pair?: number[] | null;
     dice_remaining?: number[];
@@ -62,6 +60,7 @@ interface ParchisState {
     winners: string[];
     last_event: string;
     players: ParchisPlayerState[];
+    turn_seconds?: number;
 }
 
 interface PublicRoomItem {
@@ -199,8 +198,6 @@ function getHomeSlotOffset(
 }
 
 function buildTrackGridCoords(): Array<{ gx: number; gy: number }> {
-    // Recorrido cerrado de 52 tramos base, remuestreado por distancia a 68
-    // centros distintos. Así no se repiten coordenadas ni se amontonan casillas.
     const perimeter: Array<{ gx: number; gy: number }> = [];
     for (let y = 0; y < 6; y++) perimeter.push({ gx: 6, gy: y });
     for (let x = 5; x >= 0; x--) perimeter.push({ gx: x, gy: 6 });
@@ -215,32 +212,11 @@ function buildTrackGridCoords(): Array<{ gx: number; gy: number }> {
     for (let y = 5; y >= 0; y--) perimeter.push({ gx: 8, gy: y });
     perimeter.push({ gx: 7, gy: 0 });
 
-    const segments = perimeter.map((point, index) => {
-        const next = perimeter[(index + 1) % perimeter.length];
-        return {
-            from: point,
-            to: next,
-            length: Math.hypot(next.gx - point.gx, next.gy - point.gy),
-        };
-    });
-    const totalLength = segments.reduce((sum, segment) => sum + segment.length, 0);
     const result: Array<{ gx: number; gy: number }> = [];
-
+    const totalPts = perimeter.length;
     for (let i = 0; i < TRACK_LEN; i++) {
-        let distance = (i * totalLength) / TRACK_LEN;
-        let selected = segments[segments.length - 1];
-        for (const segment of segments) {
-            if (distance <= segment.length) {
-                selected = segment;
-                break;
-            }
-            distance -= segment.length;
-        }
-        const ratio = selected.length > 0 ? distance / selected.length : 0;
-        result.push({
-            gx: selected.from.gx + (selected.to.gx - selected.from.gx) * ratio,
-            gy: selected.from.gy + (selected.to.gy - selected.from.gy) * ratio,
-        });
+        const idx = Math.floor((i * totalPts) / TRACK_LEN) % totalPts;
+        result.push(perimeter[idx]);
     }
     return result;
 }
@@ -285,8 +261,7 @@ function getGoalLanePoint(
 function getPieceBoardPoint(
     piece: ParchisPiece,
     seatIndex: number,
-    boardSize: number,
-    players: ParchisPlayerState[] = []
+    boardSize: number
 ): { x: number; y: number } {
     const pad = boardSize * 0.036;
     const inner = boardSize - pad * 2;
@@ -303,13 +278,7 @@ function getPieceBoardPoint(
 
     if (piece.stage === 100) {
         const pt = getGoalLanePoint(seatIndex, piece.pos, boardSize);
-        const occupants = players.flatMap((player) =>
-            (player.pieces || [])
-                .filter((other) => other.stage === 100 && other.pos === piece.pos && player.seat_index === seatIndex)
-                .map((other) => ({ seat: player.seat_index, id: other.id }))
-        ).sort((a, b) => a.id - b.id);
-        const slot = Math.max(0, occupants.findIndex((item) => item.id === piece.id));
-        const jitter = occupants.length > 1 ? (slot === 0 ? -1 : 1) * cell * 0.27 : 0;
+        const jitter = (piece.id % 2 === 0 ? -1 : 1) * (cell * 0.14);
         return {
             x: pt.x + (seatIndex % 2 === 0 ? jitter : 0),
             y: pt.y + (seatIndex % 2 === 1 ? jitter : 0),
@@ -320,18 +289,12 @@ function getPieceBoardPoint(
     const g = TRACK_GRID[spot];
     const baseX = pad + (g.gx + 0.5) * cell;
     const baseY = pad + (g.gy + 0.5) * cell;
-    const occupants = players.flatMap((player) =>
-        (player.pieces || [])
-            .filter((other) => other.stage === 0 && other.pos === piece.pos)
-            .map((other) => ({ seat: player.seat_index, id: other.id }))
-    ).sort((a, b) => a.seat - b.seat || a.id - b.id);
-    const slot = occupants.findIndex((item) => item.seat === seatIndex && item.id === piece.id);
-    const offset = occupants.length > 1 ? cell * 0.27 : 0;
-    const direction = slot <= 0 ? -1 : 1;
+    const angle = ((piece.id + seatIndex) % 4) * (Math.PI / 2);
+    const offset = cell * 0.56;
 
     return {
-        x: baseX + offset * direction,
-        y: baseY,
+        x: baseX + Math.cos(angle) * offset,
+        y: baseY + Math.sin(angle) * offset,
     };
 }
 
@@ -358,81 +321,65 @@ function buildZeroToNSequence(n: number): number[] {
 
 function getPieceMoveOptions(
     piece: ParchisPiece,
-    diceValues: number[] | null | undefined,
-    players?: ParchisPlayerState[],
-    seatIndex?: number
+    diceValues: number[] | null | undefined
 ): MoveOption[] {
     if (!Array.isArray(diceValues) || diceValues.length === 0) return [];
 
-    const isBlocked = (targetPos: number, movingPiece: ParchisPiece) => {
-        if (!players) return false;
-        let count = 0;
-        for (const player of players) {
-            for (const other of player.pieces || []) {
-                if (other.stage !== 0 || other.id === movingPiece.id && player.seat_index === seatIndex) continue;
-                if (other.pos === targetPos) count++;
-            }
-        }
-        return count >= 2;
-    };
-
     if (piece.stage === -1) {
-        const canExitByFive = diceValues.includes(5);
-        const canExitBySum = diceValues.length === 2 && diceValues[0] + diceValues[1] === 5;
-        if (!canExitByFive && !canExitBySum) return [];
-        const startSpot = SEAT_START_SPOTS[seatIndex ?? 0] ?? 5;
-        if (isBlocked(startSpot, piece)) return [];
-        return [{
-            label: canExitByFive ? "Salir (5)" : "Salir (2+3)",
-            diceValue: 5,
-            steps: 1,
-            stepSequence: buildZeroToNSequence(1),
-            sequenceString: "01",
-            usedDiceValues: canExitByFive ? [5] : [...diceValues],
-            isExitFive: true,
-        }];
+        const sumIsFive =
+            diceValues.length === 2 &&
+            diceValues[0] + diceValues[1] === 5 &&
+            !diceValues.includes(5);
+        if (diceValues.includes(5) || sumIsFive) {
+            const usedValues = diceValues.includes(5)
+                ? [5]
+                : [...diceValues];
+            const seq = buildZeroToNSequence(1);
+            return [
+                {
+                    label: sumIsFive ? "Salir (suma 5)" : "Salir (5)",
+                    diceValue: 5,
+                    steps: 1,
+                    stepSequence: seq,
+                    sequenceString: seq.join(""),
+                    usedDiceValues: usedValues,
+                    isExitFive: true,
+                },
+            ];
+        }
+        return [];
     }
 
     const uniqueDice = Array.from(new Set(diceValues));
     const options: MoveOption[] = [];
+
     for (const val of uniqueDice) {
         const steps = getExactSteps(val);
         if (steps <= 0) continue;
+        const seq = buildZeroToNSequence(steps);
         if (piece.stage === 0 && piece.steps_walked + steps <= 70) {
-            let blocked = false;
-            const startSpot = SEAT_START_SPOTS[seatIndex ?? 0] ?? 5;
-            for (let step = 1; step <= steps; step++) {
-                const walked = piece.steps_walked + step;
-                if (walked >= 63) {
-                    const goalPos = walked - 63;
-                    const goalCount = (players || []).reduce((total, player) =>
-                        total + (player.seat_index === seatIndex
-                            ? (player.pieces || []).filter((other) => other.id !== piece.id && other.stage === 100 && other.pos === goalPos).length
-                            : 0), 0);
-                    if (goalCount >= 2) { blocked = true; break; }
-                    continue;
-                }
-                const pos = (startSpot + walked) % TRACK_LEN;
-                if (isBlocked(pos, piece)) { blocked = true; break; }
-            }
-            if (blocked) continue;
-            const seq = buildZeroToNSequence(steps);
-            options.push({ label: `+${val} (${seq.join("")})`, diceValue: val, steps, stepSequence: seq, sequenceString: seq.join(""), usedDiceValues: [val], isExitFive: false });
+            options.push({
+                label: `+${val} (${seq.join("")})`,
+                diceValue: val,
+                steps,
+                stepSequence: seq,
+                sequenceString: seq.join(""),
+                usedDiceValues: [val],
+                isExitFive: false,
+            });
         } else if (piece.stage === 100 && piece.pos + steps <= 7) {
-            let blocked = false;
-            for (let step = 1; step <= steps; step++) {
-                const target = piece.pos + step;
-                const occupied = (players || []).reduce((total, player) =>
-                    total + (player.seat_index === seatIndex
-                        ? (player.pieces || []).filter((other) => other.id !== piece.id && other.stage === 100 && other.pos === target).length
-                        : 0), 0);
-                if (occupied >= 2) { blocked = true; break; }
-            }
-            if (blocked) continue;
-            const seq = buildZeroToNSequence(steps);
-            options.push({ label: `+${val} (${seq.join("")})`, diceValue: val, steps, stepSequence: seq, sequenceString: seq.join(""), usedDiceValues: [val], isExitFive: false });
+            options.push({
+                label: `+${val} (${seq.join("")})`,
+                diceValue: val,
+                steps,
+                stepSequence: seq,
+                sequenceString: seq.join(""),
+                usedDiceValues: [val],
+                isExitFive: false,
+            });
         }
     }
+
     return options;
 }
 
@@ -634,43 +581,38 @@ function PlayerTurnRow({
     playerName,
     colorName,
     accentColor,
-    die,
-    dicePair,
+    dice,
     rolling,
     isActiveTurn,
     canRoll,
     waitingTurn,
     onRoll,
     position,
-    secondsRemaining,
 }: {
     playerName: string;
     colorName: string;
     accentColor: string;
-    die: number;
-    dicePair?: number[] | null;
+    dice: number[];
     rolling: boolean;
     isActiveTurn: boolean;
     canRoll: boolean;
     waitingTurn: boolean;
     onRoll: () => void;
     position: "top" | "bottom";
-    secondsRemaining: number;
 }) {
-    const [spinDie, setSpinDie] = useState(3);
-    const [spinDieTwo, setSpinDieTwo] = useState(5);
+    const [spinDice, setSpinDice] = useState<[number, number]>([3, 4]);
 
     useEffect(() => {
         if (!isActiveTurn || !rolling) return;
         const timer = setInterval(() => {
-            setSpinDie((prev) => randomDieFace(prev));
-            setSpinDieTwo((prev) => randomDieFace(prev));
+            setSpinDice(([a, b]) => [randomDieFace(a), randomDieFace(b)]);
         }, 75);
         return () => clearInterval(timer);
     }, [isActiveTurn, rolling]);
 
-    const shownDieOne = isActiveTurn && rolling ? spinDie : (dicePair?.[0] ?? die);
-    const shownDieTwo = isActiveTurn && rolling ? spinDieTwo : (dicePair?.[1] ?? die);
+    const shownDice = rolling
+        ? spinDice
+        : [clampDieFace(dice[0], 1), clampDieFace(dice[1], 1)];
 
     const badge = (
         <div className="flex items-center gap-1.5">
@@ -690,22 +632,12 @@ function PlayerTurnRow({
         </div>
     );
 
-    const diceBox = (
+    const diceBox = isActiveTurn ? (
         <div className="flex items-center gap-2">
-            <button
-                type="button"
-                disabled={!canRoll || rolling || waitingTurn}
-                onClick={onRoll}
-                aria-label="Lanzar dado"
-                style={{ borderColor: isActiveTurn ? accentColor : "#18181b" }}
-                className={`${isActiveTurn ? "bg-zinc-900" : "bg-black"} border-2 rounded-2xl p-1.5 flex items-center gap-1.5 shadow-lg active:scale-95 transition-all disabled:cursor-default disabled:active:scale-100`}
-            >
-                <PipDieBox num={shownDieOne} rolling={rolling} />
-                <PipDieBox num={shownDieTwo} rolling={rolling} />
-            </button>
-            <span className={`min-w-[42px] text-center rounded-lg px-2 py-2 text-[10px] font-black tabular-nums border ${secondsRemaining <= 3 ? "text-red-300 border-red-500/50 bg-red-950/50" : "text-emerald-300 border-emerald-500/30 bg-emerald-950/30"}`}>
-                {Math.max(0, secondsRemaining)}s
-            </span>
+            <div className="flex items-center gap-1.5 rounded-2xl border border-zinc-800 bg-black/70 p-1.5">
+                <PipDieBox num={shownDice[0]} rolling={rolling} />
+                <PipDieBox num={shownDice[1]} rolling={rolling} />
+            </div>
             {canRoll && !waitingTurn && (
                 <button
                     type="button"
@@ -717,12 +649,12 @@ function PlayerTurnRow({
                 </button>
             )}
         </div>
-    );
+    ) : null;
 
     if (position === "top") {
         return (
             <div className="w-full flex flex-col items-end gap-1">
-                {isActiveTurn && diceBox}
+                {diceBox}
                 {badge}
             </div>
         );
@@ -731,7 +663,7 @@ function PlayerTurnRow({
     return (
         <div className="w-full flex flex-col items-start gap-1">
             {badge}
-            {isActiveTurn && diceBox}
+            {diceBox}
         </div>
     );
 }
@@ -765,8 +697,8 @@ export default function ParchisGamePage() {
         "Preparando arena..."
     );
     const [gameState, setGameState] = useState<ParchisState | null>(null);
-    const [turnSecondsRemaining, setTurnSecondsRemaining] = useState(0);
-    const [displayedDie, setDisplayedDie] = useState<number>(3);
+    const [displayedDice, setDisplayedDice] = useState<number[]>([3, 4]);
+    const [turnSeconds, setTurnSeconds] = useState(10);
     const [busyAction, setBusyAction] = useState(false);
     const [rollingDice, setRollingDice] = useState(false);
     const [isConnecting, setIsConnecting] = useState(false);
@@ -786,20 +718,6 @@ export default function ParchisGamePage() {
     });
 
     const boardCanvasRef = useRef<HTMLCanvasElement | null>(null);
-    useEffect(() => {
-        const deadline = gameState?.turn_deadline;
-        if (gameState?.status !== "playing" || !deadline) {
-            setTurnSecondsRemaining(0);
-            return;
-        }
-        const updateCountdown = () => {
-            setTurnSecondsRemaining(Math.max(0, Math.ceil(deadline - Date.now() / 1000)));
-        };
-        updateCountdown();
-        const timer = setInterval(updateCountdown, 100);
-        return () => clearInterval(timer);
-    }, [gameState?.turn_deadline, gameState?.status]);
-
     const gameStateRef = useRef<ParchisState | null>(null);
     const userIdRef = useRef<string | null>(null);
     const socketRef = useRef<WebSocket | null>(null);
@@ -1126,13 +1044,24 @@ export default function ParchisGamePage() {
                 setGameState(nextState);
                 setRollingDice(false);
 
-                if (Array.isArray(nextState.dice_pair) && nextState.dice_pair.length > 0) {
-                    setDisplayedDie(clampDieFace(nextState.dice_pair[0], 1));
-                } else if (Array.isArray(nextState.dice_remaining) && nextState.dice_remaining.length > 0) {
-                    setDisplayedDie(clampDieFace(nextState.dice_remaining[0], 1));
-                } else if (typeof nextState.dice === "number" && nextState.dice >= 1 && nextState.dice <= 6) {
-                    setDisplayedDie(clampDieFace(nextState.dice, 1));
+                if (Array.isArray(nextState.dice_pair) && nextState.dice_pair.length >= 2) {
+                    setDisplayedDice([
+                        clampDieFace(nextState.dice_pair[0], 1),
+                        clampDieFace(nextState.dice_pair[1], 1),
+                    ]);
+                } else if (Array.isArray(nextState.dice_remaining) && nextState.dice_remaining.length >= 2) {
+                    setDisplayedDice([
+                        clampDieFace(nextState.dice_remaining[0], 1),
+                        clampDieFace(nextState.dice_remaining[1], 1),
+                    ]);
+                } else if (Array.isArray(nextState.dice_remaining) && nextState.dice_remaining.length === 1) {
+                    setDisplayedDice([clampDieFace(nextState.dice_remaining[0], 1), displayedDice[1] || 1]);
                 }
+                setTurnSeconds(
+                    typeof nextState.turn_seconds === "number"
+                        ? Math.max(0, Math.ceil(nextState.turn_seconds))
+                        : 10
+                );
             };
 
             if (turnChanged) {
@@ -1154,7 +1083,7 @@ export default function ParchisGamePage() {
                 commitState();
             }
         },
-        [resetSessionState, showAlert]
+        [displayedDice, resetSessionState, showAlert]
     );
 
     const connectToRoom = useCallback(
@@ -1202,7 +1131,8 @@ export default function ParchisGamePage() {
             setIsInGame(true);
             setGameState(null);
             gameStateRef.current = null;
-            setDisplayedDie(3);
+            setDisplayedDice([3, 4]);
+            setTurnSeconds(10);
             setConnectionMessage("Conectando con el servidor...");
 
             const cleanName = (playerName.trim() || "Jugador").split(/\s+/)[0];
@@ -1631,20 +1561,13 @@ export default function ParchisGamePage() {
             const px = pad + (g.gx + 0.5) * cell;
             const py = pad + (g.gy + 0.5) * cell;
 
-            const tileSize = cell * 0.70;
-            ctx.fillStyle = "#fffdf7";
-            ctx.fillRect(px - tileSize / 2, py - tileSize / 2, tileSize, tileSize);
-            ctx.strokeStyle = "rgba(39, 35, 29, 0.42)";
-            ctx.lineWidth = Math.max(0.7, cell * 0.025);
-            ctx.strokeRect(px - tileSize / 2, py - tileSize / 2, tileSize, tileSize);
-
             if (GRAY_STAR_SPOTS.has(i) || SAFE_SPOTS.has(i)) {
                 ctx.fillStyle = "#cbd5e1";
                 ctx.fillRect(
-                    px - tileSize / 2 + 0.6,
-                    py - tileSize / 2 + 0.6,
-                    tileSize - 1.2,
-                    tileSize - 1.2
+                    pad + g.gx * cell + 1.2,
+                    pad + g.gy * cell + 1.2,
+                    cell - 2.4,
+                    cell - 2.4
                 );
                 ctx.save();
                 ctx.beginPath();
@@ -1820,17 +1743,13 @@ export default function ParchisGamePage() {
                         ? animatedPieceRef.current.piece
                         : piece;
 
-                const pt = getPieceBoardPoint(animOverride, p.seat_index, size, players);
+                const pt = getPieceBoardPoint(animOverride, p.seat_index, size);
                 const movable =
                     isMyTurnNow &&
                     p.user_id === currentUid &&
-                    getPieceMoveOptions(piece, state.dice_remaining, players, p.seat_index).length > 0;
+                    getPieceMoveOptions(piece, state.dice_remaining).length > 0;
 
-                const sameSquareCount = players.reduce((total, player) =>
-                    total + (player.pieces || []).filter((other) =>
-                        piece.stage === 0 && other.stage === 0 && other.pos === piece.pos
-                    ).length, 0);
-                const radius = Math.max(6, cell * (sameSquareCount > 1 ? 0.25 : 0.36));
+                const radius = Math.max(9, cell * 0.39);
 
                 if (movable) {
                     ctx.save();
@@ -1928,7 +1847,7 @@ export default function ParchisGamePage() {
             let closest = 34;
             for (const piece of me.pieces || []) {
                 if (piece.stage === -1) continue;
-                const pt = getPieceBoardPoint(piece, me.seat_index, size, players);
+                const pt = getPieceBoardPoint(piece, me.seat_index, size);
                 const dist = Math.hypot(clickX - pt.x, clickY - pt.y);
                 if (dist < closest) {
                     closest = dist;
@@ -1952,9 +1871,9 @@ export default function ParchisGamePage() {
         let minDist = 34;
 
         for (const piece of me.pieces || []) {
-            const opts = getPieceMoveOptions(piece, state.dice_remaining, players, me.seat_index);
+            const opts = getPieceMoveOptions(piece, state.dice_remaining);
             if (opts.length === 0) continue;
-            const pt = getPieceBoardPoint(piece, me.seat_index, size, players);
+            const pt = getPieceBoardPoint(piece, me.seat_index, size);
             const dist = Math.hypot(clickX - pt.x, clickY - pt.y);
             if (dist < minDist) {
                 minDist = dist;
@@ -1969,9 +1888,7 @@ export default function ParchisGamePage() {
             if (selectedPiece) {
                 const opts = getPieceMoveOptions(
                     selectedPiece,
-                    state.dice_remaining,
-                    players,
-                    me.seat_index
+                    state.dice_remaining
                 );
                 if (opts.length === 1) {
                     sendMovePiece(closestId, opts[0]);
@@ -1986,6 +1903,14 @@ export default function ParchisGamePage() {
             setPendingChoice(null);
         }
     };
+
+    useEffect(() => {
+        if (!gameState || gameState.status !== "playing") return;
+        const timer = setInterval(() => {
+            setTurnSeconds((current) => Math.max(0, current - 1));
+        }, 1000);
+        return () => clearInterval(timer);
+    }, [gameState?.turn_seat, gameState?.status, gameState?.turn_seconds]);
 
     if (isAuthLoading) {
         return (
@@ -2040,7 +1965,7 @@ export default function ParchisGamePage() {
         gameState !== null &&
         (gameState.host_user_id === userId || myPlayer?.seat_index === 0);
     const mainName = (playerName.trim() || "Jugador").split(/\s+/)[0];
-    const die = displayedDie;
+    const dice = displayedDice;
 
     const bottomPlayer = myPlayer || activePlayers[0] || null;
     const topPlayer =
@@ -2380,8 +2305,13 @@ export default function ParchisGamePage() {
                                     Pozo: {money(getNetPotDisplay(gameState))}
                                 </span>
                                 {gameState?.room_id && (
-                                    <span className="text-[10px] text-zinc-400 font-bold">
+                                    <span className="text-[10px] text-zinc-400 font-bold block">
                                         Sala #{gameState.room_id}
+                                    </span>
+                                )}
+                                {gameState?.status === "playing" && (
+                                    <span className={`text-[10px] font-black ${turnSeconds <= 3 ? "text-red-400" : "text-amber-300"}`}>
+                                        Tiempo de turno: {turnSeconds}s
                                     </span>
                                 )}
                             </div>
@@ -2399,25 +2329,23 @@ export default function ParchisGamePage() {
                                             const pal = getSeatPalette(
                                                 ep.seat_index
                                             );
+                                            const extraIsTurn =
+                                                gameState.status === "playing" &&
+                                                gameState.turn_seat === ep.seat_index;
                                             return (
-                                                <div
+                                                <PlayerTurnRow
                                                     key={ep.user_id}
-                                                    className="flex items-center gap-1.5 bg-zinc-900/80 border border-zinc-800 rounded-full px-2.5 py-1"
-                                                >
-                                                    <span
-                                                        className="w-2.5 h-2.5 rounded-full"
-                                                        style={{
-                                                            backgroundColor:
-                                                                pal.main,
-                                                        }}
-                                                    />
-                                                    <span className="text-[11px] font-bold text-white">
-                                                        {getCleanPlayerLabel(
-                                                            ep,
-                                                            "Jugador"
-                                                        )}
-                                                    </span>
-                                                </div>
+                                                    playerName={getCleanPlayerLabel(ep, "Jugador")}
+                                                    colorName={pal.name}
+                                                    accentColor={pal.main}
+                                                    dice={dice}
+                                                    rolling={rollingDice && extraIsTurn}
+                                                    isActiveTurn={extraIsTurn}
+                                                    canRoll={ep.user_id === userId && isMyTurn && !gameState.must_move}
+                                                    waitingTurn={isTurnWaiting || isMovingPiece}
+                                                    onRoll={sendRollDice}
+                                                    position="bottom"
+                                                />
                                             );
                                         })}
                                     </div>
@@ -2427,8 +2355,7 @@ export default function ParchisGamePage() {
                                     playerName={topName}
                                     colorName={topPalette.name}
                                     accentColor={topPalette.main}
-                                    die={die}
-                                    dicePair={gameState.dice_pair}
+                                    dice={dice}
                                     rolling={rollingDice && topIsTurn}
                                     isActiveTurn={topIsTurn}
                                     canRoll={
@@ -2440,7 +2367,6 @@ export default function ParchisGamePage() {
                                     waitingTurn={isTurnWaiting || isMovingPiece}
                                     onRoll={sendRollDice}
                                     position="top"
-                                    secondsRemaining={turnSecondsRemaining}
                                 />
 
                                 {pendingChoice && isMyTurn && (
@@ -2467,10 +2393,10 @@ export default function ParchisGamePage() {
                                     <canvas
                                         ref={boardCanvasRef}
                                         onPointerDown={handleBoardPointerDown}
-                                        className="block w-full aspect-square max-h-[min(96vw,82vh)] rounded-2xl border border-emerald-500/20 bg-[#090d0b] shadow-2xl cursor-pointer touch-none"
+                                        className="block w-full aspect-square max-h-[min(92vw,68vh)] rounded-2xl border border-emerald-500/20 bg-[#090d0b] shadow-2xl cursor-pointer touch-none"
                                         style={{
                                             touchAction: "none",
-                                            maxWidth: "min(100%, 82vh)",
+                                            maxWidth: "min(100%, 68vh)",
                                         }}
                                     />
                                 </div>
@@ -2479,8 +2405,7 @@ export default function ParchisGamePage() {
                                     playerName={bottomName}
                                     colorName={bottomPalette.name}
                                     accentColor={bottomPalette.main}
-                                    die={die}
-                                    dicePair={gameState.dice_pair}
+                                    dice={dice}
                                     rolling={rollingDice && bottomIsTurn}
                                     isActiveTurn={bottomIsTurn}
                                     canRoll={
@@ -2492,7 +2417,6 @@ export default function ParchisGamePage() {
                                     waitingTurn={isTurnWaiting || isMovingPiece}
                                     onRoll={sendRollDice}
                                     position="bottom"
-                                    secondsRemaining={turnSecondsRemaining}
                                 />
 
                                 {gameState.status === "finished" && (
