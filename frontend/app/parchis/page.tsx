@@ -1,3 +1,12 @@
+
+
+
+
+
+
+
+
+
 "use client";
 
 import {
@@ -94,7 +103,7 @@ interface MoveOption {
 const API_BASE =
     process.env.NEXT_PUBLIC_API_URL || "https://casino-axiom.ethiodeploy.app";
 
-const TURN_TRANSITION_DELAY_MS = 1400;
+const TURN_TRANSITION_DELAY_MS = 1000;
 const STEP_INTERVAL_MS = 150;
 
 const PARCHIS_BETS: Record<ParchisBet, number> = {
@@ -318,10 +327,6 @@ function buildZeroToNSequence(n: number): number[] {
     return seq;
 }
 
-function formatZeroToNString(n: number): string {
-    return buildZeroToNSequence(n).join("");
-}
-
 function getPieceMoveOptions(
     piece: ParchisPiece,
     diceValues: number[] | null | undefined
@@ -518,12 +523,10 @@ function PipDieBox({
     num,
     rolling,
     used,
-    routeLabel,
 }: {
     num: number;
     rolling: boolean;
     used?: boolean;
-    routeLabel?: string;
 }) {
     const face = clampDieFace(num, 1);
     const dots = PIP_COORDS[face] || PIP_COORDS[1];
@@ -557,11 +560,6 @@ function PipDieBox({
                     ))}
                 </svg>
             </div>
-            {routeLabel && (
-                <span className="text-[9px] font-mono font-black tracking-tight text-emerald-400 leading-none">
-                    {routeLabel}
-                </span>
-            )}
         </div>
     );
 }
@@ -632,9 +630,6 @@ function PlayerTurnRow({
 
     const show1 = isActiveTurn && rolling ? spinDice[0] : d1;
     const show2 = isActiveTurn && rolling ? spinDice[1] : d2;
-    const rightDieRoute =
-        isActiveTurn && !rolling ? formatZeroToNString(show2) : undefined;
-
     const badge = (
         <div className="flex items-center gap-1.5">
             <span
@@ -678,7 +673,6 @@ function PlayerTurnRow({
                             num={show2}
                             rolling={rolling}
                             used={!rolling && d2Used}
-                            routeLabel={rightDieRoute}
                         />
                     </>
                 ) : (
@@ -1449,10 +1443,7 @@ export default function ParchisGamePage() {
             const totalSteps = isExitingFromHome
                 ? 1
                 : getExactSteps(option.diceValue);
-            const stepSequence =
-                option.stepSequence && option.stepSequence.length > 0
-                    ? option.stepSequence
-                    : buildZeroToNSequence(totalSteps);
+            const stepSequence = buildZeroToNSequence(totalSteps);
             const sequenceString = stepSequence.join("");
 
             if (stepAnimTimerRef.current) {
