@@ -1,12 +1,3 @@
-
-
-
-
-
-
-
-
-
 "use client";
 
 import {
@@ -103,7 +94,7 @@ interface MoveOption {
 const API_BASE =
     process.env.NEXT_PUBLIC_API_URL || "https://casino-axiom.ethiodeploy.app";
 
-const TURN_TRANSITION_DELAY_MS = 1000;
+const TURN_TRANSITION_DELAY_MS = 1400;
 const STEP_INTERVAL_MS = 150;
 
 const PARCHIS_BETS: Record<ParchisBet, number> = {
@@ -317,7 +308,6 @@ function getExactSteps(diceValue: number | null): number {
     return Math.round(diceValue);
 }
 
-// Genera 0 (lugar de la ficha) seguido de 1..N para cualquier digito N
 function buildZeroToNSequence(n: number): number[] {
     const count = Math.max(0, Math.round(n));
     const seq: number[] = [0];
@@ -374,7 +364,7 @@ function getPieceMoveOptions(
         const seq = buildZeroToNSequence(steps);
         if (piece.stage === 0 && piece.steps_walked + steps <= 70) {
             options.push({
-                label: `+${val} (${seq.join("")})`,
+                label: `+${val}`,
                 diceValue: val,
                 steps,
                 stepSequence: seq,
@@ -384,7 +374,7 @@ function getPieceMoveOptions(
             });
         } else if (piece.stage === 100 && piece.pos + steps <= 7) {
             options.push({
-                label: `+${val} (${seq.join("")})`,
+                label: `+${val}`,
                 diceValue: val,
                 steps,
                 stepSequence: seq,
@@ -532,34 +522,32 @@ function PipDieBox({
     const dots = PIP_COORDS[face] || PIP_COORDS[1];
 
     return (
-        <div className="flex flex-col items-center gap-0.5">
-            <div
-                className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl border-2 p-1 flex items-center justify-center shadow-md transition-all duration-150 ${
-                    used
-                        ? "bg-zinc-900 border-zinc-700 opacity-35"
-                        : "bg-zinc-100 border-zinc-400"
-                } ${rolling ? "rotate-12 scale-105" : "rotate-0 scale-100"}`}
-            >
-                <svg viewBox="0 0 100 100" className="w-full h-full block">
-                    <rect
-                        x="2"
-                        y="2"
-                        width="96"
-                        height="96"
-                        rx="18"
-                        fill={used ? "#18181b" : "#f4f4f5"}
+        <div
+            className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl border-2 p-1 flex items-center justify-center shadow-md transition-all duration-150 ${
+                used
+                    ? "bg-zinc-900 border-zinc-700 opacity-35"
+                    : "bg-zinc-100 border-zinc-400"
+            } ${rolling ? "rotate-12 scale-105" : "rotate-0 scale-100"}`}
+        >
+            <svg viewBox="0 0 100 100" className="w-full h-full block">
+                <rect
+                    x="2"
+                    y="2"
+                    width="96"
+                    height="96"
+                    rx="18"
+                    fill={used ? "#18181b" : "#f4f4f5"}
+                />
+                {dots.map(([cx, cy], idx) => (
+                    <circle
+                        key={idx}
+                        cx={cx}
+                        cy={cy}
+                        r="10.5"
+                        fill={used ? "#52525b" : "#18181b"}
                     />
-                    {dots.map(([cx, cy], idx) => (
-                        <circle
-                            key={idx}
-                            cx={cx}
-                            cy={cy}
-                            r="10.5"
-                            fill={used ? "#52525b" : "#18181b"}
-                        />
-                    ))}
-                </svg>
-            </div>
+                ))}
+            </svg>
         </div>
     );
 }
@@ -630,6 +618,7 @@ function PlayerTurnRow({
 
     const show1 = isActiveTurn && rolling ? spinDice[0] : d1;
     const show2 = isActiveTurn && rolling ? spinDice[1] : d2;
+
     const badge = (
         <div className="flex items-center gap-1.5">
             <span
@@ -1423,7 +1412,6 @@ export default function ParchisGamePage() {
         ws.send(JSON.stringify({ type: "ROLL_DICE" }));
     };
 
-    // Recorre estrictamente 0 (lugar de la ficha) seguido de 1..N para cualquier digito N
     const sendMovePiece = useCallback(
         (pieceId: number, option: MoveOption) => {
             if (isTurnWaiting || isMovingPiece) return;
@@ -1443,7 +1431,10 @@ export default function ParchisGamePage() {
             const totalSteps = isExitingFromHome
                 ? 1
                 : getExactSteps(option.diceValue);
-            const stepSequence = buildZeroToNSequence(totalSteps);
+            const stepSequence =
+                option.stepSequence && option.stepSequence.length > 0
+                    ? option.stepSequence
+                    : buildZeroToNSequence(totalSteps);
             const sequenceString = stepSequence.join("");
 
             if (stepAnimTimerRef.current) {
