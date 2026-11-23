@@ -326,6 +326,17 @@ function getPieceMoveOptions(
                 },
             ];
         }
+        if (diceValues.length === 2 && diceValues[0] + diceValues[1] === 5) {
+            return [
+                {
+                    label: `Salir (${diceValues[0]}+${diceValues[1]}=5)`,
+                    diceValue: 5,
+                    steps: 1,
+                    usedDiceValues: [diceValues[0], diceValues[1]],
+                    isExitFive: true,
+                },
+            ];
+        }
         return [];
     }
 
@@ -1388,10 +1399,11 @@ export default function ParchisGamePage() {
             );
             const startPiece = me?.pieces?.find((pc) => pc.id === pieceId);
             const seatIdx = me?.seat_index ?? 0;
-            const totalSteps =
-                startPiece?.stage === -1 && option.isExitFive
-                    ? 1
-                    : getExactSteps(option.diceValue);
+            const isExitingFromHome =
+                startPiece?.stage === -1 && Boolean(option.isExitFive);
+            const totalSteps = isExitingFromHome
+                ? 1
+                : getExactSteps(option.diceValue);
 
             if (stepAnimTimerRef.current) {
                 clearTimeout(stepAnimTimerRef.current);
@@ -1404,12 +1416,12 @@ export default function ParchisGamePage() {
                 dice_value: option.diceValue,
                 steps_moved: getExactSteps(option.diceValue),
                 used_dice_values: option.usedDiceValues,
-                exit_to_start: Boolean(option.isExitFive),
+                exit_to_start: isExitingFromHome,
             });
 
             if (me && startPiece && totalSteps > 0) {
                 setIsMovingPiece(true);
-                // Paso 0: mantener en la posición actual antes de avanzar 1, 2, 3...
+                // Paso 0: casilla actual (tanto para dado izquierdo como dado derecho)
                 animatedPieceRef.current = {
                     userId: me.user_id,
                     pieceId,
@@ -1417,7 +1429,7 @@ export default function ParchisGamePage() {
                         startPiece,
                         seatIdx,
                         0,
-                        Boolean(option.isExitFive)
+                        isExitingFromHome
                     ),
                 };
 
@@ -1433,7 +1445,7 @@ export default function ParchisGamePage() {
                                     startPiece,
                                     seatIdx,
                                     stepIdx,
-                                    Boolean(option.isExitFive)
+                                    isExitingFromHome
                                 ),
                             };
                             scheduleNext();
