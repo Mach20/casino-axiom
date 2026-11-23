@@ -1,4 +1,3 @@
-
 import os
 import random
 import hmac
@@ -15,7 +14,6 @@ from fastapi import (
     FastAPI,
     WebSocket,
     WebSocketDisconnect,
-    Request,
     Query,
     Header,
     HTTPException,
@@ -898,153 +896,6 @@ async def create_crypto_deposit(
         )
 
 
-def _credit_crypto_deposit_to_user(
-    user_id: str,
-    order_id: str,
-    amount_usd: float,
-    payment_id: str | None = None,
-):
-    """
-    Acredita el saldo al cliente de forma segura.
-    Si creas una función RPC en Supabase (ej. `credit_crypto_deposit`),
-    úsala aquí para garantizar atomicidad e idempotencia.
-    """
-    profile_res = (
-        supabase.table("profiles")
-        .select("id,balance")
-        .eq("id", user_id)
-        .limit(1)
-        .execute()
-    )
-    rows = profile_res.data or []
-    if not rows:
-        raise RuntimeError(f"Perfil no encontrado para user_id={user_id}")
-
-    current_balance = Decimal(str(rows[0].get("balance") or "0"))
-    new_balance = float((current_balance + Decimal(str(amount_usd))).quantize(Decimal("0.01")))
-
-    (
-        supabase.table("profiles")
-        .update({"balance": new_balance})
-        .eq("id", user_id)
-        .execute()
-    )
-    return {"success": True, "new_balance": new_balance}
-
-
-@app.post("/crypto/deposits/ipn")
-async def nowpayments_ipn(
-    request: Request,
-    x_nowpayments_sig: str | None = Header(default=None),
-):
-    raw_body = await request.body()
-
-    try:
-        payload = json.loads(raw_body.decode("utf-8"))
-    except Exception:
-        raise HTTPException(status_code=400, detail="JSON inválido.")
-
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="Payload inválido.")
-
-    if not verify_nowpayments_signature(payload, x_nowpayments_sig or ""):
-        print("ALERTA IPN: Firma de NOWPayments inválida.")
-        raise HTTPException(status_code=401, detail="Firma IPN no válida.")
-
-    order_id = str(payload.get("order_id") or "").strip()
-    payment_id = str(payload.get("payment_id") or "").strip()
-    payment_status = str(payload.get("payment_status") or "").strip().lower()
-
-    if not order_id:
-        raise HTTPException(status_code=400, detail="Falta order_id.")
-
-    dep_res = (
-        supabase.table("crypto_deposits")
-        .select("id,user_id,order_id,amount,payment_status,credited_at")
-        .eq("order_id", order_id)
-        .limit(1)
-        .execute()
-    )
-    dep_rows = dep_res.data or []
-
-    if not dep_rows:
-        raise HTTPException(status_code=404, detail="Depósito no encontrado.")
-
-    deposit = dep_rows[0]
-    user_id = str(deposit["user_id"])
-    amount_usd = float(deposit["amount"])
-
-    now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    update_fields = {
-        "payment_status": payment_status or deposit.get("payment_status"),
-        "updated_at": now_iso,
-    }
-    if payment_id:
-        update_fields["payment_id"] = payment_id
-
-    final_statuses = {"finished"}
-    already_credited = bool(deposit.get("credited_at"))
-
-    if payment_status in final_statuses and not already_credited:
-        _credit_crypto_deposit_to_user(
-            user_id=user_id,
-            order_id=order_id,
-            amount_usd=amount_usd,
-            payment_id=payment_id or None,
-        )
-        update_fields["credited_at"] = now_iso
-
-    (
-        supabase.table("crypto_deposits")
-        .update(update_fields)
-        .eq("order_id", order_id)
-        .execute()
-    )
-
-    return {"ok": True, "order_id": order_id, "status": payment_status}
-
-
-@app.get("/crypto/deposits/{order_id}")
-async def get_crypto_deposit_status(
-    order_id: str,
-    authorization: str | None = Header(default=None),
-):
-    user_id = get_authenticated_user_id(authorization)
-    clean_order_id = order_id.strip()
-
-    if not clean_order_id:
-        raise HTTPException(status_code=400, detail="order_id no válido.")
-
-    res = (
-        supabase.table("crypto_deposits")
-        .select(
-            "order_id,amount,pay_currency,pay_amount,pay_address,"
-            "payment_status,credited_at,created_at,updated_at"
-        )
-        .eq("order_id", clean_order_id)
-        .eq("user_id", user_id)
-        .limit(1)
-        .execute()
-    )
-
-    rows = res.data or []
-    if not rows:
-        raise HTTPException(status_code=404, detail="Depósito no encontrado.")
-
-    row = rows[0]
-    return {
-        "success": True,
-        "order_id": row["order_id"],
-        "amount_usd": float(row["amount"]),
-        "pay_currency": row.get("pay_currency") or "usdttrc20",
-        "pay_amount": row.get("pay_amount"),
-        "pay_address": row.get("pay_address"),
-        "payment_status": str(row.get("payment_status") or "waiting").lower(),
-        "credited": bool(row.get("credited_at")),
-        "credited_at": row.get("credited_at"),
-    }
-
-
 # ============================================================
 # WEBSOCKET LOBBY X VS O
 # ============================================================
@@ -1118,6 +969,7 @@ async def lobby_endpoint(
             creator_name = str(data.get("creator") or "Jugador").strip()[:40] or "Jugador"
             host = xo_player(creator_id, wallet, bet, creator_name, True)
 
+            # El frontend ya ejecuta el débito antes de CREATE_ROOM.
             lobbies[room_id] = {
                 "room_id": room_id,
                 "creator": creator_name,
@@ -1232,6 +1084,7 @@ async def game_endpoint(
                     await websocket.close()
                     return
 
+                # El frontend ya descontó la apuesta al unirse.
                 player = xo_player(
                     str(user_id),
                     wallet,
@@ -1372,6 +1225,8 @@ async def game_endpoint(
                 await manager.broadcast_lobby()
                 continue
 
+            # El cierre voluntario se procesa en finally.
+            # Si la partida ya comenzó, el rival gana por abandono.
             if msg_type == "CLOSE_ROOM":
                 if not player.get("is_host"):
                     await send_error(websocket, "Solo el creador puede cerrar la sala.")
@@ -1397,13 +1252,18 @@ async def game_endpoint(
             async with lock:
                 current = room.get("players", {}).get(str(user_id))
 
+                # Evita que una conexión vieja desconecte una conexión nueva.
                 if current is player and current.get("websocket") is websocket:
                     current["connected"] = False
                     current["websocket"] = None
 
+                    # Si la partida ya terminó normalmente, no se declara
+                    # otro ganador por la desconexión posterior.
                     if room.get("finished"):
                         remove_room = True
 
+                    # PARTIDA EN CURSO:
+                    # el jugador que permanece conectado gana por abandono.
                     elif room.get("status") == "PLAYING":
                         winner_id = None
                         winner_player = None
@@ -1426,6 +1286,7 @@ async def game_endpoint(
                                 "reason": "abandonment",
                             })
 
+                        # También se intenta informar al jugador que abandona.
                         await xo_send(current, {
                             "type": "GAME_FINISHED",
                             "result": "lose",
@@ -1437,6 +1298,8 @@ async def game_endpoint(
                         remove_room = True
                         lobby_changed = True
 
+                    # SALA EN ESPERA:
+                    # si se va el creador, se elimina la sala sin ganador.
                     elif current.get("is_host"):
                         room["finished"] = True
                         room["status"] = "FINISHED"
@@ -1450,6 +1313,9 @@ async def game_endpoint(
                         remove_room = True
                         lobby_changed = True
 
+                    # SALA EN ESPERA:
+                    # si se va el invitado, se libera el espacio y el
+                    # creador puede seguir esperando a otro jugador.
                     else:
                         room["players"].pop(str(user_id), None)
                         room["board"] = [None] * 9
@@ -1496,29 +1362,36 @@ GAME_TICK = 1 / 30
 
 COIN_RADIUS = 16
 
+# ÚNICAS APUESTAS PERMITIDAS
 SNAKE_BETS = {
     "snake_020": 200_000,
     "snake_1000": 10_000_000,
     "snake_5000": 50_000_000,
 }
 
+# VALOR DE LAS MONEDAS SEGÚN LA SALA
 SNAKE_COIN_VALUES = {
     "snake_020": 10_000,
     "snake_1000": 500_000,
     "snake_5000": 2_500_000,
 }
 
+# Una moneda cada cuarto de segundo mientras se mantiene el impulso.
 BOOST_COIN_INTERVAL = 0.25
+
+# Tiempo de supervivencia para completar el retiro.
 CASHOUT_COUNTDOWN_SECONDS = 20
 
 FOOD_RADIUS = 9
 FOOD_INITIAL_COUNT = 200
 MAX_SNAKE_PLAYERS = 30
 
+# CRECIMIENTO AL COMER
 FOOD_GROWTH = 3
 FOOD_RADIUS_GROWTH = 0.30
 SNAKE_MAX_RADIUS = 21.0
 
+# REDUCCIÓN DE TAMAÑO AL IMPULSARSE
 BOOST_RADIUS_MULTIPLIER = 0.10
 
 FOOD_COLORS = [
@@ -1581,6 +1454,11 @@ def get_snake_bet_category(bet: float):
 
 
 def get_available_snake_room_locked(category: str):
+    """
+    Esta función debe llamarse teniendo adquirido
+    snake_rooms_lock.
+    """
+
     available_rooms = []
 
     for room_id, room in snake_rooms.items():
@@ -1647,19 +1525,32 @@ class SnakeRoom:
 
         self.spawn_food(FOOD_INITIAL_COUNT)
 
+    # ========================================================
+    # VALOR DE MONEDA SEGÚN LA SALA
+    # ========================================================
+
     def get_coin_value(self) -> int:
         return SNAKE_COIN_VALUES.get(
             self.category,
             10_000
         )
 
+    # ========================================================
+    # TAMAÑO ACTUAL DE LA SERPIENTE
+    # ========================================================
+
     def get_snake_radius(self, snake: dict) -> float:
         radius = float(snake.get("radius", 7.0))
 
+        # Al impulsarse reduce temporalmente su grosor un 20%.
         if snake.get("boosting"):
             radius *= BOOST_RADIUS_MULTIPLIER
 
         return radius
+
+    # ========================================================
+    # COMIDA
+    # ========================================================
 
     def spawn_food(self, amount: int = 1):
         for _ in range(amount):
@@ -1669,8 +1560,14 @@ class SnakeRoom:
                 "y": random.uniform(30, WORLD_HEIGHT - 30),
                 "color": random.choice(FOOD_COLORS),
                 "radius": FOOD_RADIUS,
+
+                # Cada comida agrega 4 segmentos.
                 "growth": FOOD_GROWTH,
             })
+
+    # ========================================================
+    # POSICIÓN INICIAL
+    # ========================================================
 
     def create_spawn(self):
         positions = [
@@ -1719,6 +1616,10 @@ class SnakeRoom:
             random.uniform(-math.pi, math.pi)
         )
 
+    # ========================================================
+    # CREAR SERPIENTE
+    # ========================================================
+
     def add_snake(
         self,
         user_id: str,
@@ -1737,34 +1638,53 @@ class SnakeRoom:
 
         self.snakes[user_id] = {
             "session_id": session_id,
+
             "body": create_snake_body(x, y, angle),
             "angle": angle,
+
+            # Grosor inicial y máximo.
             "radius": 7.0,
             "max_radius": SNAKE_MAX_RADIUS,
+
             "score": 0,
             "kills": 0,
+
             "color": safe_color(color),
             "wallet": wallet,
+
             "bet": money_from_micros(bet_micros),
             "bet_micros": bet_micros,
+
+            # El 100% de la apuesta queda disponible.
             "balance_micros": playable_micros,
             "entry_remaining_micros": playable_micros,
             "collected_micros": 0,
+
             "earned_micros": 0,
             "earned": 0.0,
             "balance": playable_amount,
+
             "alive": True,
             "ready": False,
             "cashed_out": False,
+
             "boosting": False,
             "next_boost_coin_at": 0.0,
             "boost_spent_micros": 0,
+
             "grow_pending": 0,
+
+            # Estado del retiro.
             "cashout_pending": False,
             "cashout_pending_until": 0.0,
             "cashout_task_id": None,
+
             "created_at": time.time(),
         }
+
+    # ========================================================
+    # ACTUALIZAR SALDO
+    # ========================================================
 
     def update_balance(self, snake: dict):
         balance = max(
@@ -1782,6 +1702,10 @@ class SnakeRoom:
 
         snake["earned_micros"] = earned
         snake["earned"] = money_from_micros(earned)
+
+    # ========================================================
+    # SOLTAR MONEDAS AL MORIR
+    # ========================================================
 
     def drop_coins(self, snake: dict):
         if not snake.get("body"):
@@ -1835,10 +1759,15 @@ class SnakeRoom:
 
             remaining -= value
 
+        # Todo el saldo se convierte en monedas.
         snake["balance_micros"] = 0
         snake["entry_remaining_micros"] = 0
 
         self.update_balance(snake)
+
+    # ========================================================
+    # MORIR
+    # ========================================================
 
     def kill_snake(self, snake: dict):
         if not snake.get("alive"):
@@ -1846,10 +1775,16 @@ class SnakeRoom:
 
         snake["alive"] = False
         snake["boosting"] = False
+
+        # Cancela el retiro si muere durante la cuenta regresiva.
         snake["cashout_pending"] = False
         snake["cashout_pending_until"] = 0.0
 
         self.drop_coins(snake)
+
+    # ========================================================
+    # SOLTAR MONEDA AL IMPULSARSE
+    # ========================================================
 
     def drop_boost_coin(self, snake: dict) -> bool:
         coin_value = self.get_coin_value()
@@ -1866,6 +1801,7 @@ class SnakeRoom:
             snake["boosting"] = False
             return False
 
+        # Descuenta exactamente el valor de la moneda.
         snake["balance_micros"] -= coin_value
         snake["boost_spent_micros"] += coin_value
 
@@ -1910,6 +1846,10 @@ class SnakeRoom:
 
         return True
 
+    # ========================================================
+    # RECOGER MONEDAS Y CRECER
+    # ========================================================
+
     def collect_coins(self, snake: dict, head: dict):
         collected = []
 
@@ -1930,13 +1870,19 @@ class SnakeRoom:
 
             value = int(coin["value_micros"])
 
+            # Aumentar el saldo.
             snake["balance_micros"] += value
             snake["collected_micros"] += value
+
+            # Aumentar puntuación.
             snake["score"] += 1
+
+            # Una unidad de largo por cada moneda.
             snake["grow_pending"] = (
                 snake.get("grow_pending", 0) + 1
             )
 
+            # Aumentar ligeramente el grosor.
             current_radius = float(
                 snake.get("radius", 7.0)
             )
@@ -1951,6 +1897,10 @@ class SnakeRoom:
             )
 
         self.update_balance(snake)
+
+    # ========================================================
+    # COMER COMIDA Y CRECER
+    # ========================================================
 
     def collect_food(self, snake: dict, head: dict):
         collected = []
@@ -1975,9 +1925,11 @@ class SnakeRoom:
                 int(food.get("growth", FOOD_GROWTH))
             )
 
+            # CRECIMIENTO DE LARGO.
             snake["grow_pending"] += growth
             snake["score"] += growth
 
+            # CRECIMIENTO DE ANCHO Y ALTO.
             current_radius = float(
                 snake.get("radius", 7.0)
             )
@@ -1990,6 +1942,10 @@ class SnakeRoom:
                 max_radius,
                 current_radius + (FOOD_RADIUS_GROWTH * growth)
             )
+
+    # ========================================================
+    # COLISIONES
+    # ========================================================
 
     def check_collision(
         self,
@@ -2031,6 +1987,10 @@ class SnakeRoom:
 
         return None
 
+    # ========================================================
+    # ACTUALIZAR MOVIMIENTO
+    # ========================================================
+
     def update_snake(self, user_id: str):
         snake = self.snakes[user_id]
 
@@ -2043,6 +2003,7 @@ class SnakeRoom:
 
         now = time.monotonic()
 
+        # Mientras impulsa, suelta monedas cada 0.25 segundos.
         if snake.get("boosting"):
             if now >= snake.get("next_boost_coin_at", 0):
                 if self.drop_boost_coin(snake):
@@ -2091,6 +2052,10 @@ class SnakeRoom:
         else:
             snake["body"].pop()
 
+    # ========================================================
+    # ESTADO PÚBLICO
+    # ========================================================
+
     def public_state(self):
         public_snakes = {}
 
@@ -2110,23 +2075,33 @@ class SnakeRoom:
             public_snakes[uid] = {
                 "body": snake["body"],
                 "angle": snake["angle"],
+
+                # Envía el tamaño real, reducido durante el impulso.
                 "radius": self.get_snake_radius(snake),
+
                 "score": snake["score"],
                 "kills": snake["kills"],
+
                 "color": snake["color"],
                 "wallet": snake["wallet"],
+
                 "bet": snake["bet"],
+
                 "balance": snake["balance"],
                 "balance_micros": snake["balance_micros"],
+
                 "earned": snake["earned"],
                 "earned_micros": snake["earned_micros"],
+
                 "alive": snake["alive"],
                 "ready": snake["ready"],
                 "boosting": snake["boosting"],
+
                 "cashout_pending": snake.get(
                     "cashout_pending",
                     False
                 ),
+
                 "cashout_seconds": cashout_seconds,
             }
 
@@ -2134,16 +2109,24 @@ class SnakeRoom:
             "type": "GAME_STATE",
             "room_id": self.room_id,
             "bet": self.bet,
+
             "players_count": len(self.connections),
             "max_players": MAX_SNAKE_PLAYERS,
+
             "snakes": public_snakes,
+
             "foods": self.foods,
             "coins": self.coins,
+
             "world": {
                 "width": WORLD_WIDTH,
                 "height": WORLD_HEIGHT,
             },
         }
+
+    # ========================================================
+    # TRANSMITIR ESTADO
+    # ========================================================
 
     async def broadcast(self):
         message = self.public_state()
@@ -2153,6 +2136,10 @@ class SnakeRoom:
                 await ws.send_json(message)
             except Exception:
                 pass
+
+    # ========================================================
+    # BUCLE DEL JUEGO
+    # ========================================================
 
     async def game_loop(self):
         if self.is_running:
@@ -2254,6 +2241,10 @@ async def snake_game_endpoint(
     room = None
     reserved = False
 
+    # ========================================================
+    # ASIGNACIÓN Y RESERVA ATÓMICA
+    # ========================================================
+
     async with snake_rooms_lock:
         already_playing = any(
             user_id in existing_room.connections
@@ -2293,6 +2284,8 @@ async def snake_game_endpoint(
                 f"snake-entry:{room.room_id}:{user_id}:{session_id}"
             )
 
+            # La función SQL procesa la entrada.
+            # El saldo jugable devuelto se utiliza como saldo inicial.
             success, message, playable_micros = enter_snake_game(
                 user_id,
                 bet,
@@ -2337,6 +2330,10 @@ async def snake_game_endpoint(
     if not room.is_running:
         asyncio.create_task(room.game_loop())
 
+    # ========================================================
+    # MENSAJES DEL JUGADOR
+    # ========================================================
+
     try:
         while True:
             data = await websocket.receive_json()
@@ -2348,10 +2345,18 @@ async def snake_game_endpoint(
                 data.get("type", "")
             ).upper()
 
+            # ------------------------------------------------
+            # PING
+            # ------------------------------------------------
+
             if msg_type == "PING":
                 await websocket.send_json({
                     "type": "PONG"
                 })
+
+            # ------------------------------------------------
+            # READY
+            # ------------------------------------------------
 
             elif msg_type == "READY":
                 async with room.lock:
@@ -2361,6 +2366,10 @@ async def snake_game_endpoint(
                         snake["ready"] = True
 
                 await room.broadcast()
+
+            # ------------------------------------------------
+            # STEER
+            # ------------------------------------------------
 
             elif msg_type == "STEER":
                 try:
@@ -2377,10 +2386,15 @@ async def snake_game_endpoint(
                             and snake["alive"]
                             and snake["ready"]
                         ):
+                            # Durante el retiro puede seguir girando.
                             snake["angle"] = angle
 
                 except (ValueError, TypeError):
                     pass
+
+            # ------------------------------------------------
+            # BOOST START
+            # ------------------------------------------------
 
             elif msg_type == "BOOST_START":
                 async with room.lock:
@@ -2397,11 +2411,17 @@ async def snake_game_endpoint(
                     ):
                         if not snake.get("boosting"):
                             snake["boosting"] = True
+
+                            # Primera moneda al comenzar el impulso.
                             snake["next_boost_coin_at"] = (
                                 time.monotonic()
                             )
 
                 await room.broadcast()
+
+            # ------------------------------------------------
+            # BOOST STOP
+            # ------------------------------------------------
 
             elif msg_type == "BOOST_STOP":
                 async with room.lock:
@@ -2411,6 +2431,10 @@ async def snake_game_endpoint(
                         snake["boosting"] = False
 
                 await room.broadcast()
+
+            # ------------------------------------------------
+            # CASH OUT
+            # ------------------------------------------------
 
             elif msg_type == "CASH_OUT":
                 cashout_task_id = None
@@ -2435,6 +2459,10 @@ async def snake_game_endpoint(
                         )
 
                         snake["cashout_task_id"] = cashout_task_id
+
+                        # No puede seguir impulsándose durante
+                        # el proceso de retiro.
+                        # Sí puede moverse y recoger monedas.
                         snake["boosting"] = False
 
                 if cashout_task_id:
@@ -2449,6 +2477,10 @@ async def snake_game_endpoint(
                     })
 
                     await room.broadcast()
+
+                    # ========================================
+                    # PROCESAR RETIRO DESPUÉS DE 20 SEGUNDOS
+                    # ========================================
 
                     async def finish_cashout(
                         target_user_id: str,
@@ -2484,11 +2516,16 @@ async def snake_game_endpoint(
                                     )
                                 )
 
+                                # COMPROBAR SI EXISTE SALDO PARA RETIRAR.
                                 if balance_micros <= 0:
+
+                                    # No se mata la serpiente.
+                                    # El jugador puede continuar jugando.
                                     current_snake["cashout_pending"] = False
                                     current_snake["cashout_pending_until"] = 0
                                     current_snake["cashout_task_id"] = None
                                     current_snake["boosting"] = False
+
                                     no_balance = True
 
                                 else:
@@ -2502,9 +2539,11 @@ async def snake_game_endpoint(
                                         f"{current_snake['session_id']}"
                                     )
 
+                                    # La serpiente termina su partida.
                                     current_snake["alive"] = False
                                     current_snake["boosting"] = False
                                     current_snake["cashed_out"] = True
+
                                     current_snake["cashout_pending"] = False
                                     current_snake["cashout_pending_until"] = 0
 
@@ -2517,6 +2556,10 @@ async def snake_game_endpoint(
                             else:
                                 cashout_cancelled = True
 
+                        # ====================================================
+                        # SI NO TIENE SALDO, NO SE PROCESA NINGÚN RETIRO.
+                        # ====================================================
+
                         if no_balance:
                             try:
                                 await send_error(
@@ -2528,6 +2571,10 @@ async def snake_game_endpoint(
 
                             await room.broadcast()
                             return
+
+                        # ====================================================
+                        # SI MURIÓ O SE CANCELÓ ANTES DE TERMINAR LOS 20 SEG.
+                        # ====================================================
 
                         if cashout_data is None:
                             if cashout_cancelled:
@@ -2545,6 +2592,12 @@ async def snake_game_endpoint(
 
                             await room.broadcast()
                             return
+
+                        # ====================================================
+                        # PROCESAR LIQUIDACIÓN EN SUPABASE.
+                        # LA FUNCIÓN SQL CALCULA EL 6% DE COMISIÓN.
+                        # EL JUGADOR RECIBE EL 94% NETO.
+                        # ====================================================
 
                         paid, payment_message = settle_snake_cashout(
                             user_id=target_user_id,
@@ -2564,17 +2617,26 @@ async def snake_game_endpoint(
                                 if paid:
                                     current_snake["balance_micros"] = 0
                                     current_snake["entry_remaining_micros"] = 0
+
                                     current_snake["cashout_pending"] = False
                                     current_snake["cashout_pending_until"] = 0
                                     current_snake["cashout_task_id"] = None
+
                                     room.update_balance(current_snake)
 
                                 else:
+                                    # Si falla la liquidación,
+                                    # el jugador puede continuar jugando.
                                     current_snake["alive"] = True
                                     current_snake["cashed_out"] = False
+
                                     current_snake["cashout_pending"] = False
                                     current_snake["cashout_pending_until"] = 0
                                     current_snake["cashout_task_id"] = None
+
+                        # ====================================================
+                        # NOTIFICAR RESULTADO DEL RETIRO.
+                        # ====================================================
 
                         try:
                             if paid:
@@ -2626,6 +2688,10 @@ async def snake_game_endpoint(
             f"ERROR WebSocket Snake {room.room_id}: {exc!r}"
         )
 
+    # ========================================================
+    # DESCONECTAR JUGADOR
+    # ========================================================
+
     finally:
         async with room.lock:
             if room.connections.get(user_id) is websocket:
@@ -2633,750 +2699,24 @@ async def snake_game_endpoint(
 
             snake = room.snakes.get(user_id)
 
+            # Si se desconecta vivo, muere y su saldo cae
+            # en monedas. Si ya retiró, no se vuelve a liquidar.
             if snake and snake.get("alive"):
                 room.kill_snake(snake)
 
+            # La sala queda disponible para nuevos jugadores.
             if not room.connections:
                 room.is_running = False
+
                 room.snakes.clear()
                 room.coins.clear()
                 room.foods.clear()
+
                 room.spawn_food(FOOD_INITIAL_COUNT)
 
                 print(
                     f"SALA SNAKE DISPONIBLE: {room.room_id}"
                 )
-
-
-# ============================================================
-# PARCHÍS: CONFIGURACIÓN Y LÓGICA
-# ============================================================
-
-PARCHIS_BETS = (0.25, 1.00, 10.00)
-PARCHIS_TRACK_LEN = 68
-PARCHIS_HOME_STRETCH_LEN = 8
-PARCHIS_SAFE_SPOTS = {0, 5, 12, 17, 22, 29, 34, 39, 46, 51, 56, 63}
-PARCHIS_START_SPOTS = {0: 0, 1: 17, 2: 34, 3: 51}
-PARCHIS_COMMISSION_RATE = Decimal("0.06")
-
-parchis_rooms: Dict[str, dict] = {}
-parchis_locks: Dict[str, asyncio.Lock] = {}
-parchis_rooms_lock = asyncio.Lock()
-
-
-class CreateParchisRoomBody(BaseModel):
-    bet: float
-    max_players: int = 4
-    wallet: str = "play"
-    is_private: bool = False
-    password: str = ""
-
-
-def _normalize_parchis_bet(bet: float) -> float | None:
-    try:
-        dec = Decimal(str(bet)).quantize(Decimal("0.01"))
-    except (InvalidOperation, ValueError, TypeError):
-        return None
-    val = float(dec)
-    return val if val in PARCHIS_BETS else None
-
-
-def _parchis_team_for_seat(seat_index: int, max_players: int) -> str | None:
-    if max_players == 4:
-        return "A" if seat_index in (0, 2) else "B"
-    return None
-
-
-def _parchis_new_pieces() -> list[dict]:
-    return [
-        {"id": i, "stage": -1, "pos": -1, "steps_walked": 0}
-        for i in range(4)
-    ]
-
-
-def _parchis_commission(pot: float) -> float:
-    dec_pot = Decimal(str(pot)).quantize(Decimal("0.01"))
-    return float((dec_pot * PARCHIS_COMMISSION_RATE).quantize(Decimal("0.01")))
-
-
-def _parchis_public_rooms() -> list[dict]:
-    items = []
-    for rid, room in parchis_rooms.items():
-        if room.get("status") != "waiting" or room.get("is_private"):
-            continue
-        if len(room["players"]) >= room["max_players"]:
-            continue
-        items.append({
-            "room_id": rid,
-            "bet": room["bet"],
-            "max_players": room["max_players"],
-            "players_count": len(room["players"]),
-            "team_mode": room["team_mode"],
-            "is_private": False,
-        })
-    return items
-
-
-async def _parchis_broadcast(room: dict):
-    payload = {
-        "type": "PARCHIS_STATE",
-        "room_id": room["room_id"],
-        "bet": room["bet"],
-        "max_players": room["max_players"],
-        "team_mode": room["team_mode"],
-        "is_private": room["is_private"],
-        "room_code": room["room_code"] if room["is_private"] else None,
-        "status": room["status"],
-        "turn_seat": room["turn_seat"],
-        "dice": sum(room.get("dice_remaining") or []) if room.get("dice_remaining") else None,
-        "dice_pair": room.get("dice_pair"),
-        "dice_remaining": room.get("dice_remaining", []),
-        "double_count": room.get("double_count", 0),
-        "penalty_pending": room.get("penalty_pending", False),
-        "must_move": room["must_move"],
-        "pot_total": round(room["bet"] * len(room["players"]), 2),
-        "winners": room.get("winners", []),
-        "last_event": room.get("last_event", ""),
-        "players": [
-            {
-                "user_id": uid,
-                "seat_index": p["seat_index"],
-                "team": p["team"],
-                "wallet": p["wallet"],
-                "connected": p["connected"],
-                "player_name": p.get("player_name", "Jugador"),
-                "pieces": p["pieces"],
-            }
-            for uid, p in sorted(
-                room["players"].items(),
-                key=lambda kv: kv[1]["seat_index"],
-            )
-        ],
-    }
-
-    for p in list(room["players"].values()):
-        ws = p.get("websocket")
-        if ws is not None:
-            try:
-                await ws.send_json(payload)
-            except Exception:
-                pass
-
-
-def _parchis_can_move_piece(piece: dict, dice: int) -> bool:
-    """Comprueba si una ficha puede usar un dado concreto."""
-    if not isinstance(dice, int) or dice < 1 or dice > 6:
-        return False
-
-    stage = piece.get("stage", -1)
-    if stage == -1:
-        # Con un solo dado, la ficha sale de casa únicamente con 5.
-        return dice == 5
-    if stage == 0:
-        return piece.get("steps_walked", 0) + dice <= (
-            63 + PARCHIS_HOME_STRETCH_LEN - 1
-        )
-    if stage == 100:
-        return piece.get("pos", 0) + dice < PARCHIS_HOME_STRETCH_LEN
-    return False
-
-
-def _parchis_has_any_move(pieces: list[dict], dice_values: list[int]) -> bool:
-    return any(
-        _parchis_can_move_piece(piece, die)
-        for piece in pieces
-        for die in dice_values
-    )
-
-
-def _parchis_next_turn(room: dict, current_seat: int):
-    seats_sorted = sorted(
-        p["seat_index"] for p in room["players"].values()
-    )
-    if not seats_sorted:
-        return
-    if room.get("extra_turn"):
-        room["turn_seat"] = current_seat
-        room["extra_turn"] = False
-        room["last_event"] += " Sacaste 6: vuelves a lanzar."
-        return
-    try:
-        cur_idx = seats_sorted.index(current_seat)
-    except ValueError:
-        cur_idx = -1
-    room["turn_seat"] = seats_sorted[(cur_idx + 1) % len(seats_sorted)]
-
-
-def _parchis_apply_move(
-    room: dict,
-    actor_uid: str,
-    piece_id: int,
-    dice: int,
-) -> tuple[bool, str]:
-    actor = room["players"].get(actor_uid)
-    if not actor:
-        return False, "Jugador no encontrado."
-
-    piece = next(
-        (pc for pc in actor["pieces"] if pc["id"] == piece_id),
-        None,
-    )
-    if not piece or not _parchis_can_move_piece(piece, dice):
-        return False, "Movimiento no válido para esa ficha y ese dado."
-
-    seat = actor["seat_index"]
-    start_spot = PARCHIS_START_SPOTS[seat]
-    captured_msg = ""
-
-    if piece["stage"] == -1:
-        # La salida consume el único dado que mostró 5.
-        piece["stage"] = 0
-        piece["pos"] = start_spot
-        piece["steps_walked"] = 0
-        captured_msg = f"Asiento {seat + 1} sacó una ficha con el 5."
-    else:
-        if piece["stage"] == 0:
-            new_walked = piece["steps_walked"] + dice
-            piece["steps_walked"] = new_walked
-            if new_walked >= 63:
-                piece["stage"] = 100
-                piece["pos"] = new_walked - 63
-            else:
-                piece["pos"] = (start_spot + new_walked) % PARCHIS_TRACK_LEN
-        elif piece["stage"] == 100:
-            piece["pos"] += dice
-
-        if piece["stage"] == 0 and piece["pos"] not in PARCHIS_SAFE_SPOTS:
-            for other_uid, other_p in room["players"].items():
-                if other_uid == actor_uid:
-                    continue
-                if (
-                    room["team_mode"] == "2v2"
-                    and other_p["team"] == actor["team"]
-                ):
-                    continue
-                for opc in other_p["pieces"]:
-                    if opc["stage"] == 0 and opc["pos"] == piece["pos"]:
-                        opc["stage"] = -1
-                        opc["pos"] = -1
-                        opc["steps_walked"] = 0
-                        captured_msg = (
-                            f"¡Asiento {seat + 1} capturó una ficha "
-                            f"del asiento {other_p['seat_index'] + 1}!"
-                        )
-
-    winner_uids: list[str] = []
-    if room["team_mode"] == "2v2":
-        for team_name in ("A", "B"):
-            team_members = [
-                p for p in room["players"].values()
-                if p["team"] == team_name
-            ]
-            if team_members and all(
-                pc["stage"] == 100
-                and pc["pos"] == PARCHIS_HOME_STRETCH_LEN - 1
-                for member in team_members
-                for pc in member["pieces"]
-            ):
-                winner_uids = [member["user_id"] for member in team_members]
-                break
-    elif all(
-        pc["stage"] == 100
-        and pc["pos"] == PARCHIS_HOME_STRETCH_LEN - 1
-        for pc in actor["pieces"]
-    ):
-        winner_uids = [actor_uid]
-
-    room["last_event"] = (
-        captured_msg
-        or f"Asiento {seat + 1} avanzó {dice}."
-    )
-
-    if winner_uids:
-        room["status"] = "finished"
-        room["winners"] = winner_uids
-        room["must_move"] = False
-        room["dice_remaining"] = []
-        return True, "WIN"
-
-    return True, "OK"
-
-
-async def _parchis_settle_winners(room: dict, winner_uids: list[str]):
-    if room.get("settled"):
-        return
-    room["settled"] = True
-
-    total_pot = round(room["bet"] * len(room["players"]), 2)
-    commission = _parchis_commission(total_pot)
-    net_pot = round(max(0.0, total_pot - commission), 2)
-
-    winners_payload = []
-    if winner_uids:
-        share = round(net_pot / len(winner_uids), 2)
-        for uid in winner_uids:
-            p = room["players"].get(uid)
-            wallet = p["wallet"] if p else "play"
-            winners_payload.append({
-                "user_id": uid,
-                "wallet": wallet,
-                "amount": share,
-            })
-
-    tx_key = f"parchis-settle:{room['room_id']}"
-    try:
-        rpc_json("settle_parchis_game", {
-            "p_transaction_key": tx_key,
-            "p_room_id": room["room_id"],
-            "p_winners": winners_payload,
-            "p_commission": commission,
-        })
-    except Exception as exc:
-        print(f"ERROR settle_parchis_game {room['room_id']}: {exc!r}")
-
-
-@app.get("/parchis/rooms")
-async def list_parchis_rooms(bet: float | None = None):
-    rooms = _parchis_public_rooms()
-    if bet is not None:
-        norm = _normalize_parchis_bet(bet)
-        if norm is not None:
-            rooms = [r for r in rooms if r["bet"] == norm]
-    return {"rooms": rooms}
-
-
-@app.post("/parchis/rooms/create")
-async def create_parchis_room(
-    body: CreateParchisRoomBody,
-    authorization: str | None = Header(default=None),
-):
-    user_id = get_authenticated_user_id(authorization)
-
-    norm_bet = _normalize_parchis_bet(body.bet)
-    if norm_bet is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Apuesta inválida. Solo $0.25, $1.00 o $10.00.",
-        )
-
-    if body.max_players not in (2, 3, 4):
-        raise HTTPException(
-            status_code=400,
-            detail="La sala debe ser de 2, 3 o 4 jugadores.",
-        )
-
-    wallet = (body.wallet or "play").strip().lower()
-    if wallet not in ("play", "bonus"):
-        raise HTTPException(status_code=400, detail="Billetera inválida.")
-
-    is_private = bool(body.is_private)
-    room_code = (body.password or "").strip()
-    if is_private and not room_code:
-        room_code = uuid.uuid4().hex[:6].upper()
-
-    room_id = f"parchis_{uuid.uuid4().hex[:10]}"
-    team_mode = "2v2" if body.max_players == 4 else "ffa"
-
-    async with parchis_rooms_lock:
-        parchis_rooms[room_id] = {
-            "room_id": room_id,
-            "creator_id": user_id,
-            "bet": norm_bet,
-            "max_players": body.max_players,
-            "team_mode": team_mode,
-            "is_private": is_private,
-            "room_code": room_code,
-            "status": "waiting",
-            "turn_seat": 0,
-            "dice": None,
-            "dice_pair": None,
-            "dice_remaining": [],
-            "extra_turn": False,
-            "double_count": 0,
-            "penalty_pending": False,
-            "must_move": False,
-            "players": {},
-            "winners": [],
-            "settled": False,
-            "last_event": "Sala creada. Esperando jugadores...",
-        }
-        parchis_locks[room_id] = asyncio.Lock()
-
-        try:
-            supabase.table("parchis_matches").insert({
-                "id": room_id,
-                "creator_id": user_id,
-                "bet_amount": norm_bet,
-                "max_players": body.max_players,
-                "team_mode": team_mode,
-                "is_private": is_private,
-                "room_code": room_code if is_private else None,
-                "status": "waiting",
-                "pot_total": 0.00,
-                "commission_amount": 0.00,
-            }).execute()
-        except Exception as exc:
-            print(f"ERROR insert parchis_matches {room_id}: {exc!r}")
-
-    return {
-        "success": True,
-        "room_id": room_id,
-        "bet": norm_bet,
-        "max_players": body.max_players,
-        "team_mode": team_mode,
-        "is_private": is_private,
-        "room_code": room_code if is_private else None,
-    }
-
-
-@app.websocket("/ws/parchis/{room_id}")
-async def parchis_ws_endpoint(
-    websocket: WebSocket,
-    room_id: str,
-    user_id: str = Query(""),
-    access_token: str = Query(""),
-    bet: float = Query(0.25),
-    max_players: int = Query(4),
-    wallet: str = Query("play"),
-    password: str = Query(""),
-    player_name: str = Query("Jugador"),
-):
-    await websocket.accept()
-
-    if not user_id or not access_token or not verify_user_token(access_token, user_id):
-        await send_error(websocket, "Sesión no válida.")
-        await websocket.close()
-        return
-
-    wallet = (wallet or "play").strip().lower()
-    if wallet not in ("play", "bonus"):
-        await send_error(websocket, "Billetera no válida.")
-        await websocket.close()
-        return
-
-    norm_bet = _normalize_parchis_bet(bet)
-    if norm_bet is None:
-        await send_error(websocket, "Apuesta no permitida ($0.25, $1.00 o $10.00).")
-        await websocket.close()
-        return
-
-    if max_players not in (2, 3, 4):
-        await send_error(websocket, "Cantidad de jugadores no válida (2, 3 o 4).")
-        await websocket.close()
-        return
-
-    async with parchis_rooms_lock:
-        room = parchis_rooms.get(room_id)
-        if room is None:
-            if room_id == "matchmake":
-                matching = [
-                    r for r in parchis_rooms.values()
-                    if r["status"] == "waiting"
-                    and not r["is_private"]
-                    and r["bet"] == norm_bet
-                    and r["max_players"] == max_players
-                    and len(r["players"]) < r["max_players"]
-                ]
-                if matching:
-                    room = matching[0]
-                else:
-                    new_rid = f"parchis_{uuid.uuid4().hex[:10]}"
-                    team_mode = "2v2" if max_players == 4 else "ffa"
-                    room = {
-                        "room_id": new_rid,
-                        "creator_id": user_id,
-                        "bet": norm_bet,
-                        "max_players": max_players,
-                        "team_mode": team_mode,
-                        "is_private": False,
-                        "room_code": "",
-                        "status": "waiting",
-                        "turn_seat": 0,
-                        "dice": None,
-                        "dice_pair": None,
-                        "dice_remaining": [],
-                        "extra_turn": False,
-                        "double_count": 0,
-                        "penalty_pending": False,
-                        "must_move": False,
-                        "players": {},
-                        "winners": [],
-                        "settled": False,
-                        "last_event": "Sala abierta. Esperando rivales...",
-                    }
-                    parchis_rooms[new_rid] = room
-                    parchis_locks[new_rid] = asyncio.Lock()
-                    try:
-                        supabase.table("parchis_matches").insert({
-                            "id": new_rid,
-                            "creator_id": user_id,
-                            "bet_amount": norm_bet,
-                            "max_players": max_players,
-                            "team_mode": team_mode,
-                            "is_private": False,
-                            "room_code": None,
-                            "status": "waiting",
-                        }).execute()
-                    except Exception as exc:
-                        print(f"ERROR insert matchmake parchis {new_rid}: {exc!r}")
-            else:
-                await send_error(websocket, "La sala de Parchís no existe.")
-                await websocket.close()
-                return
-
-        lock = parchis_locks[room["room_id"]]
-
-    async with lock:
-        if room["status"] == "finished":
-            await send_error(websocket, "La partida ya finalizó.")
-            await websocket.close()
-            return
-
-        if room["is_private"] and str(room.get("room_code") or "") != str(password or "").strip():
-            await send_error(websocket, "Código o contraseña de sala privada incorrecta.")
-            await websocket.close()
-            return
-
-        existing = room["players"].get(user_id)
-        if existing is None:
-            if room["status"] != "waiting":
-                await send_error(websocket, "La partida ya comenzó.")
-                await websocket.close()
-                return
-            if len(room["players"]) >= room["max_players"]:
-                await send_error(websocket, "La sala está llena.")
-                await websocket.close()
-                return
-
-            tx_key = f"parchis-entry:{room['room_id']}:{user_id}"
-            try:
-                res = rpc_json("enter_parchis_game", {
-                    "p_transaction_key": tx_key,
-                    "p_room_id": room["room_id"],
-                    "p_user_id": user_id,
-                    "p_wallet": wallet,
-                    "p_amount": room["bet"],
-                })
-            except Exception as exc:
-                print(f"ERROR enter_parchis_game: {exc!r}")
-                await send_error(websocket, "No se pudo procesar el ingreso.")
-                await websocket.close()
-                return
-
-            if not res.get("success"):
-                await send_error(websocket, res.get("message") or "No se pudo descontar la apuesta.")
-                await websocket.close()
-                return
-
-            taken_seats = {p["seat_index"] for p in room["players"].values()}
-            seat_index = next(i for i in range(room["max_players"]) if i not in taken_seats)
-            team = _parchis_team_for_seat(seat_index, room["max_players"])
-
-            room["players"][user_id] = {
-                "user_id": user_id,
-                "seat_index": seat_index,
-                "team": team,
-                "wallet": wallet,
-                "player_name": (player_name or "Jugador").strip()[:40],
-                "connected": True,
-                "websocket": websocket,
-                "pieces": _parchis_new_pieces(),
-            }
-
-            try:
-                supabase.table("parchis_players").insert({
-                    "match_id": room["room_id"],
-                    "user_id": user_id,
-                    "wallet": wallet,
-                    "seat_index": seat_index,
-                    "team": team,
-                    "pieces_json": room["players"][user_id]["pieces"],
-                    "is_connected": True,
-                }).execute()
-            except Exception as exc:
-                print(f"ERROR insert parchis_players: {exc!r}")
-
-            if len(room["players"]) == room["max_players"]:
-                room["status"] = "playing"
-                room["turn_seat"] = 0
-                room["last_event"] = "¡Sala completa! Inicia el turno del asiento 1."
-                try:
-                    supabase.table("parchis_matches").update({"status": "playing"}).eq("id", room["room_id"]).execute()
-                except Exception:
-                    pass
-        else:
-            existing["connected"] = True
-            existing["websocket"] = websocket
-
-        await _parchis_broadcast(room)
-
-    try:
-        while True:
-            data = await websocket.receive_json()
-            if not isinstance(data, dict):
-                continue
-
-            msg_type = str(data.get("type") or "").upper()
-
-            if msg_type == "PING":
-                await websocket.send_json({"type": "PONG"})
-                continue
-
-            async with lock:
-                if room["status"] != "playing":
-                    continue
-
-                actor = room["players"].get(user_id)
-                if not actor or actor["seat_index"] != room["turn_seat"]:
-                    await send_error(websocket, "No es tu turno.")
-                    continue
-
-                if msg_type == "ROLL_DICE":
-                    if room.get("penalty_pending"):
-                        await send_error(websocket, "Elige la ficha que regresará a casa.")
-                        continue
-                    if room["must_move"]:
-                        await send_error(websocket, "Debes mover la ficha antes de volver a lanzar.")
-                        continue
-
-                    die = random.randint(1, 6)
-                    room["dice_pair"] = [die]  # Se conserva el campo por compatibilidad del frontend.
-                    room["dice_remaining"] = [die]
-                    room["dice"] = die
-                    room["extra_turn"] = die == 6
-                    if die == 6:
-                        room["double_count"] = room.get("double_count", 0) + 1
-                    else:
-                        room["double_count"] = 0
-
-                    if room["double_count"] >= 3:
-                        room["penalty_pending"] = True
-                        room["must_move"] = False
-                        room["dice_remaining"] = []
-                        room["dice"] = None
-                        room["extra_turn"] = False
-                        room["last_event"] = "¡Tres seises seguidos! Elige una de tus fichas para enviarla a casa."
-                        await _parchis_broadcast(room)
-                        continue
-
-                    has_valid = _parchis_has_any_move(actor["pieces"], room["dice_remaining"])
-                    if not has_valid:
-                        room["must_move"] = False
-                        room["last_event"] = (
-                            f"Asiento {actor['seat_index'] + 1} sacó {die}; no tiene movimientos."
-                        )
-                        room["dice_remaining"] = []
-                        room["dice"] = None
-                        _parchis_next_turn(room, actor["seat_index"])
-                    else:
-                        room["must_move"] = True
-                        room["last_event"] = f"Asiento {actor['seat_index'] + 1} sacó {die}. Mueve una ficha."
-
-                    await _parchis_broadcast(room)
-
-                elif msg_type == "SELECT_PENALTY_PIECE":
-                    if not room.get("penalty_pending"):
-                        await send_error(websocket, "No hay penalización pendiente.")
-                        continue
-                    try:
-                        penalty_piece_id = int(data.get("piece_id", -1))
-                    except (TypeError, ValueError):
-                        await send_error(websocket, "Ficha inválida.")
-                        continue
-                    penalty_piece = next((pc for pc in actor["pieces"] if pc["id"] == penalty_piece_id), None)
-                    if not penalty_piece or penalty_piece.get("stage") == -1:
-                        await send_error(websocket, "Elige una ficha que esté fuera de casa.")
-                        continue
-                    penalty_piece.update({"stage": -1, "pos": -1, "steps_walked": 0})
-                    room["penalty_pending"] = False
-                    room["double_count"] = 0
-                    room["must_move"] = False
-                    room["dice_remaining"] = []
-                    room["dice"] = None
-                    room["last_event"] = f"La ficha {penalty_piece_id + 1} regresó a casa por tres seises."
-                    try:
-                        supabase.table("parchis_players").update({"pieces_json": actor["pieces"]}).eq("match_id", room["room_id"]).eq("user_id", user_id).execute()
-                    except Exception:
-                        pass
-                    _parchis_next_turn(room, actor["seat_index"])
-                    await _parchis_broadcast(room)
-
-                elif msg_type == "MOVE_PIECE":
-                    dice_remaining = room.get("dice_remaining") or []
-                    if not room["must_move"] or not dice_remaining:
-                        await send_error(websocket, "Primero lanza el dado.")
-                        continue
-
-                    try:
-                        piece_id = int(data.get("piece_id", -1))
-                        requested_die = int(data.get("dice_value", 0))
-                    except (TypeError, ValueError):
-                        await send_error(websocket, "Ficha o dado inválido.")
-                        continue
-
-                    # Compatibilidad: si el cliente antiguo no manda dice_value,
-                    # seleccionamos el primer dado que permita mover esa ficha.
-                    if requested_die not in dice_remaining:
-                        piece = next(
-                            (pc for pc in actor["pieces"] if pc["id"] == piece_id),
-                            None,
-                        )
-                        requested_die = next(
-                            (
-                                die for die in dice_remaining
-                                if piece and _parchis_can_move_piece(piece, die)
-                            ),
-                            0,
-                        )
-
-                    if requested_die not in dice_remaining:
-                        await send_error(
-                            websocket,
-                            "Ese dado ya fue utilizado o no permite ese movimiento.",
-                        )
-                        continue
-
-                    ok, status_code = _parchis_apply_move(
-                        room,
-                        user_id,
-                        piece_id,
-                        requested_die,
-                    )
-                    if not ok:
-                        await send_error(websocket, status_code)
-                        continue
-
-                    # Consumir el único dado lanzado.
-                    room["dice_remaining"].remove(requested_die)
-
-                    try:
-                        supabase.table("parchis_players").update({
-                            "pieces_json": actor["pieces"],
-                        }).eq("match_id", room["room_id"]).eq("user_id", user_id).execute()
-                    except Exception:
-                        pass
-
-                    if status_code == "WIN":
-                        await _parchis_settle_winners(room, room["winners"])
-                    else:
-                        room["must_move"] = False
-                        room["dice_remaining"] = []
-                        room["dice"] = None
-                        _parchis_next_turn(room, actor["seat_index"])
-
-                    await _parchis_broadcast(room)
-
-    except WebSocketDisconnect:
-        pass
-    except Exception as exc:
-        print(f"ERROR WebSocket Parchís {room_id}: {exc!r}")
-    finally:
-        async with lock:
-            p = room["players"].get(user_id)
-            if p and p.get("websocket") is websocket:
-                p["connected"] = False
-                p["websocket"] = None
-
 
 # ============================================================
 # ADMINISTRADOR AXIOM - NUEVO PANEL
@@ -3502,6 +2842,7 @@ def admin_summary(authorization: str = Header(None)):
         "id,balance,withdraw_balance,bonus_balance"
     )
 
+    # Excluir las cuentas administrativas de todos los totales.
     clients = [
         profile for profile in profiles
         if str(profile.get("id")) not in admin_ids
@@ -4006,3 +3347,929 @@ def admin_reject_deposit(
             "p_admin_note": note
         }
     )
+
+
+# ============================================================
+# PARCHÍS: CONFIGURACIÓN Y LÓGICA
+# ============================================================
+
+PARCHIS_BETS = (0.25, 1.00, 10.00)
+PARCHIS_TRACK_LEN = 68
+PARCHIS_HOME_STRETCH_LEN = 8
+PARCHIS_SAFE_SPOTS = {0, 5, 12, 17, 22, 29, 34, 39, 46, 51, 56, 63}
+PARCHIS_START_SPOTS = {0: 5, 1: 22, 2: 39, 3: 56}
+PARCHIS_COMMISSION_RATE = Decimal("0.06")
+
+parchis_rooms: Dict[str, dict] = {}
+parchis_locks: Dict[str, asyncio.Lock] = {}
+parchis_rooms_lock = asyncio.Lock()
+parchis_timer_tasks: Dict[str, asyncio.Task] = {}
+
+
+class CreateParchisRoomBody(BaseModel):
+    bet: float
+    max_players: int = 4
+    wallet: str = "play"
+    is_private: bool = False
+    password: str = ""
+
+
+def _normalize_parchis_bet(bet: float) -> float | None:
+    try:
+        dec = Decimal(str(bet)).quantize(Decimal("0.01"))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+    val = float(dec)
+    return val if val in PARCHIS_BETS else None
+
+
+def _parchis_seat_order_for_max_players(max_players: int) -> tuple[int, ...]:
+    if max_players == 2:
+        return (0, 2)
+    if max_players == 3:
+        return (0, 1, 2)
+    return (0, 1, 2, 3)
+
+
+def _parchis_can_exit_with_pair_sum(dice_values: list[int]) -> bool:
+    return len(dice_values) == 2 and sum(dice_values) == 5
+
+
+def _parchis_set_turn_deadline(room: dict):
+    room["turn_deadline"] = time.time() + 10.0 if room.get("status") == "playing" else None
+
+
+def _parchis_team_for_seat(seat_index: int, max_players: int) -> str | None:
+    if max_players == 4:
+        return "A" if seat_index in (0, 2) else "B"
+    return None
+
+
+def _parchis_new_pieces() -> list[dict]:
+    return [
+        {"id": i, "stage": -1, "pos": -1, "steps_walked": 0}
+        for i in range(4)
+    ]
+
+
+def _parchis_commission(pot: float) -> float:
+    dec_pot = Decimal(str(pot)).quantize(Decimal("0.01"))
+    return float((dec_pot * PARCHIS_COMMISSION_RATE).quantize(Decimal("0.01")))
+
+
+def _parchis_public_rooms() -> list[dict]:
+    items = []
+    for rid, room in parchis_rooms.items():
+        if room.get("status") != "waiting" or room.get("is_private"):
+            continue
+        if len(room["players"]) >= room["max_players"]:
+            continue
+        items.append({
+            "room_id": rid,
+            "bet": room["bet"],
+            "max_players": room["max_players"],
+            "players_count": len(room["players"]),
+            "team_mode": room["team_mode"],
+            "is_private": False,
+        })
+    return items
+
+
+async def _parchis_broadcast(room: dict):
+    gross_pot = (Decimal(str(room["bet"])) * Decimal(str(len(room["players"])))).quantize(Decimal("0.01"))
+    commission_total = (gross_pot * PARCHIS_COMMISSION_RATE).quantize(Decimal("0.01"))
+    net_pot = max(Decimal("0.00"), gross_pot - commission_total).quantize(Decimal("0.01"))
+    deadline = room.get("turn_deadline")
+    seconds_left = max(0, int((deadline - time.time()) + 0.999)) if deadline else 0
+    payload = {
+        "type": "PARCHIS_STATE",
+        "room_id": room["room_id"],
+        "bet": room["bet"],
+        "max_players": room["max_players"],
+        "team_mode": room["team_mode"],
+        "is_private": room["is_private"],
+        "room_code": room["room_code"] if room["is_private"] else None,
+        "status": room["status"],
+        "turn_seat": room["turn_seat"],
+        "turn_deadline": deadline,
+        "turn_seconds_remaining": seconds_left,
+        "dice": sum(room.get("dice_remaining") or []) if room.get("dice_remaining") else None,
+        "dice_pair": room.get("dice_pair"),
+        "dice_remaining": room.get("dice_remaining", []),
+        "double_count": room.get("double_count", 0),
+        "penalty_pending": room.get("penalty_pending", False),
+        "must_move": room["must_move"],
+        "pot_total": float(gross_pot),
+        "net_pot": float(net_pot),
+        "commission_total": float(commission_total),
+        "winners": room.get("winners", []),
+        "last_event": room.get("last_event", ""),
+        "players": [
+            {
+                "user_id": uid,
+                "seat_index": player["seat_index"],
+                "team": player["team"],
+                "wallet": player["wallet"],
+                "connected": player["connected"],
+                "player_name": player.get("player_name", "Jugador"),
+                "pieces": player["pieces"],
+            }
+            for uid, player in sorted(room["players"].items(), key=lambda kv: kv[1]["seat_index"])
+        ],
+    }
+    for player in list(room["players"].values()):
+        ws = player.get("websocket")
+        if ws is not None:
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                pass
+
+
+def _parchis_can_move_piece(piece: dict, dice: int, dice_values: list[int] | None = None) -> bool:
+    if not isinstance(dice, int) or dice < 1 or dice > 6:
+        return False
+    stage = piece.get("stage", -1)
+    if stage == -1:
+        return dice == 5 or bool(dice_values and _parchis_can_exit_with_pair_sum(dice_values))
+    if stage == 0:
+        return piece.get("steps_walked", 0) + dice <= 63 + PARCHIS_HOME_STRETCH_LEN - 1
+    if stage == 100:
+        return piece.get("pos", 0) + dice < PARCHIS_HOME_STRETCH_LEN
+    return False
+
+
+def _parchis_blocked_spot(room: dict, moving_uid: str, moving_piece: dict, pos: int) -> bool:
+    count = 0
+    for uid, player in room["players"].items():
+        for other in player["pieces"]:
+            if uid == moving_uid and other["id"] == moving_piece["id"]:
+                continue
+            if other.get("stage") == 0 and other.get("pos") == pos:
+                count += 1
+    return count >= 2
+
+
+def _parchis_move_crosses_blockade(room: dict, actor_uid: str, piece: dict, dice: int) -> bool:
+    actor = room["players"].get(actor_uid)
+    if not actor:
+        return True
+    if piece.get("stage") == -1:
+        start = PARCHIS_START_SPOTS.get(actor["seat_index"], 5)
+        return _parchis_blocked_spot(room, actor_uid, piece, start)
+    if piece.get("stage") == 0:
+        start = PARCHIS_START_SPOTS.get(actor["seat_index"], 5)
+        for step in range(1, dice + 1):
+            walked = piece.get("steps_walked", 0) + step
+            if walked < 63:
+                pos = (start + walked) % PARCHIS_TRACK_LEN
+                if _parchis_blocked_spot(room, actor_uid, piece, pos):
+                    return True
+            else:
+                goal_pos = walked - 63
+                count = sum(
+                    1 for other in actor["pieces"]
+                    if other["id"] != piece["id"] and other.get("stage") == 100 and other.get("pos") == goal_pos
+                )
+                if count >= 2:
+                    return True
+        return False
+    if piece.get("stage") == 100:
+        for step in range(1, dice + 1):
+            target = piece.get("pos", 0) + step
+            count = sum(
+                1 for other in actor["pieces"]
+                if other["id"] != piece["id"] and other.get("stage") == 100 and other.get("pos") == target
+            )
+            if count >= 2:
+                return True
+        return False
+    return False
+
+
+def _parchis_has_any_move(room: dict, actor_uid: str, pieces: list[dict], dice_values: list[int]) -> bool:
+    if _parchis_can_exit_with_pair_sum(dice_values):
+        for piece in pieces:
+            if piece.get("stage", -1) == -1 and not _parchis_move_crosses_blockade(room, actor_uid, piece, 5):
+                return True
+    for piece in pieces:
+        for die in dice_values:
+            if _parchis_can_move_piece(piece, die, dice_values) and not _parchis_move_crosses_blockade(room, actor_uid, piece, die):
+                return True
+    return False
+
+
+def _parchis_next_turn(room: dict, current_seat: int):
+    seats_sorted = sorted(player["seat_index"] for player in room["players"].values())
+    if not seats_sorted:
+        room["turn_deadline"] = None
+        return
+    if room.get("extra_turn"):
+        room["turn_seat"] = current_seat
+        room["extra_turn"] = False
+        room["last_event"] += " Doble: vuelves a lanzar."
+        _parchis_set_turn_deadline(room)
+        return
+    try:
+        cur_idx = seats_sorted.index(current_seat)
+    except ValueError:
+        cur_idx = -1
+    room["turn_seat"] = seats_sorted[(cur_idx + 1) % len(seats_sorted)]
+    _parchis_set_turn_deadline(room)
+
+
+def _parchis_apply_move(
+    room: dict,
+    actor_uid: str,
+    piece_id: int,
+    dice: int,
+    use_pair_sum_five: bool = False,
+) -> tuple[bool, str]:
+    actor = room["players"].get(actor_uid)
+    if not actor:
+        return False, "Jugador no encontrado."
+    piece = next((pc for pc in actor["pieces"] if pc["id"] == piece_id), None)
+    if not piece:
+        return False, "Ficha no encontrada."
+    seat = actor["seat_index"]
+    start_spot = PARCHIS_START_SPOTS.get(seat, 5)
+    if piece.get("stage") == -1:
+        if not use_pair_sum_five and dice != 5:
+            return False, "Necesitas un 5 o una suma de 5 para sacar ficha."
+        if _parchis_move_crosses_blockade(room, actor_uid, piece, 5):
+            return False, "La casilla de salida está bloqueada por dos fichas."
+        piece.update({"stage": 0, "pos": start_spot, "steps_walked": 0})
+        captured_msg = f"Asiento {seat + 1} sacó ficha con {'suma 5' if use_pair_sum_five else 'el 5'}."
+        # Al salir también puede capturar una ficha rival en una casilla no segura.
+        if start_spot not in PARCHIS_SAFE_SPOTS:
+            for other_uid, other_player in room["players"].items():
+                if other_uid == actor_uid or (room["team_mode"] == "2v2" and other_player["team"] == actor["team"]):
+                    continue
+                for other_piece in other_player["pieces"]:
+                    if other_piece.get("stage") == 0 and other_piece.get("pos") == start_spot:
+                        other_piece.update({"stage": -1, "pos": -1, "steps_walked": 0})
+                        captured_msg += f" ¡Capturó una ficha del asiento {other_player['seat_index'] + 1}!"
+                        break
+    else:
+        if not _parchis_can_move_piece(piece, dice):
+            return False, "Movimiento no válido para esa ficha y ese dado."
+        if _parchis_move_crosses_blockade(room, actor_uid, piece, dice):
+            return False, "No puedes entrar ni atravesar una casilla bloqueada por dos fichas."
+        captured_msg = ""
+        if piece["stage"] == 0:
+            new_walked = piece["steps_walked"] + dice
+            if new_walked >= 63:
+                piece["stage"] = 100
+                piece["pos"] = new_walked - 63
+            else:
+                piece["pos"] = (start_spot + new_walked) % PARCHIS_TRACK_LEN
+            piece["steps_walked"] = new_walked
+        elif piece["stage"] == 100:
+            piece["pos"] += dice
+
+        if piece["stage"] == 0 and piece["pos"] not in PARCHIS_SAFE_SPOTS:
+            for other_uid, other_player in room["players"].items():
+                if other_uid == actor_uid:
+                    continue
+                if room["team_mode"] == "2v2" and other_player["team"] == actor["team"]:
+                    continue
+                for other_piece in other_player["pieces"]:
+                    if other_piece.get("stage") == 0 and other_piece.get("pos") == piece["pos"]:
+                        other_piece.update({"stage": -1, "pos": -1, "steps_walked": 0})
+                        captured_msg = f"¡Asiento {seat + 1} capturó una ficha del asiento {other_player['seat_index'] + 1}!"
+                        break
+
+    winner_uids: list[str] = []
+    if room["team_mode"] == "2v2":
+        for team_name in ("A", "B"):
+            members = [player for player in room["players"].values() if player["team"] == team_name]
+            if members and all(pc["stage"] == 100 and pc["pos"] == PARCHIS_HOME_STRETCH_LEN - 1 for member in members for pc in member["pieces"]):
+                winner_uids = [member["user_id"] for member in members]
+                break
+    elif all(pc["stage"] == 100 and pc["pos"] == PARCHIS_HOME_STRETCH_LEN - 1 for pc in actor["pieces"]):
+        winner_uids = [actor_uid]
+
+    room["last_event"] = captured_msg or f"Asiento {seat + 1} avanzó {dice}."
+    if winner_uids:
+        room["status"] = "finished"
+        room["winners"] = winner_uids
+        room["must_move"] = False
+        room["dice_remaining"] = []
+        room["turn_deadline"] = None
+        return True, "WIN"
+    return True, "OK"
+
+
+async def _parchis_settle_winners(room: dict, winner_uids: list[str]):
+    if room.get("settled"):
+        return
+    room["settled"] = True
+
+    gross_pot = (Decimal(str(room["bet"])) * Decimal(str(len(room["players"])))).quantize(Decimal("0.01"))
+    total_commission = (gross_pot * PARCHIS_COMMISSION_RATE).quantize(Decimal("0.01"))
+    net_pot = max(Decimal("0.00"), gross_pot - total_commission).quantize(Decimal("0.01"))
+    winners_payload = []
+    ref_total = Decimal("0.00")
+
+    if winner_uids:
+        count = Decimal(str(len(winner_uids)))
+        share = (net_pot / count).quantize(Decimal("0.01"))
+        per_winner_gross = (gross_pot / count).quantize(Decimal("0.01"))
+        per_winner_commission = (per_winner_gross * PARCHIS_COMMISSION_RATE).quantize(Decimal("0.01"))
+        per_winner_ref = (per_winner_gross * Decimal("0.02")).quantize(Decimal("0.01"))
+        for uid in winner_uids:
+            player = room["players"].get(uid)
+            wallet = player["wallet"] if player else "play"
+            referrer_id = None
+            try:
+                profile = supabase.table("profiles").select("referred_by").eq("id", uid).limit(1).execute()
+                rows = profile.data or []
+                if rows:
+                    referrer_id = rows[0].get("referred_by")
+            except Exception as exc:
+                print(f"ERROR consultando referente {uid}: {exc!r}")
+
+            if referrer_id and str(referrer_id) != str(uid):
+                ref_commission = per_winner_ref
+                axiom_commission = max(Decimal("0.00"), per_winner_commission - ref_commission).quantize(Decimal("0.01"))
+                ref_id_value = str(referrer_id)
+            else:
+                ref_commission = Decimal("0.00")
+                axiom_commission = per_winner_commission
+                ref_id_value = None
+            ref_total += ref_commission
+            winners_payload.append({
+                "user_id": uid,
+                "wallet": wallet,
+                "gross_pot": float(per_winner_gross),
+                "amount": float(share),
+                "commission": float(per_winner_commission),
+                "referente_id": ref_id_value,
+                "comision_referente": float(ref_commission),
+                "comision_axiom": float(axiom_commission),
+            })
+
+    house_commission = max(Decimal("0.00"), total_commission - ref_total).quantize(Decimal("0.01"))
+    tx_key = f"parchis-settle:{room['room_id']}"
+    try:
+        rpc_json("settle_parchis_game", {
+            "p_transaction_key": tx_key,
+            "p_room_id": room["room_id"],
+            "p_winners": winners_payload,
+            "p_gross_pot": float(gross_pot),
+            "p_commission": float(house_commission),
+        })
+    except Exception as exc:
+        print(f"ERROR settle_parchis_game {room['room_id']}: {exc!r}")
+
+    try:
+        supabase.table("parchis_matches").update({
+            "status": "finished",
+            "pot_total": float(gross_pot),
+            "commission_amount": float(house_commission),
+        }).eq("id", room["room_id"]).execute()
+    except Exception as exc:
+        print(f"ERROR update parchis_matches finished {room['room_id']}: {exc!r}")
+
+
+async def _parchis_turn_timer(room_id: str):
+    try:
+        while True:
+            await asyncio.sleep(0.25)
+            room = parchis_rooms.get(room_id)
+            lock = parchis_locks.get(room_id)
+            if room is None or lock is None:
+                return
+            async with lock:
+                if room.get("status") != "playing":
+                    return
+                deadline = room.get("turn_deadline")
+                if not deadline or time.time() < deadline:
+                    continue
+                timed_seat = room.get("turn_seat")
+                timed_player = next((player for player in room["players"].values() if player["seat_index"] == timed_seat), None)
+                if timed_player and room.get("penalty_pending"):
+                    active_piece = next((piece for piece in timed_player["pieces"] if piece.get("stage") != -1), None)
+                    if active_piece:
+                        active_piece.update({"stage": -1, "pos": -1, "steps_walked": 0})
+                        try:
+                            supabase.table("parchis_players").update({"pieces_json": timed_player["pieces"]}).eq("match_id", room_id).eq("user_id", timed_player["user_id"]).execute()
+                        except Exception as exc:
+                            print(f"ERROR guardando penalización automática Parchís: {exc!r}")
+                room["penalty_pending"] = False
+                room["must_move"] = False
+                room["dice_remaining"] = []
+                room["dice"] = None
+                room["extra_turn"] = False
+                room["double_count"] = 0
+                room["last_event"] = f"Se agotaron los 10 segundos del asiento {timed_seat + 1}. Pasa el turno."
+                _parchis_next_turn(room, timed_seat)
+                await _parchis_broadcast(room)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        print(f"ERROR temporizador Parchís {room_id}: {exc!r}")
+    finally:
+        current = asyncio.current_task()
+        if parchis_timer_tasks.get(room_id) is current:
+            parchis_timer_tasks.pop(room_id, None)
+
+
+@app.get("/parchis/rooms")
+async def list_parchis_rooms(bet: float | None = None):
+    rooms = _parchis_public_rooms()
+    if bet is not None:
+        norm = _normalize_parchis_bet(bet)
+        if norm is not None:
+            rooms = [r for r in rooms if r["bet"] == norm]
+    return {"rooms": rooms}
+
+
+@app.post("/parchis/rooms/create")
+async def create_parchis_room(
+    body: CreateParchisRoomBody,
+    authorization: str | None = Header(default=None),
+):
+    user_id = get_authenticated_user_id(authorization)
+
+    norm_bet = _normalize_parchis_bet(body.bet)
+    if norm_bet is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Apuesta inválida. Solo $0.25, $1.00 o $10.00.",
+        )
+
+    if body.max_players not in (2, 3, 4):
+        raise HTTPException(
+            status_code=400,
+            detail="La sala debe ser de 2, 3 o 4 jugadores.",
+        )
+
+    wallet = (body.wallet or "play").strip().lower()
+    if wallet not in ("play", "bonus"):
+        raise HTTPException(status_code=400, detail="Billetera inválida.")
+
+    is_private = bool(body.is_private)
+    room_code = (body.password or "").strip()
+    if is_private and not room_code:
+        room_code = uuid.uuid4().hex[:6].upper()
+
+    room_id = f"parchis_{uuid.uuid4().hex[:10]}"
+    team_mode = "2v2" if body.max_players == 4 else "ffa"
+
+    async with parchis_rooms_lock:
+        parchis_rooms[room_id] = {
+            "room_id": room_id,
+            "creator_id": user_id,
+            "bet": norm_bet,
+            "max_players": body.max_players,
+            "team_mode": team_mode,
+            "is_private": is_private,
+            "room_code": room_code,
+            "status": "waiting",
+            "turn_seat": 0,
+            "dice": None,
+            "dice_pair": None,
+            "dice_remaining": [],
+            "extra_turn": False,
+            "double_count": 0,
+            "penalty_pending": False,
+            "turn_deadline": None,
+            "must_move": False,
+            "players": {},
+            "winners": [],
+            "settled": False,
+            "last_event": "Sala creada. Esperando jugadores...",
+        }
+        parchis_locks[room_id] = asyncio.Lock()
+
+        try:
+            supabase.table("parchis_matches").insert({
+                "id": room_id,
+                "creator_id": user_id,
+                "bet_amount": norm_bet,
+                "max_players": body.max_players,
+                "team_mode": team_mode,
+                "is_private": is_private,
+                "room_code": room_code if is_private else None,
+                "status": "waiting",
+                "pot_total": 0.00,
+                "commission_amount": 0.00,
+            }).execute()
+        except Exception as exc:
+            print(f"ERROR insert parchis_matches {room_id}: {exc!r}")
+
+    return {
+        "success": True,
+        "room_id": room_id,
+        "bet": norm_bet,
+        "max_players": body.max_players,
+        "team_mode": team_mode,
+        "is_private": is_private,
+        "room_code": room_code if is_private else None,
+    }
+
+
+@app.websocket("/ws/parchis/{room_id}")
+async def parchis_ws_endpoint(
+    websocket: WebSocket,
+    room_id: str,
+    user_id: str = Query(""),
+    access_token: str = Query(""),
+    bet: float = Query(0.25),
+    max_players: int = Query(4),
+    wallet: str = Query("play"),
+    password: str = Query(""),
+    player_name: str = Query("Jugador"),
+):
+    await websocket.accept()
+
+    if not user_id or not access_token or not verify_user_token(access_token, user_id):
+        await send_error(websocket, "Sesión no válida.")
+        await websocket.close()
+        return
+
+    wallet = (wallet or "play").strip().lower()
+    if wallet not in ("play", "bonus"):
+        await send_error(websocket, "Billetera no válida.")
+        await websocket.close()
+        return
+
+    norm_bet = _normalize_parchis_bet(bet)
+    if norm_bet is None:
+        await send_error(websocket, "Apuesta no permitida ($0.25, $1.00 o $10.00).")
+        await websocket.close()
+        return
+
+    if max_players not in (2, 3, 4):
+        await send_error(websocket, "Cantidad de jugadores no válida (2, 3 o 4).")
+        await websocket.close()
+        return
+
+    async with parchis_rooms_lock:
+        room = parchis_rooms.get(room_id)
+        if room is None:
+            if room_id == "matchmake":
+                matching = [
+                    r for r in parchis_rooms.values()
+                    if r["status"] == "waiting"
+                    and not r["is_private"]
+                    and r["bet"] == norm_bet
+                    and r["max_players"] == max_players
+                    and len(r["players"]) < r["max_players"]
+                ]
+                if matching:
+                    room = matching[0]
+                else:
+                    new_rid = f"parchis_{uuid.uuid4().hex[:10]}"
+                    team_mode = "2v2" if max_players == 4 else "ffa"
+                    room = {
+                        "room_id": new_rid,
+                        "creator_id": user_id,
+                        "bet": norm_bet,
+                        "max_players": max_players,
+                        "team_mode": team_mode,
+                        "is_private": False,
+                        "room_code": "",
+                        "status": "waiting",
+                        "turn_seat": 0,
+                        "dice": None,
+                        "dice_pair": None,
+                        "dice_remaining": [],
+                        "extra_turn": False,
+                        "double_count": 0,
+                        "penalty_pending": False,
+                        "turn_deadline": None,
+                        "must_move": False,
+                        "players": {},
+                        "winners": [],
+                        "settled": False,
+                        "last_event": "Sala abierta. Esperando rivales...",
+                    }
+                    parchis_rooms[new_rid] = room
+                    parchis_locks[new_rid] = asyncio.Lock()
+                    try:
+                        supabase.table("parchis_matches").insert({
+                            "id": new_rid,
+                            "creator_id": user_id,
+                            "bet_amount": norm_bet,
+                            "max_players": max_players,
+                            "team_mode": team_mode,
+                            "is_private": False,
+                            "room_code": None,
+                            "status": "waiting",
+                        }).execute()
+                    except Exception as exc:
+                        print(f"ERROR insert matchmake parchis {new_rid}: {exc!r}")
+            else:
+                await send_error(websocket, "La sala de Parchís no existe.")
+                await websocket.close()
+                return
+
+        lock = parchis_locks[room["room_id"]]
+
+    async with lock:
+        if room["status"] == "finished":
+            await send_error(websocket, "La partida ya finalizó.")
+            await websocket.close()
+            return
+
+        if room["is_private"] and str(room.get("room_code") or "") != str(password or "").strip():
+            await send_error(websocket, "Código o contraseña de sala privada incorrecta.")
+            await websocket.close()
+            return
+
+        existing = room["players"].get(user_id)
+        if existing is None:
+            if room["status"] != "waiting":
+                await send_error(websocket, "La partida ya comenzó.")
+                await websocket.close()
+                return
+            if len(room["players"]) >= room["max_players"]:
+                await send_error(websocket, "La sala está llena.")
+                await websocket.close()
+                return
+
+            tx_key = f"parchis-entry:{room['room_id']}:{user_id}"
+            try:
+                res = rpc_json("enter_parchis_game", {
+                    "p_transaction_key": tx_key,
+                    "p_room_id": room["room_id"],
+                    "p_user_id": user_id,
+                    "p_wallet": wallet,
+                    "p_amount": room["bet"],
+                })
+            except Exception as exc:
+                print(f"ERROR enter_parchis_game: {exc!r}")
+                await send_error(websocket, "No se pudo procesar el ingreso.")
+                await websocket.close()
+                return
+
+            if not res.get("success"):
+                await send_error(websocket, res.get("message") or "No se pudo descontar la apuesta.")
+                await websocket.close()
+                return
+
+            taken_seats = {p["seat_index"] for p in room["players"].values()}
+            seat_index = next(i for i in _parchis_seat_order_for_max_players(room["max_players"]) if i not in taken_seats)
+            team = _parchis_team_for_seat(seat_index, room["max_players"])
+
+            room["players"][user_id] = {
+                "user_id": user_id,
+                "seat_index": seat_index,
+                "team": team,
+                "wallet": wallet,
+                "player_name": (player_name or "Jugador").strip()[:40],
+                "connected": True,
+                "websocket": websocket,
+                "pieces": _parchis_new_pieces(),
+            }
+
+            try:
+                supabase.table("parchis_players").insert({
+                    "match_id": room["room_id"],
+                    "user_id": user_id,
+                    "wallet": wallet,
+                    "seat_index": seat_index,
+                    "team": team,
+                    "pieces_json": room["players"][user_id]["pieces"],
+                    "is_connected": True,
+                }).execute()
+            except Exception as exc:
+                print(f"ERROR insert parchis_players: {exc!r}")
+
+            if len(room["players"]) == room["max_players"]:
+                room["status"] = "playing"
+                room["turn_seat"] = min(player["seat_index"] for player in room["players"].values())
+                _parchis_set_turn_deadline(room)
+                existing_timer = parchis_timer_tasks.get(room["room_id"])
+                if existing_timer is None or existing_timer.done():
+                    parchis_timer_tasks[room["room_id"]] = asyncio.create_task(_parchis_turn_timer(room["room_id"]))
+                room["last_event"] = "¡Sala completa! Inicia el turno."
+                try:
+                    supabase.table("parchis_matches").update({"status": "playing"}).eq("id", room["room_id"]).execute()
+                except Exception:
+                    pass
+        else:
+            existing["connected"] = True
+            existing["websocket"] = websocket
+
+        await _parchis_broadcast(room)
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            if not isinstance(data, dict):
+                continue
+
+            msg_type = str(data.get("type") or "").upper()
+
+            if msg_type == "PING":
+                await websocket.send_json({"type": "PONG"})
+                continue
+
+            async with lock:
+                if room["status"] != "playing":
+                    continue
+
+                deadline = room.get("turn_deadline")
+                if deadline and time.time() >= deadline:
+                    await send_error(websocket, "Se agotaron los 10 segundos. El turno está pasando al siguiente jugador.")
+                    continue
+
+                actor = room["players"].get(user_id)
+                if not actor or actor["seat_index"] != room["turn_seat"]:
+                    await send_error(websocket, "No es tu turno.")
+                    continue
+
+                if msg_type == "ROLL_DICE":
+                    if room.get("penalty_pending"):
+                        await send_error(websocket, "Elige la ficha que regresará a casa.")
+                        continue
+                    if room["must_move"]:
+                        await send_error(
+                            websocket,
+                            "Debes usar los dados disponibles antes de volver a lanzar.",
+                        )
+                        continue
+
+                    die_one = random.randint(1, 6)
+                    die_two = random.randint(1, 6)
+                    room["dice_pair"] = [die_one, die_two]
+                    room["dice_remaining"] = [die_one, die_two]
+                    room["dice"] = die_one + die_two
+                    room["extra_turn"] = die_one == die_two
+                    if die_one == die_two:
+                        room["double_count"] = room.get("double_count", 0) + 1
+                    else:
+                        room["double_count"] = 0
+
+                    if room["double_count"] >= 4:
+                        active_pieces = [piece for piece in actor["pieces"] if piece.get("stage", -1) != -1]
+                        room["extra_turn"] = False
+                        room["double_count"] = 0
+                        room["must_move"] = False
+                        room["dice_remaining"] = []
+                        room["dice"] = None
+
+                        if len(active_pieces) == 1:
+                            active_pieces[0].update({"stage": -1, "pos": -1, "steps_walked": 0})
+                            room["penalty_pending"] = False
+                            room["last_event"] = "¡Cuarto doble seguido! Tu única ficha en juego regresó a casa."
+                            try:
+                                supabase.table("parchis_players").update({"pieces_json": actor["pieces"]}).eq("match_id", room["room_id"]).eq("user_id", user_id).execute()
+                            except Exception:
+                                pass
+                            _parchis_next_turn(room, actor["seat_index"])
+                        elif len(active_pieces) > 1:
+                            room["penalty_pending"] = True
+                            room["last_event"] = "¡Cuarto doble seguido! Elige una ficha para regresarla a casa."
+                        else:
+                            room["penalty_pending"] = False
+                            room["last_event"] = "¡Cuarto doble seguido! No tienes fichas fuera de casa; pierdes el turno."
+                            _parchis_next_turn(room, actor["seat_index"])
+
+                        await _parchis_broadcast(room)
+                        continue
+
+                    has_valid = _parchis_has_any_move(
+                        room, user_id, actor["pieces"], room["dice_remaining"]
+                    )
+
+                    if not has_valid:
+                        room["must_move"] = False
+                        room["last_event"] = (
+                            f"Asiento {actor['seat_index'] + 1} sacó "
+                            f"{die_one} y {die_two}; no tiene movimientos."
+                        )
+                        room["dice_remaining"] = []
+                        room["dice"] = None
+                        _parchis_next_turn(room, actor["seat_index"])
+                    else:
+                        room["must_move"] = True
+                        room["last_event"] = (
+                            f"Asiento {actor['seat_index'] + 1} sacó "
+                            f"{die_one} y {die_two}. Usa los dados disponibles."
+                        )
+
+                    await _parchis_broadcast(room)
+
+                elif msg_type == "SELECT_PENALTY_PIECE":
+                    if not room.get("penalty_pending"):
+                        await send_error(websocket, "No hay penalización pendiente.")
+                        continue
+                    try:
+                        penalty_piece_id = int(data.get("piece_id", -1))
+                    except (TypeError, ValueError):
+                        await send_error(websocket, "Ficha inválida.")
+                        continue
+                    penalty_piece = next((pc for pc in actor["pieces"] if pc["id"] == penalty_piece_id), None)
+                    if not penalty_piece or penalty_piece.get("stage") == -1:
+                        await send_error(websocket, "Elige una ficha que esté fuera de casa.")
+                        continue
+                    penalty_piece.update({"stage": -1, "pos": -1, "steps_walked": 0})
+                    room["penalty_pending"] = False
+                    room["double_count"] = 0
+                    room["must_move"] = False
+                    room["dice_remaining"] = []
+                    room["dice"] = None
+                    room["last_event"] = f"La ficha {penalty_piece_id + 1} regresó a casa por cuatro dobles."
+                    try:
+                        supabase.table("parchis_players").update({"pieces_json": actor["pieces"]}).eq("match_id", room["room_id"]).eq("user_id", user_id).execute()
+                    except Exception:
+                        pass
+                    _parchis_next_turn(room, actor["seat_index"])
+                    await _parchis_broadcast(room)
+
+                elif msg_type == "MOVE_PIECE":
+                    dice_remaining = room.get("dice_remaining") or []
+                    if not room["must_move"] or not dice_remaining:
+                        await send_error(websocket, "Primero lanza los dados.")
+                        continue
+
+                    try:
+                        piece_id = int(data.get("piece_id", -1))
+                        requested_die = int(data.get("dice_value", 0))
+                    except (TypeError, ValueError):
+                        await send_error(websocket, "Ficha o dado inválido.")
+                        continue
+
+                    piece = next((pc for pc in actor["pieces"] if pc["id"] == piece_id), None)
+                    if not piece:
+                        await send_error(websocket, "Ficha no encontrada.")
+                        continue
+                    use_pair_sum_five = (
+                        piece.get("stage", -1) == -1
+                        and requested_die == 5
+                        and 5 not in dice_remaining
+                        and _parchis_can_exit_with_pair_sum(dice_remaining)
+                    )
+                    if not use_pair_sum_five and requested_die not in dice_remaining:
+                        requested_die = next(
+                            (die for die in dice_remaining if _parchis_can_move_piece(piece, die, dice_remaining)),
+                            0,
+                        )
+
+                    if not use_pair_sum_five and requested_die not in dice_remaining:
+                        await send_error(
+                            websocket,
+                            "Ese dado ya fue utilizado o no permite ese movimiento.",
+                        )
+                        continue
+
+                    ok, status_code = _parchis_apply_move(
+                        room,
+                        user_id,
+                        piece_id,
+                        requested_die,
+                        use_pair_sum_five=use_pair_sum_five,
+                    )
+                    if not ok:
+                        await send_error(websocket, status_code)
+                        continue
+
+                    # La salida por suma 5 consume ambos dados; el resto consume uno.
+                    if use_pair_sum_five:
+                        room["dice_remaining"] = []
+                    else:
+                        room["dice_remaining"].remove(requested_die)
+
+                    try:
+                        supabase.table("parchis_players").update({
+                            "pieces_json": actor["pieces"],
+                        }).eq("match_id", room["room_id"]).eq("user_id", user_id).execute()
+                    except Exception:
+                        pass
+
+                    if status_code == "WIN":
+                        await _parchis_settle_winners(room, room["winners"])
+                    else:
+                        remaining = room.get("dice_remaining") or []
+                        if remaining and _parchis_has_any_move(
+                            room, user_id, actor["pieces"], remaining
+                        ):
+                            room["must_move"] = True
+                            room["last_event"] += (
+                                f" Queda el dado {remaining[0]}"
+                                + (f" y {remaining[1]}" if len(remaining) > 1 else "")
+                                + "."
+                            )
+                        else:
+                            # Si el otro dado no sirve, se pierde y termina el turno.
+                            room["must_move"] = False
+                            room["dice_remaining"] = []
+                            room["dice"] = None
+                            _parchis_next_turn(room, actor["seat_index"])
+
+                    await _parchis_broadcast(room)
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        print(f"ERROR WebSocket Parchís {room_id}: {exc!r}")
+    finally:
+        async with lock:
+            p = room["players"].get(user_id)
+            if p and p.get("websocket") is websocket:
+                p["connected"] = False
+                p["websocket"] = None
