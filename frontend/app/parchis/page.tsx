@@ -1,9 +1,3 @@
-
-
-
-
-
-
 "use client";
 
 import {
@@ -760,8 +754,19 @@ export default function ParchisGamePage() {
     });
 
     const boardCanvasRef = useRef<HTMLCanvasElement | null>(null);
-    const pendingChoiceRef = useRef<{ pieceId: number; options: MoveOption[] } | null>(null);
-    const choiceHitBoxesRef = useRef<Array<{ x: number; y: number; width: number; height: number; option: MoveOption }>>([]);
+    const pendingChoiceRef = useRef<{
+        pieceId: number;
+        options: MoveOption[];
+    } | null>(null);
+    const choiceHitBoxesRef = useRef<
+        Array<{
+            x: number;
+            y: number;
+            width: number;
+            height: number;
+            option: MoveOption;
+        }>
+    >([]);
     const gameStateRef = useRef<ParchisState | null>(null);
     const userIdRef = useRef<string | null>(null);
     const socketRef = useRef<WebSocket | null>(null);
@@ -781,6 +786,10 @@ export default function ParchisGamePage() {
     useEffect(() => {
         userIdRef.current = userId;
     }, [userId]);
+
+    useEffect(() => {
+        pendingChoiceRef.current = pendingChoice;
+    }, [pendingChoice]);
 
     const clearAllTimers = useCallback(() => {
         if (turnDelayTimerRef.current) {
@@ -1071,6 +1080,8 @@ export default function ParchisGamePage() {
             }
             animatedPieceRef.current = null;
             setPendingChoice(null);
+            pendingChoiceRef.current = null;
+            choiceHitBoxesRef.current = [];
             setIsMovingPiece(false);
 
             const prevState = gameStateRef.current;
@@ -1264,6 +1275,8 @@ export default function ParchisGamePage() {
                             setIsConnecting(false);
                             setIsMovingPiece(false);
                             setPendingChoice(null);
+                            pendingChoiceRef.current = null;
+                            choiceHitBoxesRef.current = [];
                             animatedPieceRef.current = null;
                             showAlert(
                                 "Error del servidor",
@@ -1426,11 +1439,10 @@ export default function ParchisGamePage() {
         ws.send(JSON.stringify({ type: "ROLL_DICE" }));
     };
 
-    // 0 representa la casilla actual; 1 es la primera casilla DESPUES de la ficha.
-    // El destino de un dado N es exactamente N casillas hacia delante.
+    // Recorre estrictamente 0 (lugar de la ficha) seguido de 1..N para cualquier digito N
     const sendMovePiece = useCallback(
         (pieceId: number, option: MoveOption) => {
-            if (isTurnWaiting || isMovingPiece) return;
+            if (isTurnWaitingRef.current || isMovingPiece) return;
             const ws = socketRef.current || activeSocket;
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
@@ -1524,7 +1536,7 @@ export default function ParchisGamePage() {
 
             ws.send(payload);
         },
-        [activeSocket, isMovingPiece, isTurnWaiting]
+        [activeSocket, isMovingPiece]
     );
 
     const renderBoard = useCallback(() => {
@@ -1633,6 +1645,12 @@ export default function ParchisGamePage() {
                 ctx.fillStyle = "#475569";
                 ctx.fill();
                 ctx.restore();
+            } else {
+                ctx.fillStyle = "rgba(24, 24, 27, 0.58)";
+                ctx.font = `700 ${Math.max(7, Math.floor(cell * 0.27))}px sans-serif`;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(String(i + 1), px, py);
             }
         }
 
@@ -1840,44 +1858,68 @@ export default function ParchisGamePage() {
                 ctx.fillStyle = pal.dark;
                 ctx.fill();
                 ctx.restore();
+            }
+        }
 
-                const selected = pendingChoiceRef.current;
-                if (selected && selected.pieceId === piece.id && p.user_id === currentUid) {
-                    const options = selected.options;
-                    const chipW = Math.max(30, Math.min(42, cell * 0.9));
-                    const chipH = Math.max(27, Math.min(36, cell * 0.78));
-                    const chipGap = Math.max(4, cell * 0.12);
-                    const totalW = options.length * chipW + Math.max(0, options.length - 1) * chipGap;
-                    const startX = Math.max(4, Math.min(size - totalW - 4, pt.x - totalW / 2));
-                    const chipY = Math.max(4, pt.y - radius - chipH - 9);
-                    choiceHitBoxesRef.current = options.map((option, index) => ({
-                        x: startX + index * (chipW + chipGap),
-                        y: chipY,
-                        width: chipW,
-                        height: chipH,
-                        option,
-                    }));
-                    options.forEach((option, index) => {
-                        const bx = startX + index * (chipW + chipGap);
-                        ctx.save();
-                        ctx.shadowColor = "rgba(0,0,0,0.55)";
-                        ctx.shadowBlur = 8;
-                        ctx.fillStyle = "#34d399";
-                        ctx.beginPath();
-                        ctx.roundRect(bx, chipY, chipW, chipH, 8);
-                        ctx.fill();
-                        ctx.shadowBlur = 0;
-                        ctx.strokeStyle = "#ecfdf5";
-                        ctx.lineWidth = 1.5;
-                        ctx.stroke();
-                        ctx.fillStyle = "#052e24";
-                        ctx.font = `900 ${Math.max(14, Math.floor(chipH * 0.58))}px sans-serif`;
-                        ctx.textAlign = "center";
-                        ctx.textBaseline = "middle";
-                        ctx.fillText(String(option.diceValue), bx + chipW / 2, chipY + chipH / 2);
-                        ctx.restore();
+        const activeChoice = pendingChoiceRef.current;
+        choiceHitBoxesRef.current = [];
+        if (activeChoice && activeChoice.options.length > 0 && me) {
+            const selectedPiece = me.pieces.find(
+                (pc) => pc.id === activeChoice.pieceId
+            );
+            if (selectedPiece) {
+                const anchor = getPieceBoardPoint(
+                    selectedPiece,
+                    me.seat_index,
+                    size
+                );
+                const btnH = 26;
+                const btnPadX = 10;
+                const gap = 6;
+                const pillWidths = activeChoice.options.map((opt) => {
+                    ctx.font = "900 11px sans-serif";
+                    return Math.max(54, ctx.measureText(opt.label).width + btnPadX * 2);
+                });
+                const totalW =
+                    pillWidths.reduce((a, b) => a + b, 0) +
+                    gap * Math.max(0, activeChoice.options.length - 1);
+                const startX = Math.max(
+                    8,
+                    Math.min(size - totalW - 8, anchor.x - totalW / 2)
+                );
+                const startY =
+                    anchor.y - 38 >= 8
+                        ? anchor.y - 38
+                        : Math.min(size - btnH - 8, anchor.y + 22);
+
+                let cursorX = startX;
+                activeChoice.options.forEach((opt, idx) => {
+                    const w = pillWidths[idx];
+                    ctx.save();
+                    ctx.fillStyle = "#10b981";
+                    ctx.strokeStyle = "#064e3b";
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.roundRect(cursorX, startY, w, btnH, 8);
+                    ctx.fill();
+                    ctx.stroke();
+
+                    ctx.fillStyle = "#020617";
+                    ctx.font = "900 11px sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "middle";
+                    ctx.fillText(opt.label, cursorX + w / 2, startY + btnH / 2);
+                    ctx.restore();
+
+                    choiceHitBoxesRef.current.push({
+                        x: cursorX,
+                        y: startY,
+                        width: w,
+                        height: btnH,
+                        option: opt,
                     });
-                }
+                    cursorX += w + gap;
+                });
             }
         }
     }, []);
@@ -1899,7 +1941,7 @@ export default function ParchisGamePage() {
     }, [isInGame, renderBoard]);
 
     const handleBoardPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
-        if (isTurnWaiting || isMovingPiece) return;
+        if (isTurnWaitingRef.current || isMovingPiece) return;
         const state = gameStateRef.current;
         const currentUid = userIdRef.current;
         const ws = socketRef.current || activeSocket;
@@ -1925,13 +1967,16 @@ export default function ParchisGamePage() {
 
         const currentChoice = pendingChoiceRef.current;
         if (currentChoice) {
-            const hit = choiceHitBoxesRef.current.find((box) =>
-                clickX >= box.x && clickX <= box.x + box.width &&
-                clickY >= box.y && clickY <= box.y + box.height
-            );
-            if (hit) {
-                sendMovePiece(currentChoice.pieceId, hit.option);
-                return;
+            for (const box of choiceHitBoxesRef.current) {
+                if (
+                    clickX >= box.x &&
+                    clickX <= box.x + box.width &&
+                    clickY >= box.y &&
+                    clickY <= box.y + box.height
+                ) {
+                    sendMovePiece(currentChoice.pieceId, box.option);
+                    return;
+                }
             }
         }
 
@@ -1983,16 +2028,21 @@ export default function ParchisGamePage() {
                     selectedPiece,
                     state.dice_remaining
                 );
-                if (opts.length > 0) {
-                    const choice = { pieceId: closestId, options: opts };
-                    pendingChoiceRef.current = choice;
-                    setPendingChoice(choice);
+                if (opts.length === 1) {
+                    sendMovePiece(closestId, opts[0]);
+                } else if (opts.length > 1) {
+                    const nextChoice = {
+                        pieceId: closestId,
+                        options: opts,
+                    };
+                    pendingChoiceRef.current = nextChoice;
+                    setPendingChoice(nextChoice);
                 }
             }
         } else {
-            setPendingChoice(null);
             pendingChoiceRef.current = null;
             choiceHitBoxesRef.current = [];
+            setPendingChoice(null);
         }
     };
 
@@ -2133,7 +2183,7 @@ export default function ParchisGamePage() {
             <main
                 className={`flex-1 w-full mx-auto flex flex-col ${
                     isInGame
-                        ? "w-full max-w-none px-1 sm:px-2 py-1 items-center justify-center"
+                        ? "max-w-xl px-2.5 sm:px-6 py-2 sm:py-4 items-center justify-center"
                         : "max-w-3xl px-2 sm:px-4 py-3 sm:py-5 items-center justify-center"
                 }`}
             >
@@ -2392,7 +2442,7 @@ export default function ParchisGamePage() {
                         </div>
                     </div>
                 ) : (
-                    <div className="w-full max-w-none bg-[#090d0b] border border-white/10 rounded-xl sm:rounded-2xl p-1.5 sm:p-2 flex flex-col gap-1.5 shadow-2xl overflow-hidden">
+                    <div className="w-full max-w-[min(100%,42rem)] bg-[#090d0b] border border-white/10 rounded-3xl p-2.5 sm:p-4 flex flex-col gap-2.5 shadow-2xl overflow-hidden">
                         <div className="flex items-center justify-between gap-2 border-b border-zinc-900 pb-2">
                             <button
                                 type="button"
@@ -2475,12 +2525,10 @@ export default function ParchisGamePage() {
                                     <canvas
                                         ref={boardCanvasRef}
                                         onPointerDown={handleBoardPointerDown}
-                                        className="block aspect-square rounded-xl border border-emerald-500/20 bg-[#090d0b] shadow-2xl cursor-pointer touch-none"
+                                        className="block w-full aspect-square max-h-[min(92vw,68vh)] rounded-2xl border border-emerald-500/20 bg-[#090d0b] shadow-2xl cursor-pointer touch-none"
                                         style={{
                                             touchAction: "none",
-                                            width: "min(96vw, 78vh)",
-                                            maxWidth: "100%",
-                                            maxHeight: "78vh",
+                                            maxWidth: "min(100%, 68vh)",
                                         }}
                                     />
                                 </div>
@@ -2534,7 +2582,3 @@ export default function ParchisGamePage() {
         </div>
     );
 }
-
-
-
-
