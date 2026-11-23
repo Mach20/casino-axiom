@@ -1,3 +1,14 @@
+
+
+
+
+
+
+
+
+
+
+
 "use client";
 
 import {
@@ -94,7 +105,7 @@ interface MoveOption {
 const API_BASE =
     process.env.NEXT_PUBLIC_API_URL || "https://casino-axiom.ethiodeploy.app";
 
-const TURN_TRANSITION_DELAY_MS = 1400;
+const TURN_TRANSITION_DELAY_MS = 1000;
 const STEP_INTERVAL_MS = 150;
 
 const PARCHIS_BETS: Record<ParchisBet, number> = {
@@ -308,6 +319,7 @@ function getExactSteps(diceValue: number | null): number {
     return Math.round(diceValue);
 }
 
+// Genera 0 (lugar de la ficha) seguido de 1..N para cualquier digito N
 function buildZeroToNSequence(n: number): number[] {
     const count = Math.max(0, Math.round(n));
     const seq: number[] = [0];
@@ -328,26 +340,12 @@ function getPieceMoveOptions(
             const seq = buildZeroToNSequence(1);
             return [
                 {
-                    label: "Salir (5)",
+                    label: "5",
                     diceValue: 5,
                     steps: 1,
                     stepSequence: seq,
                     sequenceString: seq.join(""),
                     usedDiceValues: [5],
-                    isExitFive: true,
-                },
-            ];
-        }
-        if (diceValues.length === 2 && diceValues[0] + diceValues[1] === 5) {
-            const seq = buildZeroToNSequence(1);
-            return [
-                {
-                    label: `Salir (${diceValues[0]}+${diceValues[1]}=5)`,
-                    diceValue: 5,
-                    steps: 1,
-                    stepSequence: seq,
-                    sequenceString: seq.join(""),
-                    usedDiceValues: [diceValues[0], diceValues[1]],
                     isExitFive: true,
                 },
             ];
@@ -364,7 +362,7 @@ function getPieceMoveOptions(
         const seq = buildZeroToNSequence(steps);
         if (piece.stage === 0 && piece.steps_walked + steps <= 70) {
             options.push({
-                label: `+${val}`,
+                label: String(val),
                 diceValue: val,
                 steps,
                 stepSequence: seq,
@@ -374,7 +372,7 @@ function getPieceMoveOptions(
             });
         } else if (piece.stage === 100 && piece.pos + steps <= 7) {
             options.push({
-                label: `+${val}`,
+                label: String(val),
                 diceValue: val,
                 steps,
                 stepSequence: seq,
@@ -522,32 +520,34 @@ function PipDieBox({
     const dots = PIP_COORDS[face] || PIP_COORDS[1];
 
     return (
-        <div
-            className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl border-2 p-1 flex items-center justify-center shadow-md transition-all duration-150 ${
-                used
-                    ? "bg-zinc-900 border-zinc-700 opacity-35"
-                    : "bg-zinc-100 border-zinc-400"
-            } ${rolling ? "rotate-12 scale-105" : "rotate-0 scale-100"}`}
-        >
-            <svg viewBox="0 0 100 100" className="w-full h-full block">
-                <rect
-                    x="2"
-                    y="2"
-                    width="96"
-                    height="96"
-                    rx="18"
-                    fill={used ? "#18181b" : "#f4f4f5"}
-                />
-                {dots.map(([cx, cy], idx) => (
-                    <circle
-                        key={idx}
-                        cx={cx}
-                        cy={cy}
-                        r="10.5"
-                        fill={used ? "#52525b" : "#18181b"}
+        <div className="flex flex-col items-center gap-0.5">
+            <div
+                className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl border-2 p-1 flex items-center justify-center shadow-md transition-all duration-150 ${
+                    used
+                        ? "bg-zinc-900 border-zinc-700 opacity-35"
+                        : "bg-zinc-100 border-zinc-400"
+                } ${rolling ? "rotate-12 scale-105" : "rotate-0 scale-100"}`}
+            >
+                <svg viewBox="0 0 100 100" className="w-full h-full block">
+                    <rect
+                        x="2"
+                        y="2"
+                        width="96"
+                        height="96"
+                        rx="18"
+                        fill={used ? "#18181b" : "#f4f4f5"}
                     />
-                ))}
-            </svg>
+                    {dots.map(([cx, cy], idx) => (
+                        <circle
+                            key={idx}
+                            cx={cx}
+                            cy={cy}
+                            r="10.5"
+                            fill={used ? "#52525b" : "#18181b"}
+                        />
+                    ))}
+                </svg>
+            </div>
         </div>
     );
 }
@@ -740,10 +740,7 @@ export default function ParchisGamePage() {
     const [isMovingPiece, setIsMovingPiece] = useState(false);
     const [activeSocket, setActiveSocket] = useState<WebSocket | null>(null);
 
-    const [pendingChoice, setPendingChoice] = useState<{
-        pieceId: number;
-        options: MoveOption[];
-    } | null>(null);
+    const [selectedPieceId, setSelectedPieceId] = useState<number | null>(null);
 
     const [modal, setModal] = useState({
         isOpen: false,
@@ -784,7 +781,7 @@ export default function ParchisGamePage() {
         animatedPieceRef.current = null;
         lastDelayedFingerprintRef.current = "";
         isTurnWaitingRef.current = false;
-        setPendingChoice(null);
+        setSelectedPieceId(null);
         setIsTurnWaiting(false);
         setIsMovingPiece(false);
     }, []);
@@ -1058,7 +1055,7 @@ export default function ParchisGamePage() {
                 stepAnimTimerRef.current = null;
             }
             animatedPieceRef.current = null;
-            setPendingChoice(null);
+            setSelectedPieceId(null);
             setIsMovingPiece(false);
 
             const prevState = gameStateRef.current;
@@ -1251,7 +1248,7 @@ export default function ParchisGamePage() {
                             setRollingDice(false);
                             setIsConnecting(false);
                             setIsMovingPiece(false);
-                            setPendingChoice(null);
+                            setSelectedPieceId(null);
                             animatedPieceRef.current = null;
                             showAlert(
                                 "Error del servidor",
@@ -1407,18 +1404,19 @@ export default function ParchisGamePage() {
         if (isTurnWaiting || isMovingPiece) return;
         const ws = socketRef.current || activeSocket;
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        setPendingChoice(null);
+        setSelectedPieceId(null);
         setRollingDice(true);
         ws.send(JSON.stringify({ type: "ROLL_DICE" }));
     };
 
+    // Recorre estrictamente 0 (lugar de la ficha) seguido de 1..N para cualquier digito N
     const sendMovePiece = useCallback(
         (pieceId: number, option: MoveOption) => {
             if (isTurnWaiting || isMovingPiece) return;
             const ws = socketRef.current || activeSocket;
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-            setPendingChoice(null);
+            setSelectedPieceId(null);
 
             const curState = gameStateRef.current;
             const me = curState?.players?.find(
@@ -1431,10 +1429,7 @@ export default function ParchisGamePage() {
             const totalSteps = isExitingFromHome
                 ? 1
                 : getExactSteps(option.diceValue);
-            const stepSequence =
-                option.stepSequence && option.stepSequence.length > 0
-                    ? option.stepSequence
-                    : buildZeroToNSequence(totalSteps);
+            const stepSequence = buildZeroToNSequence(totalSteps);
             const sequenceString = stepSequence.join("");
 
             if (stepAnimTimerRef.current) {
@@ -1830,7 +1825,35 @@ export default function ParchisGamePage() {
                 ctx.restore();
             }
         }
-    }, []);
+
+        // Los dados elegibles aparecen directamente encima de la ficha seleccionada.
+        if (isMyTurnNow && selectedPieceId !== null && me) {
+            const selectedPiece = me.pieces.find((pc) => pc.id === selectedPieceId);
+            if (selectedPiece) {
+                const options = getPieceMoveOptions(selectedPiece, state.dice_remaining);
+                const pt = getPieceBoardPoint(selectedPiece, me.seat_index, size);
+                const badgeY = Math.max(20, pt.y - cell * 0.9);
+                const spacing = Math.min(42, cell * 1.05);
+                options.forEach((option, index) => {
+                    const badgeX = pt.x + (index - (options.length - 1) / 2) * spacing;
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.arc(badgeX, badgeY, Math.max(12, cell * 0.34), 0, Math.PI * 2);
+                    ctx.fillStyle = "#10b981";
+                    ctx.fill();
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = "#ffffff";
+                    ctx.stroke();
+                    ctx.fillStyle = "#052e24";
+                    ctx.font = `900 ${Math.max(12, cell * 0.38)}px sans-serif`;
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "middle";
+                    ctx.fillText(String(option.diceValue), badgeX, badgeY + 0.5);
+                    ctx.restore();
+                });
+            }
+        }
+    }, [selectedPieceId]);
 
     useEffect(() => {
         if (!isInGame) return;
@@ -1898,9 +1921,30 @@ export default function ParchisGamePage() {
 
         if (!state.must_move || !state.dice_remaining?.length) return;
 
-        let closestId = -1;
-        let minDist = 34;
+        // Primero comprobar si se pulsó uno de los dados mostrados encima de la ficha.
+        if (selectedPieceId !== null) {
+            const selectedPiece = me.pieces.find((piece) => piece.id === selectedPieceId);
+            if (selectedPiece) {
+                const options = getPieceMoveOptions(selectedPiece, state.dice_remaining);
+                const piecePoint = getPieceBoardPoint(selectedPiece, me.seat_index, size);
+                const pad = size * 0.036;
+                const cell = (size - pad * 2) / 15;
+                const badgeY = Math.max(20, piecePoint.y - cell * 0.9);
+                const spacing = Math.min(42, cell * 1.05);
+                for (let index = 0; index < options.length; index++) {
+                    const badgeX = piecePoint.x + (index - (options.length - 1) / 2) * spacing;
+                    const hitRadius = Math.max(16, cell * 0.42);
+                    if (Math.hypot(clickX - badgeX, clickY - badgeY) <= hitRadius) {
+                        sendMovePiece(selectedPieceId, options[index]);
+                        return;
+                    }
+                }
+            }
+        }
 
+        // Seleccionar una ficha válida muestra sus dados; no mueve automáticamente.
+        let closestId = -1;
+        let minDist = 38;
         for (const piece of me.pieces || []) {
             const opts = getPieceMoveOptions(piece, state.dice_remaining);
             if (opts.length === 0) continue;
@@ -1913,25 +1957,9 @@ export default function ParchisGamePage() {
         }
 
         if (closestId >= 0) {
-            const selectedPiece = me.pieces.find(
-                (piece) => piece.id === closestId
-            );
-            if (selectedPiece) {
-                const opts = getPieceMoveOptions(
-                    selectedPiece,
-                    state.dice_remaining
-                );
-                if (opts.length === 1) {
-                    sendMovePiece(closestId, opts[0]);
-                } else if (opts.length > 1) {
-                    setPendingChoice({
-                        pieceId: closestId,
-                        options: opts,
-                    });
-                }
-            }
+            setSelectedPieceId((current) => current === closestId ? null : closestId);
         } else {
-            setPendingChoice(null);
+            setSelectedPieceId(null);
         }
     };
 
@@ -2072,7 +2100,7 @@ export default function ParchisGamePage() {
             <main
                 className={`flex-1 w-full mx-auto flex flex-col ${
                     isInGame
-                        ? "max-w-xl px-2.5 sm:px-6 py-2 sm:py-4 items-center justify-center"
+                        ? "max-w-none px-1 py-1 items-center justify-start min-h-[calc(100dvh-64px)]"
                         : "max-w-3xl px-2 sm:px-4 py-3 sm:py-5 items-center justify-center"
                 }`}
             >
@@ -2331,7 +2359,7 @@ export default function ParchisGamePage() {
                         </div>
                     </div>
                 ) : (
-                    <div className="w-full max-w-[min(100%,42rem)] bg-[#090d0b] border border-white/10 rounded-3xl p-2.5 sm:p-4 flex flex-col gap-2.5 shadow-2xl overflow-hidden">
+                    <div className="w-full max-w-none min-h-[calc(100dvh-68px)] bg-[#090d0b] border border-white/10 rounded-xl p-1 sm:p-2 flex flex-col gap-1.5 shadow-2xl overflow-hidden">
                         <div className="flex items-center justify-between gap-2 border-b border-zinc-900 pb-2">
                             <button
                                 type="button"
@@ -2410,34 +2438,16 @@ export default function ParchisGamePage() {
                                     position="top"
                                 />
 
-                                {pendingChoice && isMyTurn && (
-                                    <div className="flex items-center justify-center gap-2 py-1">
-                                        {pendingChoice.options.map((opt) => (
-                                            <button
-                                                key={opt.diceValue}
-                                                type="button"
-                                                onClick={() =>
-                                                    sendMovePiece(
-                                                        pendingChoice.pieceId,
-                                                        opt
-                                                    )
-                                                }
-                                                className="px-4 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs shadow-lg active:scale-95 transition-all"
-                                            >
-                                                {opt.label}
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
-
-                                <div className="w-full min-w-0 flex items-center justify-center overflow-hidden">
+                                <div className="w-full min-w-0 flex flex-1 items-center justify-center overflow-hidden">
                                     <canvas
                                         ref={boardCanvasRef}
                                         onPointerDown={handleBoardPointerDown}
-                                        className="block w-full aspect-square max-h-[min(92vw,68vh)] rounded-2xl border border-emerald-500/20 bg-[#090d0b] shadow-2xl cursor-pointer touch-none"
+                                        className="block aspect-square rounded-xl border border-emerald-500/20 bg-[#090d0b] shadow-2xl cursor-pointer touch-none"
                                         style={{
                                             touchAction: "none",
-                                            maxWidth: "min(100%, 68vh)",
+                                            width: "min(96vw, calc(100dvh - 220px))",
+                                            maxWidth: "min(96vw, calc(100dvh - 220px))",
+                                            flex: "0 0 auto",
                                         }}
                                     />
                                 </div>
@@ -2491,3 +2501,7 @@ export default function ParchisGamePage() {
         </div>
     );
 }
+
+
+
+
