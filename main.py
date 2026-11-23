@@ -2727,6 +2727,10 @@ def _parchis_public_rooms() -> list[dict]:
 
 
 async def _parchis_broadcast(room: dict):
+    gross_pot = (Decimal(str(room["bet"])) * Decimal(str(len(room["players"])))).quantize(Decimal("0.01"))
+    commission_total = (gross_pot * PARCHIS_COMMISSION_RATE).quantize(Decimal("0.01"))
+    net_pot = max(Decimal("0.00"), gross_pot - commission_total).quantize(Decimal("0.01"))
+
     payload = {
         "type": "PARCHIS_STATE",
         "room_id": room["room_id"],
@@ -2743,7 +2747,9 @@ async def _parchis_broadcast(room: dict):
         "double_count": room.get("double_count", 0),
         "penalty_pending": room.get("penalty_pending", False),
         "must_move": room["must_move"],
-        "pot_total": round(room["bet"] * len(room["players"]), 2),
+        "pot_total": float(gross_pot),
+        "net_pot": float(net_pot),
+        "commission_total": float(commission_total),
         "winners": room.get("winners", []),
         "last_event": room.get("last_event", ""),
         "players": [
@@ -2938,21 +2944,64 @@ async def _parchis_settle_winners(room: dict, winner_uids: list[str]):
         return
     room["settled"] = True
 
-    total_pot = round(room["bet"] * len(room["players"]), 2)
-    commission = _parchis_commission(total_pot)
-    net_pot = round(max(0.0, total_pot - commission), 2)
+    gross_pot = (Decimal(str(room["bet"])) * Decimal(str(len(room["players"])))).quantize(Decimal("0.01"))
+    total_commission = (gross_pot * PARCHIS_COMMISSION_RATE).quantize(Decimal("0.01"))
+    net_pot = max(Decimal("0.00"), gross_pot - total_commission).quantize(Decimal("0.01"))
 
     winners_payload = []
+    house_commission = total_commission
+
     if winner_uids:
-        share = round(net_pot / len(winner_uids), 2)
+        count = Decimal(str(len(winner_uids)))
+        share = (net_pot / count).quantize(Decimal("0.01"))
+        per_winner_gross = (gross_pot / count).quantize(Decimal("0.01"))
+        per_winner_total_comm = (per_winner_gross * PARCHIS_COMMISSION_RATE).quantize(Decimal("0.01"))
+        per_winner_ref_2pct = (per_winner_gross * Decimal("0.02")).quantize(Decimal("0.01"))
+
+        ref_total = Decimal("0.00")
+
         for uid in winner_uids:
             p = room["players"].get(uid)
             wallet = p["wallet"] if p else "play"
+
+            referrer_id = None
+            try:
+                prof_res = (
+                    supabase.table("profiles")
+                    .select("referred_by")
+                    .eq("id", uid)
+                    .limit(1)
+                    .execute()
+                )
+                rows = prof_res.data or []
+                if rows:
+                    referrer_id = rows[0].get("referred_by")
+            except Exception as exc:
+                print(f"ERROR consultando referente {uid}: {exc!r}")
+
+            if referrer_id and str(referrer_id) != str(uid):
+                ref_comm = per_winner_ref_2pct
+                axiom_comm = max(Decimal("0.00"), per_winner_total_comm - ref_comm).quantize(Decimal("0.01"))
+                ref_id_str = str(referrer_id)
+            else:
+                ref_comm = Decimal("0.00")
+                axiom_comm = per_winner_total_comm
+                ref_id_str = None
+
+            ref_total += ref_comm
+
             winners_payload.append({
                 "user_id": uid,
                 "wallet": wallet,
-                "amount": share,
+                "gross_pot": float(per_winner_gross),
+                "amount": float(share),
+                "commission": float(per_winner_total_comm),
+                "referente_id": ref_id_str,
+                "comision_referente": float(ref_comm),
+                "comision_axiom": float(axiom_comm),
             })
+
+        house_commission = max(Decimal("0.00"), total_commission - ref_total).quantize(Decimal("0.01"))
 
     tx_key = f"parchis-settle:{room['room_id']}"
     try:
@@ -2960,10 +3009,20 @@ async def _parchis_settle_winners(room: dict, winner_uids: list[str]):
             "p_transaction_key": tx_key,
             "p_room_id": room["room_id"],
             "p_winners": winners_payload,
-            "p_commission": commission,
+            "p_gross_pot": float(gross_pot),
+            "p_commission": float(house_commission),
         })
     except Exception as exc:
         print(f"ERROR settle_parchis_game {room['room_id']}: {exc!r}")
+
+    try:
+        supabase.table("parchis_matches").update({
+            "status": "finished",
+            "pot_total": float(gross_pot),
+            "commission_amount": float(house_commission),
+        }).eq("id", room["room_id"]).execute()
+    except Exception as exc:
+        print(f"ERROR update parchis_matches finished {room['room_id']}: {exc!r}")
 
 
 @app.get("/parchis/rooms")

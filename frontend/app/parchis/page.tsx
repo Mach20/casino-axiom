@@ -55,6 +55,8 @@ interface ParchisState {
     penalty_pending?: boolean;
     must_move: boolean;
     pot_total: number;
+    net_pot?: number;
+    commission_total?: number;
     winners: string[];
     last_event: string;
     players: ParchisPlayerState[];
@@ -99,9 +101,6 @@ const PARCHIS_BETS: Record<ParchisBet, number> = {
     "10.00": 10.0,
 };
 
-// Esquinas fijas por seat_index:
-// 0 = Arriba-Izquierda (Verde) <-> 2 = Abajo-Derecha (Azul) [opuestos en 2 jugadores]
-// 1 = Arriba-Derecha (Rojo) <-> 3 = Abajo-Izquierda (Amarillo)
 const SEAT_PALETTE = [
     {
         name: "Verde",
@@ -137,7 +136,6 @@ const TRACK_LEN = 68;
 const GRAY_STAR_SPOTS = new Set([5, 12, 22, 29, 39, 46, 56, 63]);
 const SAFE_SPOTS = new Set([0, 5, 12, 17, 22, 29, 34, 39, 46, 51, 56, 63]);
 
-// Estrella gris fuera de cada casa (idéntico a PARCHIS_START_SPOTS del servidor)
 const SEAT_START_SPOTS: Record<number, number> = {
     0: 5,
     1: 22,
@@ -372,6 +370,15 @@ function money(value: number): string {
     return `$${Number(value || 0).toFixed(2)}`;
 }
 
+function getNetPotDisplay(state: ParchisState | null): number {
+    if (!state) return 0;
+    if (typeof state.net_pot === "number" && Number.isFinite(state.net_pot)) {
+        return state.net_pot;
+    }
+    const gross = Number(state.pot_total || 0);
+    return Number((gross * 0.94).toFixed(2));
+}
+
 function clampDieFace(val: unknown, fallback = 1): number {
     const n = Number(val);
     if (!Number.isFinite(n) || n < 1) return fallback;
@@ -387,7 +394,6 @@ function randomDiePair(prev?: [number, number]): [number, number] {
     return [randomDieFace(prev?.[0]), randomDieFace(prev?.[1])];
 }
 
-// Secuencia estricta 0 (casilla actual), 1, 2, 3... idéntica al cálculo del backend
 function getPoseAtStep(
     startPiece: ParchisPiece,
     seatIndex: number,
@@ -396,12 +402,10 @@ function getPoseAtStep(
 ): ParchisPiece {
     const startSpot = SEAT_START_SPOTS[seatIndex] ?? 5;
 
-    // 0 = casilla actual sin moverse todavía
     if (stepIndex <= 0) {
         return { ...startPiece };
     }
 
-    // Salir de casa a estrella gris fuera de su casa
     if (startPiece.stage === -1) {
         if (!isExitFive) return { ...startPiece };
         return {
@@ -1384,7 +1388,6 @@ export default function ParchisGamePage() {
         ws.send(JSON.stringify({ type: "ROLL_DICE" }));
     };
 
-    // Recorre estrictamente 0 (casilla actual), 1, 2, 3... hasta completar el dado elegido
     const sendMovePiece = useCallback(
         (pieceId: number, option: MoveOption) => {
             if (isTurnWaiting || isMovingPiece) return;
@@ -1421,7 +1424,6 @@ export default function ParchisGamePage() {
 
             if (me && startPiece && totalSteps > 0) {
                 setIsMovingPiece(true);
-                // Paso 0: casilla actual (tanto para dado izquierdo como dado derecho)
                 animatedPieceRef.current = {
                     userId: me.user_id,
                     pieceId,
@@ -1516,7 +1518,6 @@ export default function ParchisGamePage() {
         ctx.fillStyle = "#faf5e8";
         ctx.fillRect(pad, pad, inner, inner);
 
-        // Pasillos de meta fijos por seat_index (0..3)
         for (let y = 1; y <= 6; y++) {
             ctx.fillStyle = SEAT_PALETTE[0].main;
             ctx.fillRect(pad + 7 * cell, pad + y * cell, cell, cell);
@@ -2305,7 +2306,7 @@ export default function ParchisGamePage() {
 
                             <div className="text-center">
                                 <span className="text-xs font-black text-emerald-400 block">
-                                    Pozo: {money(gameState?.pot_total ?? 0)}
+                                    Pozo: {money(getNetPotDisplay(gameState))}
                                 </span>
                                 {gameState?.room_id && (
                                     <span className="text-[10px] text-zinc-400 font-bold">
