@@ -1,3 +1,9 @@
+
+
+
+
+
+
 "use client";
 
 import {
@@ -94,7 +100,7 @@ interface MoveOption {
 const API_BASE =
     process.env.NEXT_PUBLIC_API_URL || "https://casino-axiom.ethiodeploy.app";
 
-const TURN_TRANSITION_DELAY_MS = 1400;
+const TURN_TRANSITION_DELAY_MS = 1000;
 const STEP_INTERVAL_MS = 150;
 
 const PARCHIS_BETS: Record<ParchisBet, number> = {
@@ -308,7 +314,7 @@ function getExactSteps(diceValue: number | null): number {
     return Math.round(diceValue);
 }
 
-// Secuencia 0123...N para cualquier dado N (0 = lugar inicial de la ficha, 1..N = pasos)
+// Genera 0 (lugar de la ficha) seguido de 1..N para cualquier digito N
 function buildZeroToNSequence(n: number): number[] {
     const count = Math.max(0, Math.round(n));
     const seq: number[] = [0];
@@ -365,7 +371,7 @@ function getPieceMoveOptions(
         const seq = buildZeroToNSequence(steps);
         if (piece.stage === 0 && piece.steps_walked + steps <= 70) {
             options.push({
-                label: `+${val}`,
+                label: `+${val} (${seq.join("")})`,
                 diceValue: val,
                 steps,
                 stepSequence: seq,
@@ -375,7 +381,7 @@ function getPieceMoveOptions(
             });
         } else if (piece.stage === 100 && piece.pos + steps <= 7) {
             options.push({
-                label: `+${val}`,
+                label: `+${val} (${seq.join("")})`,
                 diceValue: val,
                 steps,
                 stepSequence: seq,
@@ -521,36 +527,36 @@ function PipDieBox({
 }) {
     const face = clampDieFace(num, 1);
     const dots = PIP_COORDS[face] || PIP_COORDS[1];
-    const seqTitle = buildZeroToNSequence(face).join("");
 
     return (
-        <div
-            title={`Dado ${face} · secuencia 0..${face}: ${seqTitle}`}
-            className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl border-2 p-1 flex items-center justify-center shadow-md transition-all duration-150 ${
-                used
-                    ? "bg-zinc-900 border-zinc-700 opacity-35"
-                    : "bg-zinc-100 border-zinc-400"
-            } ${rolling ? "rotate-12 scale-105" : "rotate-0 scale-100"}`}
-        >
-            <svg viewBox="0 0 100 100" className="w-full h-full block">
-                <rect
-                    x="2"
-                    y="2"
-                    width="96"
-                    height="96"
-                    rx="18"
-                    fill={used ? "#18181b" : "#f4f4f5"}
-                />
-                {dots.map(([cx, cy], idx) => (
-                    <circle
-                        key={idx}
-                        cx={cx}
-                        cy={cy}
-                        r="10.5"
-                        fill={used ? "#52525b" : "#18181b"}
+        <div className="flex flex-col items-center gap-0.5">
+            <div
+                className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl border-2 p-1 flex items-center justify-center shadow-md transition-all duration-150 ${
+                    used
+                        ? "bg-zinc-900 border-zinc-700 opacity-35"
+                        : "bg-zinc-100 border-zinc-400"
+                } ${rolling ? "rotate-12 scale-105" : "rotate-0 scale-100"}`}
+            >
+                <svg viewBox="0 0 100 100" className="w-full h-full block">
+                    <rect
+                        x="2"
+                        y="2"
+                        width="96"
+                        height="96"
+                        rx="18"
+                        fill={used ? "#18181b" : "#f4f4f5"}
                     />
-                ))}
-            </svg>
+                    {dots.map(([cx, cy], idx) => (
+                        <circle
+                            key={idx}
+                            cx={cx}
+                            cy={cy}
+                            r="10.5"
+                            fill={used ? "#52525b" : "#18181b"}
+                        />
+                    ))}
+                </svg>
+            </div>
         </div>
     );
 }
@@ -621,7 +627,6 @@ function PlayerTurnRow({
 
     const show1 = isActiveTurn && rolling ? spinDice[0] : d1;
     const show2 = isActiveTurn && rolling ? spinDice[1] : d2;
-
     const badge = (
         <div className="flex items-center gap-1.5">
             <span
@@ -755,6 +760,8 @@ export default function ParchisGamePage() {
     });
 
     const boardCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const pendingChoiceRef = useRef<{ pieceId: number; options: MoveOption[] } | null>(null);
+    const choiceHitBoxesRef = useRef<Array<{ x: number; y: number; width: number; height: number; option: MoveOption }>>([]);
     const gameStateRef = useRef<ParchisState | null>(null);
     const userIdRef = useRef<string | null>(null);
     const socketRef = useRef<WebSocket | null>(null);
@@ -788,6 +795,8 @@ export default function ParchisGamePage() {
         lastDelayedFingerprintRef.current = "";
         isTurnWaitingRef.current = false;
         setPendingChoice(null);
+        pendingChoiceRef.current = null;
+        choiceHitBoxesRef.current = [];
         setIsTurnWaiting(false);
         setIsMovingPiece(false);
     }, []);
@@ -1411,10 +1420,14 @@ export default function ParchisGamePage() {
         const ws = socketRef.current || activeSocket;
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
         setPendingChoice(null);
+        pendingChoiceRef.current = null;
+        choiceHitBoxesRef.current = [];
         setRollingDice(true);
         ws.send(JSON.stringify({ type: "ROLL_DICE" }));
     };
 
+    // 0 representa la casilla actual; 1 es la primera casilla DESPUES de la ficha.
+    // El destino de un dado N es exactamente N casillas hacia delante.
     const sendMovePiece = useCallback(
         (pieceId: number, option: MoveOption) => {
             if (isTurnWaiting || isMovingPiece) return;
@@ -1422,6 +1435,8 @@ export default function ParchisGamePage() {
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
             setPendingChoice(null);
+            pendingChoiceRef.current = null;
+            choiceHitBoxesRef.current = [];
 
             const curState = gameStateRef.current;
             const me = curState?.players?.find(
@@ -1618,12 +1633,6 @@ export default function ParchisGamePage() {
                 ctx.fillStyle = "#475569";
                 ctx.fill();
                 ctx.restore();
-            } else {
-                ctx.fillStyle = "rgba(24, 24, 27, 0.58)";
-                ctx.font = `700 ${Math.max(7, Math.floor(cell * 0.27))}px sans-serif`;
-                ctx.textAlign = "center";
-                ctx.textBaseline = "middle";
-                ctx.fillText(String(i + 1), px, py);
             }
         }
 
@@ -1831,6 +1840,44 @@ export default function ParchisGamePage() {
                 ctx.fillStyle = pal.dark;
                 ctx.fill();
                 ctx.restore();
+
+                const selected = pendingChoiceRef.current;
+                if (selected && selected.pieceId === piece.id && p.user_id === currentUid) {
+                    const options = selected.options;
+                    const chipW = Math.max(30, Math.min(42, cell * 0.9));
+                    const chipH = Math.max(27, Math.min(36, cell * 0.78));
+                    const chipGap = Math.max(4, cell * 0.12);
+                    const totalW = options.length * chipW + Math.max(0, options.length - 1) * chipGap;
+                    const startX = Math.max(4, Math.min(size - totalW - 4, pt.x - totalW / 2));
+                    const chipY = Math.max(4, pt.y - radius - chipH - 9);
+                    choiceHitBoxesRef.current = options.map((option, index) => ({
+                        x: startX + index * (chipW + chipGap),
+                        y: chipY,
+                        width: chipW,
+                        height: chipH,
+                        option,
+                    }));
+                    options.forEach((option, index) => {
+                        const bx = startX + index * (chipW + chipGap);
+                        ctx.save();
+                        ctx.shadowColor = "rgba(0,0,0,0.55)";
+                        ctx.shadowBlur = 8;
+                        ctx.fillStyle = "#34d399";
+                        ctx.beginPath();
+                        ctx.roundRect(bx, chipY, chipW, chipH, 8);
+                        ctx.fill();
+                        ctx.shadowBlur = 0;
+                        ctx.strokeStyle = "#ecfdf5";
+                        ctx.lineWidth = 1.5;
+                        ctx.stroke();
+                        ctx.fillStyle = "#052e24";
+                        ctx.font = `900 ${Math.max(14, Math.floor(chipH * 0.58))}px sans-serif`;
+                        ctx.textAlign = "center";
+                        ctx.textBaseline = "middle";
+                        ctx.fillText(String(option.diceValue), bx + chipW / 2, chipY + chipH / 2);
+                        ctx.restore();
+                    });
+                }
             }
         }
     }, []);
@@ -1875,6 +1922,18 @@ export default function ParchisGamePage() {
         );
         const clickX = e.clientX - rect.left;
         const clickY = e.clientY - rect.top;
+
+        const currentChoice = pendingChoiceRef.current;
+        if (currentChoice) {
+            const hit = choiceHitBoxesRef.current.find((box) =>
+                clickX >= box.x && clickX <= box.x + box.width &&
+                clickY >= box.y && clickY <= box.y + box.height
+            );
+            if (hit) {
+                sendMovePiece(currentChoice.pieceId, hit.option);
+                return;
+            }
+        }
 
         if (state.penalty_pending) {
             let chosen = -1;
@@ -1924,17 +1983,16 @@ export default function ParchisGamePage() {
                     selectedPiece,
                     state.dice_remaining
                 );
-                if (opts.length === 1) {
-                    sendMovePiece(closestId, opts[0]);
-                } else if (opts.length > 1) {
-                    setPendingChoice({
-                        pieceId: closestId,
-                        options: opts,
-                    });
+                if (opts.length > 0) {
+                    const choice = { pieceId: closestId, options: opts };
+                    pendingChoiceRef.current = choice;
+                    setPendingChoice(choice);
                 }
             }
         } else {
             setPendingChoice(null);
+            pendingChoiceRef.current = null;
+            choiceHitBoxesRef.current = [];
         }
     };
 
@@ -2075,7 +2133,7 @@ export default function ParchisGamePage() {
             <main
                 className={`flex-1 w-full mx-auto flex flex-col ${
                     isInGame
-                        ? "max-w-xl px-2.5 sm:px-6 py-2 sm:py-4 items-center justify-center"
+                        ? "w-full max-w-none px-1 sm:px-2 py-1 items-center justify-center"
                         : "max-w-3xl px-2 sm:px-4 py-3 sm:py-5 items-center justify-center"
                 }`}
             >
@@ -2334,7 +2392,7 @@ export default function ParchisGamePage() {
                         </div>
                     </div>
                 ) : (
-                    <div className="w-full max-w-[min(100%,42rem)] bg-[#090d0b] border border-white/10 rounded-3xl p-2.5 sm:p-4 flex flex-col gap-2.5 shadow-2xl overflow-hidden">
+                    <div className="w-full max-w-none bg-[#090d0b] border border-white/10 rounded-xl sm:rounded-2xl p-1.5 sm:p-2 flex flex-col gap-1.5 shadow-2xl overflow-hidden">
                         <div className="flex items-center justify-between gap-2 border-b border-zinc-900 pb-2">
                             <button
                                 type="button"
@@ -2413,34 +2471,16 @@ export default function ParchisGamePage() {
                                     position="top"
                                 />
 
-                                {pendingChoice && isMyTurn && (
-                                    <div className="flex items-center justify-center gap-2 py-1">
-                                        {pendingChoice.options.map((opt) => (
-                                            <button
-                                                key={opt.diceValue}
-                                                type="button"
-                                                onClick={() =>
-                                                    sendMovePiece(
-                                                        pendingChoice.pieceId,
-                                                        opt
-                                                    )
-                                                }
-                                                className="px-4 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs shadow-lg active:scale-95 transition-all"
-                                            >
-                                                {opt.label}
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
-
                                 <div className="w-full min-w-0 flex items-center justify-center overflow-hidden">
                                     <canvas
                                         ref={boardCanvasRef}
                                         onPointerDown={handleBoardPointerDown}
-                                        className="block w-full aspect-square max-h-[min(92vw,68vh)] rounded-2xl border border-emerald-500/20 bg-[#090d0b] shadow-2xl cursor-pointer touch-none"
+                                        className="block aspect-square rounded-xl border border-emerald-500/20 bg-[#090d0b] shadow-2xl cursor-pointer touch-none"
                                         style={{
                                             touchAction: "none",
-                                            maxWidth: "min(100%, 68vh)",
+                                            width: "min(96vw, 78vh)",
+                                            maxWidth: "100%",
+                                            maxHeight: "78vh",
                                         }}
                                     />
                                 </div>
@@ -2494,3 +2534,7 @@ export default function ParchisGamePage() {
         </div>
     );
 }
+
+
+
+
