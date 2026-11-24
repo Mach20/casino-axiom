@@ -91,7 +91,6 @@ const PARCHIS_BETS: Record<ParchisBet, number> = {
     "10.00": 10.0,
 };
 
-// Colores exactos de las esquinas:
 // 0: Verde (arriba izq), 1: Rojo (arriba der), 2: Azul (abajo der), 3: Amarillo (abajo izq)
 const SEAT_PALETTE = [
     {
@@ -192,109 +191,29 @@ function getHomeSlotOffset(
     return slots[pieceId % 4];
 }
 
-/**
- * Construye las 68 casillas exactas del tablero oficial de Parchís (15x15):
- * 17 casillas por cada uno de los 4 brazos, en sentido antihorario.
- * - Index 0: (7, 0) entrada superior -> tras 5 pasos (index 5) está (6, 4), salida Verde.
- * - Index 17: (0, 7) entrada izquierda -> tras 5 pasos (index 22) está (4, 8), salida Amarillo/Rojo.
- * - Index 34: (7, 14) entrada inferior -> tras 5 pasos (index 39) está (8, 10), salida Azul.
- * - Index 51: (14, 7) entrada derecha -> tras 5 pasos (index 56) está (10, 6), salida Rojo/Amarillo.
- * Nota: Para que cada esquina (0: Verde arriba-izq, 1: Rojo arriba-der, 2: Azul abajo-der, 3: Amarillo abajo-izq)
- * salga justo en su brazo y entre a su pasillo tras 63 pasos, recorremos el tablero en sentido horario:
- * - Index 0: (7, 0)
- * - Index 5: (8, 4) -> Salida Verde (arriba, lado derecho) o (6, 4) en antihorario.
- * Aquí alineamos en sentido antihorario con las 4 casas:
- *   Casa 0 (Verde, arriba-izq) -> sale en index 5 = (6, 4) y entra a pasillo en index 0 = (7, 0) tras 63 pasos.
- *   Casa 3 (Amarillo, abajo-izq) -> sale en index 22 = (4, 8) y entra a pasillo en index 17 = (0, 7) tras 63 pasos.
- *   Casa 2 (Azul, abajo-der) -> sale en index 39 = (8, 10) y entra a pasillo en index 34 = (7, 14) tras 63 pasos.
- *   Casa 1 (Rojo, arriba-der) -> sale en index 56 = (10, 6) y entra a pasillo en index 51 = (14, 7) tras 63 pasos.
- */
-function buildTrackGridCoords(): Array<{ gx: number; gy: number }> {
-    const coords: Array<{ gx: number; gy: number }> = [];
-
-    // 0: cabecera superior (entrada pasillo Verde)
-    coords.push({ gx: 7, gy: 0 });
-    // 1..6: columna 6 bajando (gy = 0..5) -> index 5 es (6, 4) salida Verde
-    for (let y = 0; y <= 5; y++) coords.push({ gx: 6, gy: y });
-    // 7..12: fila 6 hacia la izquierda (gx = 5..0) -> index 12 es (0, 6) estrella
-    for (let x = 5; x >= 0; x--) coords.push({ gx: x, gy: 6 });
-
-    // 13..16: relleno para completar las 17 casillas del brazo superior-izquierdo
-    // En un tablero 15x15 con brazos de 3x6, el perímetro tiene 56 celdas geométricas.
-    // Para que las 68 casillas lógicas correspondan 1 a 1 con las 68 casillas numeradas 1..68 del tablero:
-    // Usamos 7 casillas por brazo lateral (6 de brazo + 1 de esquina) = 68 casillas exactas en una cuadrícula de 17x17,
-    // proyectadas al área 15x15 del tablero para que NINGUNA casilla se duplique ni salte.
-    return buildExact68ProjectedCoords();
-}
-
 function buildExact68ProjectedCoords(): Array<{ gx: number; gy: number }> {
-    // 68 casillas exactas (17 por cada lado de la cruz de 3x7):
-    // En la cruz de 3x7 (17x17 lógico), cada lado tiene exactamente 7 + 3 + 7 = 17 pasos sin repetición.
-    // Luego escalamos de 17x17 a 15x15 para dibujarlo dentro del marco del tablero.
-    const raw17: Array<{ x: number; y: number }> = [];
-
-    // 0: cabecera superior (7, 0) en 17x17 -> (8, 0)
-    raw17.push({ x: 8, y: 0 });
-    // 1..7: columna 7 bajando (y = 0..6) -> index 5 es (7, 4) salida Verde
-    for (let y = 0; y <= 6; y++) raw17.push({ x: 7, y });
-    // 8..14: fila 7 hacia la izquierda (x = 6..0) -> index 12 es (2, 7)
-    for (let x = 6; x >= 0; x--) raw17.push({ x, y: 7 });
-    // 15..16: giro izquierdo hacia cabecera izquierda
-    raw17.push({ x: 0, y: 8 });
-    // 17: cabecera izquierda (0, 8) -> index 17
-    // Ajuste exacto de índices para que 0, 17, 34, 51 sean las 4 cabeceras:
-    const exact68: Array<{ x: number; y: number }> = [
-        // Brazo 1 (0..16): 17 casillas
-        { x: 8, y: 0 }, // 0 (cabecera Verde)
-        { x: 7, y: 0 }, // 1
-        { x: 7, y: 1 }, // 2
-        { x: 7, y: 2 }, // 3
-        { x: 7, y: 3 }, // 4
-        { x: 7, y: 4 }, // 5 (salida Verde)
-        { x: 7, y: 5 }, // 6
-        { x: 7, y: 6 }, // 7
-        { x: 6, y: 7 }, // 8
-        { x: 5, y: 7 }, // 9
-        { x: 4, y: 7 }, // 10
-        { x: 3, y: 7 }, // 11
-        { x: 2, y: 7 }, // 12 (estrella)
-        { x: 1, y: 7 }, // 13
-        { x: 0, y: 7 }, // 14
-        { x: 0, y: 8 }, // 15 (esquina sup-izq)
-        { x: 0, y: 8 }, // 16 -> usamos subdivisión 19x19 para 68 celdas 100% distintas
-    ];
-    void raw17;
-    void exact68;
-
-    // En una cruz de brazos 3x8 (19x19):
-    // Lado 1: (9,0), (8,0..7) [8 celdas], (7..0, 8) [8 celdas] = 17 celdas 100% únicas!
-    // Lado 2: (0,9), (0..7, 10) [8 celdas], (8, 11..18) [8 celdas] = 17 celdas 100% únicas!
-    // Lado 3: (9,18), (10, 18..11) [8 celdas], (11..18, 10) [8 celdas] = 17 celdas 100% únicas!
-    // Lado 4: (18,9), (18..11, 8) [8 celdas], (10, 7..0) [8 celdas] = 17 celdas 100% únicas!
-    // Total: 17 * 4 = 68 celdas 100% únicas, sin ni una repetida.
     const pts19: Array<{ x: number; y: number }> = [];
 
     // Brazo 1 (0..16)
-    pts19.push({ x: 9, y: 0 }); // 0
-    for (let y = 0; y <= 7; y++) pts19.push({ x: 8, y }); // 1..8 (index 5 = {x:8, y:4})
-    for (let x = 7; x >= 0; x--) pts19.push({ x, y: 8 }); // 9..16 (index 12 = {x:4, y:8})
+    pts19.push({ x: 9, y: 0 });
+    for (let y = 0; y <= 7; y++) pts19.push({ x: 8, y });
+    for (let x = 7; x >= 0; x--) pts19.push({ x, y: 8 });
 
     // Brazo 2 (17..33)
-    pts19.push({ x: 0, y: 9 }); // 17
-    for (let x = 0; x <= 7; x++) pts19.push({ x, y: 10 }); // 18..25 (index 22 = {x:4, y:10})
-    for (let y = 11; y <= 18; y++) pts19.push({ x: 8, y }); // 26..33 (index 29 = {x:8, y:14})
+    pts19.push({ x: 0, y: 9 });
+    for (let x = 0; x <= 7; x++) pts19.push({ x, y: 10 });
+    for (let y = 11; y <= 18; y++) pts19.push({ x: 8, y });
 
     // Brazo 3 (34..50)
-    pts19.push({ x: 9, y: 18 }); // 34
-    for (let y = 18; y >= 11; y--) pts19.push({ x: 10, y }); // 35..42 (index 39 = {x:10, y:14})
-    for (let x = 11; x <= 18; x++) pts19.push({ x, y: 10 }); // 43..50 (index 46 = {x:14, y:10})
+    pts19.push({ x: 9, y: 18 });
+    for (let y = 18; y >= 11; y--) pts19.push({ x: 10, y });
+    for (let x = 11; x <= 18; x++) pts19.push({ x, y: 10 });
 
     // Brazo 4 (51..67)
-    pts19.push({ x: 18, y: 9 }); // 51
-    for (let x = 18; x >= 11; x--) pts19.push({ x, y: 8 }); // 52..59 (index 56 = {x:14, y:8})
-    for (let y = 7; y >= 0; y--) pts19.push({ x: 10, y }); // 60..67 (index 63 = {x:10, y:4})
+    pts19.push({ x: 18, y: 9 });
+    for (let x = 18; x >= 11; x--) pts19.push({ x, y: 8 });
+    for (let y = 7; y >= 0; y--) pts19.push({ x: 10, y });
 
-    // Proyectamos cada una de las 68 celdas (19x19) al tablero 15x15 (gx, gy en [0..14])
     return pts19.map((p) => {
         const mapCoord = (v: number) => {
             if (v === 8) return 6;
@@ -310,11 +229,9 @@ function buildExact68ProjectedCoords(): Array<{ gx: number; gy: number }> {
     });
 }
 
-const TRACK_GRID = buildTrackGridCoords();
+const TRACK_GRID = buildExact68ProjectedCoords();
 
 function getCellDimensions(spotIndex: number): { w: number; h: number } {
-    // Las celdas horizontales (brazos izq/der) tienen ancho 6/8 = 0.75 y alto 1
-    // Las celdas verticales (brazos sup/inf) tienen ancho 1 y alto 6/8 = 0.75
     const mod = ((spotIndex % 17) + 17) % 17;
     if (spotIndex < 17) {
         return mod <= 8 ? { w: 1, h: 0.75 } : { w: 0.75, h: 1 };
@@ -339,11 +256,6 @@ function getGoalLanePoint(
     const step = Math.max(0, Math.min(7, pos)) / 7;
     const corner = (((Number(seatIndex) || 0) % 4) + 4) % 4;
 
-    // Alineado con el sentido antihorario de cada esquina:
-    // 0 (Verde arriba-izq): entra por arriba (7, 0) bajando hacia el centro
-    // 3 (Amarillo abajo-izq): entra por izquierda (0, 7) hacia la derecha
-    // 2 (Azul abajo-der): entra por abajo (7, 14) subiendo hacia el centro
-    // 1 (Rojo arriba-der): entra por derecha (14, 7) hacia la izquierda
     switch (corner) {
         case 0:
             return {
@@ -558,7 +470,9 @@ function StarStyleDie({
     used,
     dimmed,
     selected,
-    selectable,
+    canRollDie,
+    canSelectDie,
+    onRoll,
     onSelect,
 }: {
     num: number;
@@ -566,26 +480,40 @@ function StarStyleDie({
     used?: boolean;
     dimmed?: boolean;
     selected?: boolean;
-    selectable?: boolean;
+    canRollDie?: boolean;
+    canSelectDie?: boolean;
+    onRoll?: () => void;
     onSelect?: () => void;
 }) {
     const face = clampDieFace(num, 4);
     const dots = PIP_COORDS[face] || PIP_COORDS[4];
     const gradId = `die-bg-${face}-${used ? "u" : "a"}-${dimmed ? "d" : "l"}`;
 
+    const isClickable =
+        !rolling &&
+        ((Boolean(canRollDie) && !dimmed) ||
+            (Boolean(canSelectDie) && !used && !dimmed));
+
+    const handleDieClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+        e.stopPropagation();
+        if (rolling || dimmed) return;
+        if (canRollDie) {
+            onRoll?.();
+            return;
+        }
+        if (canSelectDie && !used) {
+            onSelect?.();
+        }
+    };
+
     return (
         <button
             type="button"
-            disabled={!selectable || rolling || used || dimmed}
-            onClick={(e) => {
-                e.stopPropagation();
-                if (selectable && !rolling && !used && !dimmed && onSelect) {
-                    onSelect();
-                }
-            }}
+            disabled={!isClickable}
+            onClick={handleDieClick}
             className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl p-0.5 flex items-center justify-center shadow-md transition-all duration-150 ${
                 used || dimmed ? "opacity-40 cursor-default" : "opacity-100"
-            } ${selectable && !used && !dimmed ? "cursor-pointer hover:scale-105" : ""} ${
+            } ${isClickable ? "cursor-pointer hover:scale-105 active:scale-95" : ""} ${
                 selected ? "ring-2 ring-amber-300 scale-105" : ""
             } ${rolling ? "rotate-12 scale-105" : "rotate-0 scale-100"}`}
         >
@@ -620,7 +548,7 @@ function StarStyleDie({
     );
 }
 
-// Bandeja estilo Parchís STAR: Avatar circular + 2 dados al lado
+// Bandeja estilo Parchís STAR: Círculo de color + 2 dados al lado (sin ícono de perfil)
 function StarPlayerHud({
     playerName,
     palette,
@@ -671,63 +599,44 @@ function StarPlayerHud({
     }
     const die2Available = isActiveTurn && remCopy.includes(shownPair[1]);
 
+    const canRollNow = position === "bottom" && canRoll && !isMovingPiece;
     const canPickDice =
         position === "bottom" &&
         isActiveTurn &&
+        !canRoll &&
         !rolling &&
         !isMovingPiece &&
         diceRemaining.length > 0;
 
-    const avatarCircle = (
+    const initialLetter = (playerName.trim()[0] || "J").toUpperCase();
+
+    const colorBadge = (
         <div
-            className="w-12 h-12 sm:w-14 sm:h-14 rounded-full p-0.5 shadow-lg flex items-center justify-center shrink-0"
+            className="w-11 h-11 sm:w-12 sm:h-12 rounded-full p-0.5 shadow-lg flex items-center justify-center shrink-0"
             style={{
                 background: `linear-gradient(135deg, ${palette.light}, ${palette.main})`,
                 boxShadow: isActiveTurn
                     ? `0 0 14px ${palette.main}`
-                    : "0 4px 10px rgba(0,0,0,0.5)",
+                    : "0 4px 10px rgba(0,0,0,0.45)",
             }}
         >
-            <div className="w-full h-full rounded-full bg-zinc-200 flex items-center justify-center overflow-hidden border-2 border-zinc-900">
-                <svg viewBox="0 0 64 64" className="w-9 h-9 text-zinc-400">
-                    <circle cx="32" cy="23" r="12" fill="currentColor" />
-                    <path
-                        d="M12 56c0-11 9-18 20-18s20 7 20 18"
-                        fill="currentColor"
-                    />
-                </svg>
+            <div
+                className="w-full h-full rounded-full flex items-center justify-center border-2 border-zinc-900 font-black text-sm text-white"
+                style={{ backgroundColor: palette.main }}
+            >
+                {initialLetter}
             </div>
         </div>
     );
 
     const diceTray = (
         <div
-            role={canRoll && !rolling && !isMovingPiece ? "button" : undefined}
-            tabIndex={canRoll && !rolling && !isMovingPiece ? 0 : -1}
-            onClick={() => {
-                if (canRoll && !rolling && !isMovingPiece) {
-                    onRoll();
-                }
-            }}
-            onKeyDown={(e) => {
-                if (
-                    (e.key === "Enter" || e.key === " ") &&
-                    canRoll &&
-                    !rolling &&
-                    !isMovingPiece
-                ) {
-                    e.preventDefault();
-                    onRoll();
-                }
-            }}
             style={{
                 backgroundColor: palette.trayBg,
                 borderColor: isActiveTurn ? palette.trayBorder : "#3f3f46",
             }}
             className={`border-2 rounded-xl px-2 py-1.5 flex items-center gap-1.5 shadow-lg transition-all ${
-                canRoll && !rolling && !isMovingPiece
-                    ? "cursor-pointer hover:brightness-110 active:scale-95 ring-2 ring-emerald-400/70"
-                    : "cursor-default"
+                canRollNow ? "ring-2 ring-emerald-400/70" : ""
             }`}
         >
             <StarStyleDie
@@ -735,8 +644,10 @@ function StarPlayerHud({
                 rolling={rolling}
                 used={isActiveTurn && !rolling && diceRemaining.length > 0 && !die1Available}
                 dimmed={!isActiveTurn}
-                selectable={canPickDice}
                 selected={canPickDice && die1Available && selectedDieValue === shownPair[0]}
+                canRollDie={canRollNow}
+                canSelectDie={canPickDice}
+                onRoll={onRoll}
                 onSelect={() => onSelectDie?.(shownPair[0])}
             />
             <StarStyleDie
@@ -744,8 +655,10 @@ function StarPlayerHud({
                 rolling={rolling}
                 used={isActiveTurn && !rolling && diceRemaining.length > 0 && !die2Available}
                 dimmed={!isActiveTurn}
-                selectable={canPickDice}
                 selected={canPickDice && die2Available && selectedDieValue === shownPair[1]}
+                canRollDie={canRollNow}
+                canSelectDie={canPickDice}
+                onRoll={onRoll}
                 onSelect={() => onSelectDie?.(shownPair[1])}
             />
         </div>
@@ -756,7 +669,7 @@ function StarPlayerHud({
             <div className="w-full flex flex-col items-end pr-1">
                 <div className="flex items-center gap-2">
                     {diceTray}
-                    {avatarCircle}
+                    {colorBadge}
                 </div>
                 <span className="text-[11px] sm:text-xs font-bold text-zinc-200 mt-1 pr-1 drop-shadow">
                     {playerName}
@@ -771,14 +684,14 @@ function StarPlayerHud({
                 <span className="text-[11px] sm:text-xs font-bold text-zinc-200 drop-shadow">
                     {playerName}
                 </span>
-                {canRoll && !rolling && !isMovingPiece && (
+                {canRollNow && !rolling && (
                     <span className="text-[10px] font-black uppercase bg-emerald-500 text-black px-2 py-0.5 rounded-full animate-pulse">
-                        Toca los dados
+                        Toca un dado
                     </span>
                 )}
             </div>
             <div className="flex items-center gap-2">
-                {avatarCircle}
+                {colorBadge}
                 {diceTray}
             </div>
         </div>
@@ -816,7 +729,11 @@ export default function ParchisGamePage() {
     const [gameState, setGameState] = useState<ParchisState | null>(null);
     const [lastPairShown, setLastPairShown] = useState<[number, number]>([4, 6]);
     const [selectedDieValue, setSelectedDieValue] = useState<number | null>(null);
-    const [pendingChoicePieceId, setPendingChoicePieceId] = useState<number | null>(null);
+    const [pendingChoice, setPendingChoice] = useState<{
+        pieceId: number;
+        xPct: number;
+        yPct: number;
+    } | null>(null);
     const [busyAction, setBusyAction] = useState(false);
     const [rollingDice, setRollingDice] = useState(false);
     const [isConnecting, setIsConnecting] = useState(false);
@@ -857,7 +774,7 @@ export default function ParchisGamePage() {
         }
         animatedPieceRef.current = null;
         setIsMovingPiece(false);
-        setPendingChoicePieceId(null);
+        setPendingChoice(null);
         setSelectedDieValue(null);
     }, []);
 
@@ -1103,10 +1020,8 @@ export default function ParchisGamePage() {
                 return;
             }
 
-            // No cancelamos stepAnimTimerRef aquí para que la ficha recorra
-            // visualmente todas las casillas del dado sin teletransportarse.
             setRollingDice(false);
-            setPendingChoicePieceId(null);
+            setPendingChoice(null);
 
             const rem = Array.isArray(nextState.dice_remaining)
                 ? nextState.dice_remaining
@@ -1382,6 +1297,7 @@ export default function ParchisGamePage() {
         const ws = socketRef.current || activeSocket;
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
         setSelectedDieValue(null);
+        setPendingChoice(null);
         setRollingDice(true);
         ws.send(JSON.stringify({ type: "ROLL_DICE" }));
     };
@@ -1401,7 +1317,7 @@ export default function ParchisGamePage() {
             const exitingHome = startPiece?.stage === -1;
             const animSteps = exitingHome ? 1 : chosenSteps;
 
-            setPendingChoicePieceId(null);
+            setPendingChoice(null);
 
             if (stepAnimTimerRef.current) {
                 clearTimeout(stepAnimTimerRef.current);
@@ -1478,7 +1394,6 @@ export default function ParchisGamePage() {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, size, size);
 
-        // Marco de madera estilo Parchís STAR
         const woodGrad = ctx.createLinearGradient(0, 0, 0, size);
         woodGrad.addColorStop(0, "#75523b");
         woodGrad.addColorStop(0.5, "#60412c");
@@ -1498,11 +1413,9 @@ export default function ParchisGamePage() {
         const inner = size - pad * 2;
         const cell = inner / 15;
 
-        // Fondo blanco del tablero interior
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(pad, pad, inner, inner);
 
-        // Pasillos de color hacia el centro (Verde arriba, Rojo derecha, Azul abajo, Amarillo izquierda)
         for (let y = 1; y <= 6; y++) {
             ctx.fillStyle = SEAT_PALETTE[0].main;
             ctx.fillRect(pad + 7 * cell, pad + y * cell, cell, cell);
@@ -1520,7 +1433,6 @@ export default function ParchisGamePage() {
             ctx.fillRect(pad + x * cell, pad + 7 * cell, cell, cell);
         }
 
-        // Las 68 casillas exactas del recorrido con sus bordes, salidas, estrellas y números
         const startColorBySpot: Record<number, string> = {
             [SEAT_START_SPOTS[0]]: SEAT_PALETTE[0].main,
             [SEAT_START_SPOTS[3]]: SEAT_PALETTE[3].main,
@@ -1576,7 +1488,6 @@ export default function ParchisGamePage() {
             }
         }
 
-        // Líneas de los pasillos de meta
         ctx.strokeStyle = "rgba(100, 116, 139, 0.45)";
         ctx.lineWidth = 1;
         for (let k = 1; k <= 5; k++) {
@@ -1586,12 +1497,11 @@ export default function ParchisGamePage() {
             ctx.strokeRect(pad + k * cell, pad + 7 * cell, cell, cell);
         }
 
-        // 4 Casas en las esquinas
         const homes = [
-            { seat: 0, gx: 0, gy: 0 }, // Verde arriba izq
-            { seat: 1, gx: 9, gy: 0 }, // Rojo arriba der
-            { seat: 2, gx: 9, gy: 9 }, // Azul abajo der
-            { seat: 3, gx: 0, gy: 9 }, // Amarillo abajo izq
+            { seat: 0, gx: 0, gy: 0 },
+            { seat: 1, gx: 9, gy: 0 },
+            { seat: 2, gx: 9, gy: 9 },
+            { seat: 3, gx: 0, gy: 9 },
         ];
 
         for (const h of homes) {
@@ -1632,7 +1542,6 @@ export default function ParchisGamePage() {
             }
         }
 
-        // Centro dividido en 4 triángulos
         const cLeft = pad + 6 * cell;
         const cTop = pad + 6 * cell;
         const cSize = cell * 3;
@@ -1840,6 +1749,7 @@ export default function ParchisGamePage() {
         if (!state.must_move) return;
 
         let closestPiece: ParchisPiece | null = null;
+        let closestPt: { x: number; y: number } | null = null;
         let minDist = 36;
 
         for (const piece of me.pieces || []) {
@@ -1854,10 +1764,11 @@ export default function ParchisGamePage() {
             if (dist < minDist) {
                 minDist = dist;
                 closestPiece = piece;
+                closestPt = pt;
             }
         }
 
-        if (!closestPiece) return;
+        if (!closestPiece || !closestPt) return;
 
         const options = getMovableOptionsForPiece(
             closestPiece,
@@ -1878,7 +1789,13 @@ export default function ParchisGamePage() {
         if (options.length === 1) {
             sendMovePiece(closestPiece.id, options[0]);
         } else if (options.length > 1) {
-            setPendingChoicePieceId(closestPiece.id);
+            const xPct = Math.max(14, Math.min(86, (closestPt.x / size) * 100));
+            const yPct = Math.max(12, Math.min(88, (closestPt.y / size) * 100));
+            setPendingChoice({
+                pieceId: closestPiece.id,
+                xPct,
+                yPct,
+            });
         }
     };
 
@@ -1977,8 +1894,9 @@ export default function ParchisGamePage() {
         : [];
 
     const pendingPiece =
-        pendingChoicePieceId !== null && myPlayer
-            ? myPlayer.pieces.find((p) => p.id === pendingChoicePieceId) || null
+        pendingChoice !== null && myPlayer
+            ? myPlayer.pieces.find((p) => p.id === pendingChoice.pieceId) ||
+              null
             : null;
     const pendingOptions = pendingPiece
         ? getMovableOptionsForPiece(
@@ -2269,7 +2187,6 @@ export default function ParchisGamePage() {
                     </div>
                 ) : (
                     <div className="w-full max-w-[min(100%,30rem)] bg-gradient-to-b from-[#331f2e] via-[#261822] to-[#1a1018] border border-white/10 rounded-3xl p-2.5 sm:p-4 flex flex-col gap-2 shadow-2xl overflow-hidden">
-                        {/* Barra superior con salir y pozo */}
                         <div className="flex items-center justify-between gap-2 pb-1">
                             <button
                                 type="button"
@@ -2329,7 +2246,6 @@ export default function ParchisGamePage() {
                                     </div>
                                 )}
 
-                                {/* Rival arriba a la derecha */}
                                 <StarPlayerHud
                                     playerName={topName}
                                     palette={topPalette}
@@ -2346,50 +2262,54 @@ export default function ParchisGamePage() {
                                     position="top"
                                 />
 
-                                {/* Selector de dado cuando hay 2 opciones válidas para la misma ficha */}
-                                {pendingPiece && pendingOptions.length > 1 && (
-                                    <div className="flex items-center justify-center gap-2 bg-black/70 border border-yellow-400/50 rounded-xl px-3 py-1.5">
-                                        <span className="text-[11px] font-bold text-yellow-300">
-                                            Elige dado:
-                                        </span>
-                                        {pendingOptions.map((opt) => (
-                                            <button
-                                                key={opt}
-                                                type="button"
-                                                onClick={() =>
-                                                    sendMovePiece(
-                                                        pendingPiece.id,
-                                                        opt
-                                                    )
-                                                }
-                                                className="px-3 py-1 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs rounded-lg"
-                                            >
-                                                +{opt}
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
-
                                 {(gameState.bonus_steps || 0) > 0 && isMyTurn && (
                                     <div className="text-center text-[11px] font-black text-amber-300 bg-black/50 rounded-lg py-1">
                                         ¡Bono de +{gameState.bonus_steps} casillas! Toca una ficha
                                     </div>
                                 )}
 
-                                {/* Tablero central estilo madera + 68 casillas exactas */}
+                                {/* Tablero central + selector flotante arriba de la ficha elegida */}
                                 <div className="w-full min-w-0 flex items-center justify-center overflow-hidden">
-                                    <canvas
-                                        ref={boardCanvasRef}
-                                        onPointerDown={handleBoardPointerDown}
-                                        className="block w-full aspect-square max-h-[min(92vw,64vh)] rounded-2xl shadow-2xl cursor-pointer touch-none"
-                                        style={{
-                                            touchAction: "none",
-                                            maxWidth: "min(100%, 64vh)",
-                                        }}
-                                    />
+                                    <div
+                                        className="relative w-full aspect-square max-h-[min(92vw,64vh)]"
+                                        style={{ maxWidth: "min(100%, 64vh)" }}
+                                    >
+                                        <canvas
+                                            ref={boardCanvasRef}
+                                            onPointerDown={handleBoardPointerDown}
+                                            className="block w-full h-full rounded-2xl shadow-2xl cursor-pointer touch-none"
+                                            style={{ touchAction: "none" }}
+                                        />
+
+                                        {pendingPiece && pendingOptions.length > 1 && pendingChoice && (
+                                            <div
+                                                onPointerDown={(e) => e.stopPropagation()}
+                                                style={{
+                                                    left: `${pendingChoice.xPct}%`,
+                                                    top: `${pendingChoice.yPct}%`,
+                                                }}
+                                                className="absolute -translate-x-1/2 -translate-y-[145%] z-20 flex items-center gap-1 bg-zinc-950/95 border border-amber-300 rounded-xl p-1 shadow-xl"
+                                            >
+                                                {pendingOptions.map((opt) => (
+                                                    <button
+                                                        key={opt}
+                                                        type="button"
+                                                        onClick={() =>
+                                                            sendMovePiece(
+                                                                pendingPiece.id,
+                                                                opt
+                                                            )
+                                                        }
+                                                        className="px-2.5 py-1 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs rounded-lg active:scale-95"
+                                                    >
+                                                        +{opt}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
 
-                                {/* Tú abajo a la izquierda */}
                                 <StarPlayerHud
                                     playerName={bottomName}
                                     palette={bottomPalette}
