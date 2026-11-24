@@ -3487,18 +3487,22 @@ async def parchis_ws_endpoint(
                             continue
 
                     # Caso 3: Ficha ya en juego -> usa un dado independiente a la vez
+                    # Caso 3: Ficha ya en juego -> usa exactamente el dado seleccionado o el único disponible
                     else:
-                        chosen_die = (
-                            raw_die
-                            if (raw_die in dice_remaining and _parchis_can_move_piece(piece, raw_die, dice_remaining))
-                            else next(
-                                (d for d in dice_remaining if _parchis_can_move_piece(piece, d, dice_remaining)),
-                                0,
-                            )
-                        )
-                        if chosen_die not in dice_remaining:
-                            await send_error(websocket, "Movimiento no válido con los dados actuales.")
-                            continue
+                        if raw_die in dice_remaining:
+                            if not _parchis_can_move_piece(piece, raw_die, dice_remaining):
+                                await send_error(websocket, f"Esa ficha no puede avanzar {raw_die} casillas.")
+                                continue
+                            chosen_die = raw_die
+                        else:
+                            valid_dice = [
+                                d for d in dice_remaining
+                                if _parchis_can_move_piece(piece, d, dice_remaining)
+                            ]
+                            if not valid_dice:
+                                await send_error(websocket, "Movimiento no válido con los dados actuales.")
+                                continue
+                            chosen_die = valid_dice[0]
 
                         ok, status_code, new_bonus = _parchis_apply_move(room, user_id, piece_id, chosen_die, False)
                         if not ok:

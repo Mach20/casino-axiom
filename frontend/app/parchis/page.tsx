@@ -83,7 +83,7 @@ interface ProfileRow {
 const API_BASE =
     process.env.NEXT_PUBLIC_API_URL || "https://casino-axiom.ethiodeploy.app";
 
-const STEP_ANIM_MS = 95;
+const STEP_ANIM_MS = 110;
 
 const PARCHIS_BETS: Record<ParchisBet, number> = {
     "0.25": 0.25,
@@ -91,7 +91,7 @@ const PARCHIS_BETS: Record<ParchisBet, number> = {
     "10.00": 10.0,
 };
 
-// Colores exactos de las esquinas de la foto:
+// Colores exactos de las esquinas:
 // 0: Verde (arriba izq), 1: Rojo (arriba der), 2: Azul (abajo der), 3: Amarillo (abajo izq)
 const SEAT_PALETTE = [
     {
@@ -192,31 +192,141 @@ function getHomeSlotOffset(
     return slots[pieceId % 4];
 }
 
+/**
+ * Construye las 68 casillas exactas del tablero oficial de Parchís (15x15):
+ * 17 casillas por cada uno de los 4 brazos, en sentido antihorario.
+ * - Index 0: (7, 0) entrada superior -> tras 5 pasos (index 5) está (6, 4), salida Verde.
+ * - Index 17: (0, 7) entrada izquierda -> tras 5 pasos (index 22) está (4, 8), salida Amarillo/Rojo.
+ * - Index 34: (7, 14) entrada inferior -> tras 5 pasos (index 39) está (8, 10), salida Azul.
+ * - Index 51: (14, 7) entrada derecha -> tras 5 pasos (index 56) está (10, 6), salida Rojo/Amarillo.
+ * Nota: Para que cada esquina (0: Verde arriba-izq, 1: Rojo arriba-der, 2: Azul abajo-der, 3: Amarillo abajo-izq)
+ * salga justo en su brazo y entre a su pasillo tras 63 pasos, recorremos el tablero en sentido horario:
+ * - Index 0: (7, 0)
+ * - Index 5: (8, 4) -> Salida Verde (arriba, lado derecho) o (6, 4) en antihorario.
+ * Aquí alineamos en sentido antihorario con las 4 casas:
+ *   Casa 0 (Verde, arriba-izq) -> sale en index 5 = (6, 4) y entra a pasillo en index 0 = (7, 0) tras 63 pasos.
+ *   Casa 3 (Amarillo, abajo-izq) -> sale en index 22 = (4, 8) y entra a pasillo en index 17 = (0, 7) tras 63 pasos.
+ *   Casa 2 (Azul, abajo-der) -> sale en index 39 = (8, 10) y entra a pasillo en index 34 = (7, 14) tras 63 pasos.
+ *   Casa 1 (Rojo, arriba-der) -> sale en index 56 = (10, 6) y entra a pasillo en index 51 = (14, 7) tras 63 pasos.
+ */
 function buildTrackGridCoords(): Array<{ gx: number; gy: number }> {
-    const perimeter: Array<{ gx: number; gy: number }> = [];
-    for (let y = 0; y < 6; y++) perimeter.push({ gx: 6, gy: y });
-    for (let x = 5; x >= 0; x--) perimeter.push({ gx: x, gy: 6 });
-    perimeter.push({ gx: 0, gy: 7 });
-    for (let x = 0; x < 6; x++) perimeter.push({ gx: x, gy: 8 });
-    for (let y = 9; y <= 14; y++) perimeter.push({ gx: 6, gy: y });
-    perimeter.push({ gx: 7, gy: 14 });
-    for (let y = 14; y > 8; y--) perimeter.push({ gx: 8, gy: y });
-    for (let x = 9; x <= 14; x++) perimeter.push({ gx: x, gy: 8 });
-    perimeter.push({ gx: 14, gy: 7 });
-    for (let x = 14; x > 8; x--) perimeter.push({ gx: x, gy: 6 });
-    for (let y = 5; y >= 0; y--) perimeter.push({ gx: 8, gy: y });
-    perimeter.push({ gx: 7, gy: 0 });
+    const coords: Array<{ gx: number; gy: number }> = [];
 
-    const result: Array<{ gx: number; gy: number }> = [];
-    const totalPts = perimeter.length;
-    for (let i = 0; i < TRACK_LEN; i++) {
-        const idx = Math.floor((i * totalPts) / TRACK_LEN) % totalPts;
-        result.push(perimeter[idx]);
-    }
-    return result;
+    // 0: cabecera superior (entrada pasillo Verde)
+    coords.push({ gx: 7, gy: 0 });
+    // 1..6: columna 6 bajando (gy = 0..5) -> index 5 es (6, 4) salida Verde
+    for (let y = 0; y <= 5; y++) coords.push({ gx: 6, gy: y });
+    // 7..12: fila 6 hacia la izquierda (gx = 5..0) -> index 12 es (0, 6) estrella
+    for (let x = 5; x >= 0; x--) coords.push({ gx: x, gy: 6 });
+
+    // 13..16: relleno para completar las 17 casillas del brazo superior-izquierdo
+    // En un tablero 15x15 con brazos de 3x6, el perímetro tiene 56 celdas geométricas.
+    // Para que las 68 casillas lógicas correspondan 1 a 1 con las 68 casillas numeradas 1..68 del tablero:
+    // Usamos 7 casillas por brazo lateral (6 de brazo + 1 de esquina) = 68 casillas exactas en una cuadrícula de 17x17,
+    // proyectadas al área 15x15 del tablero para que NINGUNA casilla se duplique ni salte.
+    return buildExact68ProjectedCoords();
+}
+
+function buildExact68ProjectedCoords(): Array<{ gx: number; gy: number }> {
+    // 68 casillas exactas (17 por cada lado de la cruz de 3x7):
+    // En la cruz de 3x7 (17x17 lógico), cada lado tiene exactamente 7 + 3 + 7 = 17 pasos sin repetición.
+    // Luego escalamos de 17x17 a 15x15 para dibujarlo dentro del marco del tablero.
+    const raw17: Array<{ x: number; y: number }> = [];
+
+    // 0: cabecera superior (7, 0) en 17x17 -> (8, 0)
+    raw17.push({ x: 8, y: 0 });
+    // 1..7: columna 7 bajando (y = 0..6) -> index 5 es (7, 4) salida Verde
+    for (let y = 0; y <= 6; y++) raw17.push({ x: 7, y });
+    // 8..14: fila 7 hacia la izquierda (x = 6..0) -> index 12 es (2, 7)
+    for (let x = 6; x >= 0; x--) raw17.push({ x, y: 7 });
+    // 15..16: giro izquierdo hacia cabecera izquierda
+    raw17.push({ x: 0, y: 8 });
+    // 17: cabecera izquierda (0, 8) -> index 17
+    // Ajuste exacto de índices para que 0, 17, 34, 51 sean las 4 cabeceras:
+    const exact68: Array<{ x: number; y: number }> = [
+        // Brazo 1 (0..16): 17 casillas
+        { x: 8, y: 0 }, // 0 (cabecera Verde)
+        { x: 7, y: 0 }, // 1
+        { x: 7, y: 1 }, // 2
+        { x: 7, y: 2 }, // 3
+        { x: 7, y: 3 }, // 4
+        { x: 7, y: 4 }, // 5 (salida Verde)
+        { x: 7, y: 5 }, // 6
+        { x: 7, y: 6 }, // 7
+        { x: 6, y: 7 }, // 8
+        { x: 5, y: 7 }, // 9
+        { x: 4, y: 7 }, // 10
+        { x: 3, y: 7 }, // 11
+        { x: 2, y: 7 }, // 12 (estrella)
+        { x: 1, y: 7 }, // 13
+        { x: 0, y: 7 }, // 14
+        { x: 0, y: 8 }, // 15 (esquina sup-izq)
+        { x: 0, y: 8 }, // 16 -> usamos subdivisión 19x19 para 68 celdas 100% distintas
+    ];
+    void raw17;
+    void exact68;
+
+    // En una cruz de brazos 3x8 (19x19):
+    // Lado 1: (9,0), (8,0..7) [8 celdas], (7..0, 8) [8 celdas] = 17 celdas 100% únicas!
+    // Lado 2: (0,9), (0..7, 10) [8 celdas], (8, 11..18) [8 celdas] = 17 celdas 100% únicas!
+    // Lado 3: (9,18), (10, 18..11) [8 celdas], (11..18, 10) [8 celdas] = 17 celdas 100% únicas!
+    // Lado 4: (18,9), (18..11, 8) [8 celdas], (10, 7..0) [8 celdas] = 17 celdas 100% únicas!
+    // Total: 17 * 4 = 68 celdas 100% únicas, sin ni una repetida.
+    const pts19: Array<{ x: number; y: number }> = [];
+
+    // Brazo 1 (0..16)
+    pts19.push({ x: 9, y: 0 }); // 0
+    for (let y = 0; y <= 7; y++) pts19.push({ x: 8, y }); // 1..8 (index 5 = {x:8, y:4})
+    for (let x = 7; x >= 0; x--) pts19.push({ x, y: 8 }); // 9..16 (index 12 = {x:4, y:8})
+
+    // Brazo 2 (17..33)
+    pts19.push({ x: 0, y: 9 }); // 17
+    for (let x = 0; x <= 7; x++) pts19.push({ x, y: 10 }); // 18..25 (index 22 = {x:4, y:10})
+    for (let y = 11; y <= 18; y++) pts19.push({ x: 8, y }); // 26..33 (index 29 = {x:8, y:14})
+
+    // Brazo 3 (34..50)
+    pts19.push({ x: 9, y: 18 }); // 34
+    for (let y = 18; y >= 11; y--) pts19.push({ x: 10, y }); // 35..42 (index 39 = {x:10, y:14})
+    for (let x = 11; x <= 18; x++) pts19.push({ x, y: 10 }); // 43..50 (index 46 = {x:14, y:10})
+
+    // Brazo 4 (51..67)
+    pts19.push({ x: 18, y: 9 }); // 51
+    for (let x = 18; x >= 11; x--) pts19.push({ x, y: 8 }); // 52..59 (index 56 = {x:14, y:8})
+    for (let y = 7; y >= 0; y--) pts19.push({ x: 10, y }); // 60..67 (index 63 = {x:10, y:4})
+
+    // Proyectamos cada una de las 68 celdas (19x19) al tablero 15x15 (gx, gy en [0..14])
+    return pts19.map((p) => {
+        const mapCoord = (v: number) => {
+            if (v === 8) return 6;
+            if (v === 9) return 7;
+            if (v === 10) return 8;
+            if (v < 8) return (v * 6) / 8;
+            return 9 + ((v - 11) * 6) / 8;
+        };
+        return {
+            gx: mapCoord(p.x),
+            gy: mapCoord(p.y),
+        };
+    });
 }
 
 const TRACK_GRID = buildTrackGridCoords();
+
+function getCellDimensions(spotIndex: number): { w: number; h: number } {
+    // Las celdas horizontales (brazos izq/der) tienen ancho 6/8 = 0.75 y alto 1
+    // Las celdas verticales (brazos sup/inf) tienen ancho 1 y alto 6/8 = 0.75
+    const mod = ((spotIndex % 17) + 17) % 17;
+    if (spotIndex < 17) {
+        return mod <= 8 ? { w: 1, h: 0.75 } : { w: 0.75, h: 1 };
+    }
+    if (spotIndex < 34) {
+        return mod <= 8 ? { w: 0.75, h: 1 } : { w: 1, h: 0.75 };
+    }
+    if (spotIndex < 51) {
+        return mod <= 8 ? { w: 1, h: 0.75 } : { w: 0.75, h: 1 };
+    }
+    return mod <= 8 ? { w: 0.75, h: 1 } : { w: 1, h: 0.75 };
+}
 
 function getGoalLanePoint(
     seatIndex: number,
@@ -229,25 +339,30 @@ function getGoalLanePoint(
     const step = Math.max(0, Math.min(7, pos)) / 7;
     const corner = (((Number(seatIndex) || 0) % 4) + 4) % 4;
 
+    // Alineado con el sentido antihorario de cada esquina:
+    // 0 (Verde arriba-izq): entra por arriba (7, 0) bajando hacia el centro
+    // 3 (Amarillo abajo-izq): entra por izquierda (0, 7) hacia la derecha
+    // 2 (Azul abajo-der): entra por abajo (7, 14) subiendo hacia el centro
+    // 1 (Rojo arriba-der): entra por derecha (14, 7) hacia la izquierda
     switch (corner) {
         case 0:
             return {
                 x: pad + 7.5 * cell,
-                y: pad + (1.5 + step * 5.2) * cell,
+                y: pad + (1.2 + step * 5.4) * cell,
             };
         case 1:
             return {
-                x: pad + (13.5 - step * 5.2) * cell,
+                x: pad + (13.8 - step * 5.4) * cell,
                 y: pad + 7.5 * cell,
             };
         case 2:
             return {
                 x: pad + 7.5 * cell,
-                y: pad + (13.5 - step * 5.2) * cell,
+                y: pad + (13.8 - step * 5.4) * cell,
             };
         default:
             return {
-                x: pad + (1.5 + step * 5.2) * cell,
+                x: pad + (1.2 + step * 5.4) * cell,
                 y: pad + 7.5 * cell,
             };
     }
@@ -282,10 +397,11 @@ function getPieceBoardPoint(
 
     const spot = ((piece.pos % TRACK_LEN) + TRACK_LEN) % TRACK_LEN;
     const g = TRACK_GRID[spot];
-    const baseX = pad + (g.gx + 0.5) * cell;
-    const baseY = pad + (g.gy + 0.5) * cell;
+    const dims = getCellDimensions(spot);
+    const baseX = pad + (g.gx + dims.w * 0.5) * cell;
+    const baseY = pad + (g.gy + dims.h * 0.5) * cell;
     const angle = (piece.id % 4) * (Math.PI / 2);
-    const offset = cell * 0.11;
+    const offset = cell * 0.09;
 
     return {
         x: baseX + Math.cos(angle) * offset,
@@ -548,7 +664,6 @@ function StarPlayerHud({
     const shownPair: [number, number] =
         isActiveTurn && rolling ? spinPair : dicePair;
 
-    // Determinar si cada dado de la pareja ya fue usado en este turno
     const remCopy = [...diceRemaining];
     const die1Available = isActiveTurn && remCopy.includes(shownPair[0]);
     if (die1Available) {
@@ -636,7 +751,6 @@ function StarPlayerHud({
         </div>
     );
 
-    // En la foto: el rival arriba tiene [2 dados] [Avatar] a la derecha y su nombre debajo
     if (position === "top") {
         return (
             <div className="w-full flex flex-col items-end pr-1">
@@ -651,7 +765,6 @@ function StarPlayerHud({
         );
     }
 
-    // En la foto: tú abajo tienes tu nombre arriba y [Avatar] [2 dados] a la izquierda
     return (
         <div className="w-full flex flex-col items-start pl-1">
             <div className="flex items-center gap-2 mb-1 pl-1">
@@ -990,12 +1103,8 @@ export default function ParchisGamePage() {
                 return;
             }
 
-            if (stepAnimTimerRef.current) {
-                clearTimeout(stepAnimTimerRef.current);
-                stepAnimTimerRef.current = null;
-            }
-            animatedPieceRef.current = null;
-            setIsMovingPiece(false);
+            // No cancelamos stepAnimTimerRef aquí para que la ficha recorra
+            // visualmente todas las casillas del dado sin teletransportarse.
             setRollingDice(false);
             setPendingChoicePieceId(null);
 
@@ -1120,6 +1229,10 @@ export default function ParchisGamePage() {
                         }
 
                         if (data.type === "ERROR") {
+                            if (stepAnimTimerRef.current) {
+                                clearTimeout(stepAnimTimerRef.current);
+                                stepAnimTimerRef.current = null;
+                            }
                             setRollingDice(false);
                             setIsConnecting(false);
                             setIsMovingPiece(false);
@@ -1329,6 +1442,7 @@ export default function ParchisGamePage() {
                             nextStep();
                         } else {
                             stepAnimTimerRef.current = null;
+                            animatedPieceRef.current = null;
                             setIsMovingPiece(false);
                         }
                     }, STEP_ANIM_MS);
@@ -1364,7 +1478,7 @@ export default function ParchisGamePage() {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, size, size);
 
-        // Marco de madera estilo Parchís STAR de la captura
+        // Marco de madera estilo Parchís STAR
         const woodGrad = ctx.createLinearGradient(0, 0, 0, size);
         woodGrad.addColorStop(0, "#75523b");
         woodGrad.addColorStop(0.5, "#60412c");
@@ -1406,37 +1520,41 @@ export default function ParchisGamePage() {
             ctx.fillRect(pad + x * cell, pad + 7 * cell, cell, cell);
         }
 
-        // Casillas de salida coloreadas como en la foto
-        const startCells = [
-            { spot: SEAT_START_SPOTS[0], color: SEAT_PALETTE[0].main },
-            { spot: SEAT_START_SPOTS[1], color: SEAT_PALETTE[1].main },
-            { spot: SEAT_START_SPOTS[2], color: SEAT_PALETTE[2].main },
-            { spot: SEAT_START_SPOTS[3], color: SEAT_PALETTE[3].main },
-        ];
-        for (const sc of startCells) {
-            const g = TRACK_GRID[sc.spot];
-            ctx.fillStyle = sc.color;
-            ctx.fillRect(pad + g.gx * cell, pad + g.gy * cell, cell, cell);
-        }
+        // Las 68 casillas exactas del recorrido con sus bordes, salidas, estrellas y números
+        const startColorBySpot: Record<number, string> = {
+            [SEAT_START_SPOTS[0]]: SEAT_PALETTE[0].main,
+            [SEAT_START_SPOTS[3]]: SEAT_PALETTE[3].main,
+            [SEAT_START_SPOTS[2]]: SEAT_PALETTE[2].main,
+            [SEAT_START_SPOTS[1]]: SEAT_PALETTE[1].main,
+        };
 
-        // Casillas seguras grises con estrella y números del 1 al 68
         for (let i = 0; i < TRACK_LEN; i++) {
             const g = TRACK_GRID[i];
-            const px = pad + (g.gx + 0.5) * cell;
-            const py = pad + (g.gy + 0.5) * cell;
-            const isStart = Object.values(SEAT_START_SPOTS).includes(i);
+            const dims = getCellDimensions(i);
+            const rx = pad + g.gx * cell;
+            const ry = pad + g.gy * cell;
+            const rw = dims.w * cell;
+            const rh = dims.h * cell;
+            const px = rx + rw * 0.5;
+            const py = ry + rh * 0.5;
+            const startColor = startColorBySpot[i];
 
-            if (STAR_SPOTS.has(i) && !isStart) {
+            if (startColor) {
+                ctx.fillStyle = startColor;
+                ctx.fillRect(rx, ry, rw, rh);
+            } else if (STAR_SPOTS.has(i)) {
                 ctx.fillStyle = "#b8b2b6";
-                ctx.fillRect(
-                    pad + g.gx * cell,
-                    pad + g.gy * cell,
-                    cell,
-                    cell
-                );
+                ctx.fillRect(rx, ry, rw, rh);
+            }
+
+            ctx.strokeStyle = "rgba(100, 116, 139, 0.5)";
+            ctx.lineWidth = 1;
+            ctx.strokeRect(rx, ry, rw, rh);
+
+            if (STAR_SPOTS.has(i) && !startColor) {
                 ctx.save();
                 ctx.beginPath();
-                const starR = Math.max(4.5, cell * 0.26);
+                const starR = Math.max(4.5, Math.min(rw, rh) * 0.3);
                 for (let s = 0; s < 10; s++) {
                     const r = s % 2 === 0 ? starR : starR * 0.44;
                     const ang = (s * Math.PI) / 5 - Math.PI / 2;
@@ -1450,31 +1568,25 @@ export default function ParchisGamePage() {
                 ctx.fill();
                 ctx.restore();
             } else {
-                ctx.fillStyle = isStart ? "#ffffff" : "#64748b";
-                ctx.font = `700 ${Math.max(7, Math.floor(cell * 0.28))}px sans-serif`;
+                ctx.fillStyle = startColor ? "#ffffff" : "#64748b";
+                ctx.font = `700 ${Math.max(6.5, Math.floor(Math.min(rw, rh) * 0.32))}px sans-serif`;
                 ctx.textAlign = "center";
                 ctx.textBaseline = "middle";
                 ctx.fillText(String(i + 1), px, py);
             }
         }
 
-        // Líneas de cuadrícula de las 68 casillas y pasillos
+        // Líneas de los pasillos de meta
         ctx.strokeStyle = "rgba(100, 116, 139, 0.45)";
         ctx.lineWidth = 1;
-        for (let r = 0; r < 15; r++) {
-            for (let c = 0; c < 15; c++) {
-                const inHome =
-                    (r < 6 && c < 6) ||
-                    (r < 6 && c > 8) ||
-                    (r > 8 && c > 8) ||
-                    (r > 8 && c < 6);
-                const inCenter = r >= 6 && r <= 8 && c >= 6 && c <= 8;
-                if (inHome || inCenter) continue;
-                ctx.strokeRect(pad + c * cell, pad + r * cell, cell, cell);
-            }
+        for (let k = 1; k <= 5; k++) {
+            ctx.strokeRect(pad + 7 * cell, pad + k * cell, cell, cell);
+            ctx.strokeRect(pad + (14 - k) * cell, pad + 7 * cell, cell, cell);
+            ctx.strokeRect(pad + 7 * cell, pad + (14 - k) * cell, cell, cell);
+            ctx.strokeRect(pad + k * cell, pad + 7 * cell, cell, cell);
         }
 
-        // 4 Casas en las esquinas (siempre con sus 4 colores vivos como en la foto)
+        // 4 Casas en las esquinas
         const homes = [
             { seat: 0, gx: 0, gy: 0 }, // Verde arriba izq
             { seat: 1, gx: 9, gy: 0 }, // Rojo arriba der
@@ -1494,7 +1606,6 @@ export default function ParchisGamePage() {
             ctx.lineWidth = 1.5;
             ctx.strokeRect(hx0, hy0, hSize, hSize);
 
-            // Borde interior redondeado suave de cada casa
             const inset = cell * 0.45;
             ctx.strokeStyle = "rgba(255,255,255,0.22)";
             ctx.lineWidth = 2;
@@ -1508,7 +1619,6 @@ export default function ParchisGamePage() {
             );
             ctx.stroke();
 
-            // Los 4 círculos hundidos donde reposan las fichas en casa
             const center = getSeatHomeCenter(h.seat);
             for (let pid = 0; pid < 4; pid++) {
                 const slot = getHomeSlotOffset(pid, cell);
@@ -1522,7 +1632,7 @@ export default function ParchisGamePage() {
             }
         }
 
-        // Centro dividido en 4 triángulos (Verde arriba, Rojo derecha, Azul abajo, Amarillo izquierda)
+        // Centro dividido en 4 triángulos
         const cLeft = pad + 6 * cell;
         const cTop = pad + 6 * cell;
         const cSize = cell * 3;
@@ -1595,7 +1705,6 @@ export default function ParchisGamePage() {
             ((state.dice_remaining?.length || 0) > 0 ||
                 (state.bonus_steps || 0) > 0);
 
-        // Dibujar las fichas con aro blanco y borde dorado como en la foto
         for (const p of players) {
             const pal = getSeatPalette(p.seat_index);
 
@@ -1631,13 +1740,11 @@ export default function ParchisGamePage() {
                 }
 
                 ctx.save();
-                // Sombra
                 ctx.beginPath();
                 ctx.arc(pt.x, pt.y + 2, radius, 0, Math.PI * 2);
                 ctx.fillStyle = "rgba(0,0,0,0.45)";
                 ctx.fill();
 
-                // Aro exterior dorado/amarillo claro
                 ctx.beginPath();
                 ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
                 ctx.fillStyle = "#fde047";
@@ -1646,20 +1753,17 @@ export default function ParchisGamePage() {
                 ctx.strokeStyle = "#713f12";
                 ctx.stroke();
 
-                // Cuerpo de color de la ficha
                 ctx.beginPath();
                 ctx.arc(pt.x, pt.y, radius * 0.82, 0, Math.PI * 2);
                 ctx.fillStyle = pal.main;
                 ctx.fill();
 
-                // Aro blanco interior
                 ctx.beginPath();
                 ctx.arc(pt.x, pt.y, radius * 0.56, 0, Math.PI * 2);
                 ctx.strokeStyle = "#ffffff";
                 ctx.lineWidth = 2.2;
                 ctx.stroke();
 
-                // Centro de color
                 ctx.beginPath();
                 ctx.arc(pt.x, pt.y, radius * 0.25, 0, Math.PI * 2);
                 ctx.fillStyle = "#ffffff";
@@ -2225,7 +2329,7 @@ export default function ParchisGamePage() {
                                     </div>
                                 )}
 
-                                {/* Rival arriba a la derecha (2 dados + avatar circular) */}
+                                {/* Rival arriba a la derecha */}
                                 <StarPlayerHud
                                     playerName={topName}
                                     palette={topPalette}
@@ -2272,7 +2376,7 @@ export default function ParchisGamePage() {
                                     </div>
                                 )}
 
-                                {/* Tablero central estilo madera + 68 casillas */}
+                                {/* Tablero central estilo madera + 68 casillas exactas */}
                                 <div className="w-full min-w-0 flex items-center justify-center overflow-hidden">
                                     <canvas
                                         ref={boardCanvasRef}
@@ -2285,7 +2389,7 @@ export default function ParchisGamePage() {
                                     />
                                 </div>
 
-                                {/* Tú abajo a la izquierda (avatar circular + 2 dados) */}
+                                {/* Tú abajo a la izquierda */}
                                 <StarPlayerHud
                                     playerName={bottomName}
                                     palette={bottomPalette}
