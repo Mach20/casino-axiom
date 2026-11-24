@@ -441,24 +441,41 @@ function StarStyleDie({
     rolling,
     used,
     dimmed,
+    selected,
+    selectable,
+    onSelect,
 }: {
     num: number;
     rolling: boolean;
     used?: boolean;
     dimmed?: boolean;
+    selected?: boolean;
+    selectable?: boolean;
+    onSelect?: () => void;
 }) {
     const face = clampDieFace(num, 4);
     const dots = PIP_COORDS[face] || PIP_COORDS[4];
+    const gradId = `die-bg-${face}-${used ? "u" : "a"}-${dimmed ? "d" : "l"}`;
 
     return (
-        <div
+        <button
+            type="button"
+            disabled={!selectable || rolling || used || dimmed}
+            onClick={(e) => {
+                e.stopPropagation();
+                if (selectable && !rolling && !used && !dimmed && onSelect) {
+                    onSelect();
+                }
+            }}
             className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl p-0.5 flex items-center justify-center shadow-md transition-all duration-150 ${
-                used || dimmed ? "opacity-40" : "opacity-100"
+                used || dimmed ? "opacity-40 cursor-default" : "opacity-100"
+            } ${selectable && !used && !dimmed ? "cursor-pointer hover:scale-105" : ""} ${
+                selected ? "ring-2 ring-amber-300 scale-105" : ""
             } ${rolling ? "rotate-12 scale-105" : "rotate-0 scale-100"}`}
         >
             <svg viewBox="0 0 100 100" className="w-full h-full block">
                 <defs>
-                    <linearGradient id="dieBg" x1="0" y1="0" x2="1" y2="1">
+                    <linearGradient id={gradId} x1="0" y1="0" x2="1" y2="1">
                         <stop offset="0%" stopColor={dimmed ? "#6b7280" : "#f8fafc"} />
                         <stop offset="100%" stopColor={dimmed ? "#4b5563" : "#cbd5e1"} />
                     </linearGradient>
@@ -469,9 +486,9 @@ function StarStyleDie({
                     width="94"
                     height="94"
                     rx="18"
-                    fill="url(#dieBg)"
-                    stroke={dimmed ? "#374151" : "#94a3b8"}
-                    strokeWidth="4"
+                    fill={`url(#${gradId})`}
+                    stroke={selected ? "#f59e0b" : dimmed ? "#374151" : "#94a3b8"}
+                    strokeWidth={selected ? "6" : "4"}
                 />
                 {dots.map(([cx, cy], idx) => (
                     <circle
@@ -483,7 +500,7 @@ function StarStyleDie({
                     />
                 ))}
             </svg>
-        </div>
+        </button>
     );
 }
 
@@ -493,6 +510,8 @@ function StarPlayerHud({
     palette,
     dicePair,
     diceRemaining,
+    selectedDieValue,
+    onSelectDie,
     rolling,
     isActiveTurn,
     canRoll,
@@ -504,6 +523,8 @@ function StarPlayerHud({
     palette: (typeof SEAT_PALETTE)[number];
     dicePair: [number, number];
     diceRemaining: number[];
+    selectedDieValue: number | null;
+    onSelectDie?: (dieVal: number) => void;
     rolling: boolean;
     isActiveTurn: boolean;
     canRoll: boolean;
@@ -535,6 +556,13 @@ function StarPlayerHud({
     }
     const die2Available = isActiveTurn && remCopy.includes(shownPair[1]);
 
+    const canPickDice =
+        position === "bottom" &&
+        isActiveTurn &&
+        !rolling &&
+        !isMovingPiece &&
+        diceRemaining.length > 0;
+
     const avatarCircle = (
         <div
             className="w-12 h-12 sm:w-14 sm:h-14 rounded-full p-0.5 shadow-lg flex items-center justify-center shrink-0"
@@ -558,10 +586,25 @@ function StarPlayerHud({
     );
 
     const diceTray = (
-        <button
-            type="button"
-            disabled={!canRoll || rolling || isMovingPiece}
-            onClick={onRoll}
+        <div
+            role={canRoll && !rolling && !isMovingPiece ? "button" : undefined}
+            tabIndex={canRoll && !rolling && !isMovingPiece ? 0 : -1}
+            onClick={() => {
+                if (canRoll && !rolling && !isMovingPiece) {
+                    onRoll();
+                }
+            }}
+            onKeyDown={(e) => {
+                if (
+                    (e.key === "Enter" || e.key === " ") &&
+                    canRoll &&
+                    !rolling &&
+                    !isMovingPiece
+                ) {
+                    e.preventDefault();
+                    onRoll();
+                }
+            }}
             style={{
                 backgroundColor: palette.trayBg,
                 borderColor: isActiveTurn ? palette.trayBorder : "#3f3f46",
@@ -577,14 +620,20 @@ function StarPlayerHud({
                 rolling={rolling}
                 used={isActiveTurn && !rolling && diceRemaining.length > 0 && !die1Available}
                 dimmed={!isActiveTurn}
+                selectable={canPickDice}
+                selected={canPickDice && die1Available && selectedDieValue === shownPair[0]}
+                onSelect={() => onSelectDie?.(shownPair[0])}
             />
             <StarStyleDie
                 num={shownPair[1]}
                 rolling={rolling}
                 used={isActiveTurn && !rolling && diceRemaining.length > 0 && !die2Available}
                 dimmed={!isActiveTurn}
+                selectable={canPickDice}
+                selected={canPickDice && die2Available && selectedDieValue === shownPair[1]}
+                onSelect={() => onSelectDie?.(shownPair[1])}
             />
-        </button>
+        </div>
     );
 
     // En la foto: el rival arriba tiene [2 dados] [Avatar] a la derecha y su nombre debajo
@@ -653,6 +702,7 @@ export default function ParchisGamePage() {
     );
     const [gameState, setGameState] = useState<ParchisState | null>(null);
     const [lastPairShown, setLastPairShown] = useState<[number, number]>([4, 6]);
+    const [selectedDieValue, setSelectedDieValue] = useState<number | null>(null);
     const [pendingChoicePieceId, setPendingChoicePieceId] = useState<number | null>(null);
     const [busyAction, setBusyAction] = useState(false);
     const [rollingDice, setRollingDice] = useState(false);
@@ -669,6 +719,7 @@ export default function ParchisGamePage() {
     const boardCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const gameStateRef = useRef<ParchisState | null>(null);
     const userIdRef = useRef<string | null>(null);
+    const selectedDieValueRef = useRef<number | null>(null);
     const socketRef = useRef<WebSocket | null>(null);
     const closingByUserRef = useRef(false);
     const stepAnimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -682,6 +733,10 @@ export default function ParchisGamePage() {
         userIdRef.current = userId;
     }, [userId]);
 
+    useEffect(() => {
+        selectedDieValueRef.current = selectedDieValue;
+    }, [selectedDieValue]);
+
     const clearAllTimers = useCallback(() => {
         if (stepAnimTimerRef.current) {
             clearTimeout(stepAnimTimerRef.current);
@@ -690,6 +745,7 @@ export default function ParchisGamePage() {
         animatedPieceRef.current = null;
         setIsMovingPiece(false);
         setPendingChoicePieceId(null);
+        setSelectedDieValue(null);
     }, []);
 
     const showAlert = useCallback((title: string, message: string) => {
@@ -942,6 +998,13 @@ export default function ParchisGamePage() {
             setIsMovingPiece(false);
             setRollingDice(false);
             setPendingChoicePieceId(null);
+
+            const rem = Array.isArray(nextState.dice_remaining)
+                ? nextState.dice_remaining
+                : [];
+            setSelectedDieValue((prev) =>
+                prev !== null && rem.includes(prev) ? prev : null
+            );
 
             gameStateRef.current = nextState;
             setGameState(nextState);
@@ -1205,6 +1268,7 @@ export default function ParchisGamePage() {
         if (isMovingPiece) return;
         const ws = socketRef.current || activeSocket;
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        setSelectedDieValue(null);
         setRollingDice(true);
         ws.send(JSON.stringify({ type: "ROLL_DICE" }));
     };
@@ -1544,13 +1608,14 @@ export default function ParchisGamePage() {
                         : piece;
 
                 const pt = getPieceBoardPoint(animOverride, p.seat_index, size);
-                const options = isMyTurnNow && p.user_id === currentUid
-                    ? getMovableOptionsForPiece(
-                          piece,
-                          state.dice_remaining,
-                          state.bonus_steps || 0
-                      )
-                    : [];
+                const options =
+                    isMyTurnNow && p.user_id === currentUid
+                        ? getMovableOptionsForPiece(
+                              piece,
+                              state.dice_remaining,
+                              state.bonus_steps || 0
+                          )
+                        : [];
                 const movable = options.length > 0;
                 const radius = Math.max(9.5, cell * 0.42);
 
@@ -1695,6 +1760,16 @@ export default function ParchisGamePage() {
             state.dice_remaining,
             state.bonus_steps || 0
         );
+
+        const pickedDie = selectedDieValueRef.current;
+        if (
+            (state.bonus_steps || 0) === 0 &&
+            pickedDie !== null &&
+            options.includes(pickedDie)
+        ) {
+            sendMovePiece(closestPiece.id, pickedDie);
+            return;
+        }
 
         if (options.length === 1) {
             sendMovePiece(closestPiece.id, options[0]);
@@ -2158,6 +2233,7 @@ export default function ParchisGamePage() {
                                     diceRemaining={
                                         topIsTurn ? activeDiceRemaining : []
                                     }
+                                    selectedDieValue={null}
                                     rolling={rollingDice && topIsTurn}
                                     isActiveTurn={topIsTurn}
                                     canRoll={false}
@@ -2216,6 +2292,12 @@ export default function ParchisGamePage() {
                                     dicePair={lastPairShown}
                                     diceRemaining={
                                         bottomIsTurn ? activeDiceRemaining : []
+                                    }
+                                    selectedDieValue={selectedDieValue}
+                                    onSelectDie={(dieVal) =>
+                                        setSelectedDieValue((prev) =>
+                                            prev === dieVal ? null : dieVal
+                                        )
                                     }
                                     rolling={rollingDice && bottomIsTurn}
                                     isActiveTurn={bottomIsTurn}

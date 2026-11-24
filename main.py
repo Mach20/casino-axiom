@@ -2687,7 +2687,6 @@ def _normalize_parchis_bet(bet: float) -> float | None:
 
 def _parchis_seat_order_for_max_players(max_players: int) -> tuple[int, ...]:
     # En 2 jugadores van en esquinas opuestas: 0 (Verde arriba izq) y 2 (Azul abajo der)
-    # O si prefieres Verde (0) vs Rojo (1) o Amarillo (3) vs Rojo (1), aquí usamos 0 y 2
     if max_players == 2:
         return (0, 2)
     if max_players == 3:
@@ -2733,6 +2732,8 @@ async def _parchis_broadcast(room: dict):
     commission_total = (gross_pot * PARCHIS_COMMISSION_RATE).quantize(Decimal("0.01"))
     net_pot = max(Decimal("0.00"), gross_pot - commission_total).quantize(Decimal("0.01"))
 
+    rem_list = list(room.get("dice_remaining") or [])
+
     payload = {
         "type": "PARCHIS_STATE",
         "room_id": room["room_id"],
@@ -2745,9 +2746,9 @@ async def _parchis_broadcast(room: dict):
         "room_code": room["room_code"] if room["is_private"] else None,
         "status": room["status"],
         "turn_seat": room["turn_seat"],
-        "dice": sum(room.get("dice_remaining") or []) if room.get("dice_remaining") else None,
+        "dice": sum(rem_list) if rem_list else None,
         "dice_pair": room.get("dice_pair"),
-        "dice_remaining": room.get("dice_remaining", []),
+        "dice_remaining": rem_list,
         "bonus_steps": room.get("bonus_steps", 0),
         "double_count": room.get("double_count", 0),
         "penalty_pending": room.get("penalty_pending", False),
@@ -2835,7 +2836,7 @@ def _parchis_next_turn(room: dict, current_seat: int):
     if room.get("extra_turn"):
         room["turn_seat"] = current_seat
         room["extra_turn"] = False
-        room["last_event"] += " ¡Par! Tiras de nuevo."
+        room["last_event"] = (room.get("last_event") or "") + " ¡Par! Tiras de nuevo."
         return
     room["double_count"] = 0
     try:
@@ -3435,7 +3436,7 @@ async def parchis_ws_endpoint(
                     await _parchis_broadcast(room)
 
                 elif msg_type == "MOVE_PIECE":
-                    dice_remaining = room.get("dice_remaining") or []
+                    dice_remaining = list(room.get("dice_remaining") or [])
                     bonus_steps = int(room.get("bonus_steps") or 0)
                     if not room["must_move"] or (not dice_remaining and bonus_steps <= 0):
                         await send_error(websocket, "Primero lanza los dados.")
@@ -3463,15 +3464,18 @@ async def parchis_ws_endpoint(
                             await send_error(websocket, status_code)
                             continue
                         room["bonus_steps"] = new_bonus
-                    else:
-                        # Caso 2: Sacar ficha sumando ambos dados = 5 (ej. 1+4 o 2+3)
-                        use_pair_sum_five = (
-                            piece.get("stage", -1) == -1
-                            and 5 not in dice_remaining
-                            and _parchis_can_exit_with_pair_sum(dice_remaining)
-                        )
 
-                        if use_pair_sum_five:
+                    # Caso 2: Ficha en casa (-1) -> saca con 5 suelto (dejando el otro dado intacto) o suma de par == 5
+                    elif piece.get("stage", -1) == -1:
+                        if 5 in dice_remaining:
+                            ok, status_code, new_bonus = _parchis_apply_move(room, user_id, piece_id, 5, False)
+                            if not ok:
+                                await send_error(websocket, status_code)
+                                continue
+                            dice_remaining.remove(5)
+                            room["dice_remaining"] = dice_remaining
+                            room["bonus_steps"] = new_bonus
+                        elif _parchis_can_exit_with_pair_sum(dice_remaining):
                             ok, status_code, new_bonus = _parchis_apply_move(room, user_id, piece_id, 5, True)
                             if not ok:
                                 await send_error(websocket, status_code)
@@ -3479,20 +3483,30 @@ async def parchis_ws_endpoint(
                             room["dice_remaining"] = []
                             room["bonus_steps"] = new_bonus
                         else:
-                            chosen_die = raw_die if (raw_die in dice_remaining and _parchis_can_move_piece(piece, raw_die, dice_remaining)) else next(
+                            await send_error(websocket, "Necesitas un 5 o suma de 5 para sacar ficha.")
+                            continue
+
+                    # Caso 3: Ficha ya en juego -> usa un dado independiente a la vez
+                    else:
+                        chosen_die = (
+                            raw_die
+                            if (raw_die in dice_remaining and _parchis_can_move_piece(piece, raw_die, dice_remaining))
+                            else next(
                                 (d for d in dice_remaining if _parchis_can_move_piece(piece, d, dice_remaining)),
                                 0,
                             )
-                            if chosen_die not in dice_remaining:
-                                await send_error(websocket, "Movimiento no válido con los dados actuales.")
-                                continue
+                        )
+                        if chosen_die not in dice_remaining:
+                            await send_error(websocket, "Movimiento no válido con los dados actuales.")
+                            continue
 
-                            ok, status_code, new_bonus = _parchis_apply_move(room, user_id, piece_id, chosen_die, False)
-                            if not ok:
-                                await send_error(websocket, status_code)
-                                continue
-                            room["dice_remaining"].remove(chosen_die)
-                            room["bonus_steps"] = new_bonus
+                        ok, status_code, new_bonus = _parchis_apply_move(room, user_id, piece_id, chosen_die, False)
+                        if not ok:
+                            await send_error(websocket, status_code)
+                            continue
+                        dice_remaining.remove(chosen_die)
+                        room["dice_remaining"] = dice_remaining
+                        room["bonus_steps"] = new_bonus
 
                     try:
                         supabase.table("parchis_players").update({
@@ -3504,8 +3518,9 @@ async def parchis_ws_endpoint(
                     if status_code == "WIN":
                         await _parchis_settle_winners(room, room["winners"])
                     else:
-                        rem_dice = room.get("dice_remaining") or []
+                        rem_dice = list(room.get("dice_remaining") or [])
                         rem_bonus = int(room.get("bonus_steps") or 0)
+
                         if rem_bonus > 0 and not _parchis_has_any_move(actor["pieces"], [], rem_bonus):
                             room["bonus_steps"] = 0
                             rem_bonus = 0
@@ -3522,15 +3537,26 @@ async def parchis_ws_endpoint(
                     await _parchis_broadcast(room)
 
     except WebSocketDisconnect:
-        pass
-    except Exception as exc:
-        print(f"ERROR WebSocket Parchís {room_id}: {exc!r}")
-    finally:
         async with lock:
             p = room["players"].get(user_id)
-            if p and p.get("websocket") is websocket:
+            if p:
                 p["connected"] = False
                 p["websocket"] = None
+                try:
+                    supabase.table("parchis_players").update({
+                        "is_connected": False,
+                    }).eq("match_id", room["room_id"]).eq("user_id", user_id).execute()
+                except Exception:
+                    pass
+            await _parchis_broadcast(room)
+    except Exception as exc:
+        print(f"ERROR WS parchis {room['room_id']} user {user_id}: {exc!r}")
+        async with lock:
+            p = room["players"].get(user_id)
+            if p:
+                p["connected"] = False
+                p["websocket"] = None
+            await _parchis_broadcast(room)
 
 # ============================================================
 # ADMINISTRADOR AXIOM - NUEVO PANEL
