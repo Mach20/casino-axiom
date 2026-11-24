@@ -2649,7 +2649,7 @@ async def snake_game_endpoint(
 
 
 # ============================================================
-# PARCHÍS: CONFIGURACIÓN Y LÓGICA
+# PARCHÍS: CONFIGURACIÓN Y LÓGICA (1 DADO + SALIDA 5 / AVANCE N+1)
 # ============================================================
 
 PARCHIS_BETS = (0.25, 1.00, 10.00)
@@ -2682,7 +2682,6 @@ def _normalize_parchis_bet(bet: float) -> float | None:
 
 
 def _parchis_seat_order_for_max_players(max_players: int) -> tuple[int, ...]:
-    # En 2 jugadores van en esquinas opuestas: 0 (Verde) y 2 (Azul)
     if max_players == 2:
         return (0, 2)
     if max_players == 3:
@@ -2731,6 +2730,10 @@ async def _parchis_broadcast(room: dict):
     commission_total = (gross_pot * PARCHIS_COMMISSION_RATE).quantize(Decimal("0.01"))
     net_pot = max(Decimal("0.00"), gross_pot - commission_total).quantize(Decimal("0.01"))
 
+    rem = room.get("dice_remaining") or []
+    cur_die = room.get("dice")
+    shown_die = cur_die if cur_die is not None else (rem[0] if rem else None)
+
     payload = {
         "type": "PARCHIS_STATE",
         "room_id": room["room_id"],
@@ -2741,9 +2744,9 @@ async def _parchis_broadcast(room: dict):
         "room_code": room["room_code"] if room["is_private"] else None,
         "status": room["status"],
         "turn_seat": room["turn_seat"],
-        "dice": sum(room.get("dice_remaining") or []) if room.get("dice_remaining") else None,
-        "dice_pair": room.get("dice_pair"),
-        "dice_remaining": room.get("dice_remaining", []),
+        "dice": shown_die,
+        "dice_pair": [shown_die] if shown_die is not None else None,
+        "dice_remaining": rem,
         "double_count": room.get("double_count", 0),
         "penalty_pending": room.get("penalty_pending", False),
         "must_move": room["must_move"],
@@ -2778,41 +2781,38 @@ async def _parchis_broadcast(room: dict):
                 pass
 
 
-def _parchis_can_exit_with_pair_sum(dice_values: list[int]) -> bool:
-    return len(dice_values) == 2 and sum(dice_values) == 5
+def _parchis_steps_for_die(dice: int, is_exiting_home: bool) -> int:
+    if not isinstance(dice, int) or dice < 1 or dice > 6:
+        return 0
+    if is_exiting_home:
+        return 1 if dice == 5 else 0
+    return dice + 1
 
 
-def _parchis_can_move_piece(
-    piece: dict,
-    dice: int,
-    dice_values: list[int] | None = None,
-) -> bool:
+def _parchis_can_move_piece(piece: dict, dice: int) -> bool:
     if not isinstance(dice, int) or dice < 1 or dice > 6:
         return False
 
     stage = piece.get("stage", -1)
     if stage == -1:
-        if dice == 5:
-            return True
-        if dice_values and _parchis_can_exit_with_pair_sum(dice_values):
-            return True
+        return dice == 5
+
+    steps = _parchis_steps_for_die(dice, False)
+    if steps <= 0:
         return False
+
     if stage == 0:
-        return piece.get("steps_walked", 0) + dice <= (
+        return piece.get("steps_walked", 0) + steps <= (
             63 + PARCHIS_HOME_STRETCH_LEN - 1
         )
     if stage == 100:
-        return piece.get("pos", 0) + dice < PARCHIS_HOME_STRETCH_LEN
+        return piece.get("pos", 0) + steps < PARCHIS_HOME_STRETCH_LEN
     return False
 
 
 def _parchis_has_any_move(pieces: list[dict], dice_values: list[int]) -> bool:
-    if _parchis_can_exit_with_pair_sum(dice_values) and any(
-        pc.get("stage", -1) == -1 for pc in pieces
-    ):
-        return True
     return any(
-        _parchis_can_move_piece(piece, die, dice_values)
+        _parchis_can_move_piece(piece, die)
         for piece in pieces
         for die in dice_values
     )
@@ -2827,7 +2827,7 @@ def _parchis_next_turn(room: dict, current_seat: int):
     if room.get("extra_turn"):
         room["turn_seat"] = current_seat
         room["extra_turn"] = False
-        room["last_event"] += " Doble: vuelves a lanzar."
+        room["last_event"] += " Sacaste 6: vuelves a lanzar."
         return
     try:
         cur_idx = seats_sorted.index(current_seat)
@@ -2841,7 +2841,6 @@ def _parchis_apply_move(
     actor_uid: str,
     piece_id: int,
     dice: int,
-    use_pair_sum_five: bool = False,
 ) -> tuple[bool, str]:
     actor = room["players"].get(actor_uid)
     if not actor:
@@ -2859,21 +2858,18 @@ def _parchis_apply_move(
     captured_msg = ""
 
     if piece["stage"] == -1:
-        if not use_pair_sum_five and dice != 5:
-            return False, "Necesitas un 5 o una suma de 5 para sacar ficha."
+        if dice != 5:
+            return False, "Para sacar ficha de casa el dado debe ser 5."
         piece["stage"] = 0
         piece["pos"] = start_spot
         piece["steps_walked"] = 0
-        captured_msg = (
-            f"Asiento {seat + 1} sacó ficha con suma 5."
-            if use_pair_sum_five
-            else f"Asiento {seat + 1} sacó ficha con el 5."
-        )
+        captured_msg = f"Asiento {seat + 1} sacó ficha con el 5."
     else:
         if not _parchis_can_move_piece(piece, dice):
             return False, "Movimiento no válido para esa ficha y ese dado."
+        steps = _parchis_steps_for_die(dice, False)
         if piece["stage"] == 0:
-            new_walked = piece["steps_walked"] + dice
+            new_walked = piece["steps_walked"] + steps
             piece["steps_walked"] = new_walked
             if new_walked >= 63:
                 piece["stage"] = 100
@@ -2881,7 +2877,7 @@ def _parchis_apply_move(
             else:
                 piece["pos"] = (start_spot + new_walked) % PARCHIS_TRACK_LEN
         elif piece["stage"] == 100:
-            piece["pos"] += dice
+            piece["pos"] += steps
 
         if piece["stage"] == 0 and piece["pos"] not in PARCHIS_SAFE_SPOTS:
             for other_uid, other_p in room["players"].items():
@@ -2901,6 +2897,8 @@ def _parchis_apply_move(
                             f"¡Asiento {seat + 1} capturó una ficha "
                             f"del asiento {other_p['seat_index'] + 1}!"
                         )
+
+        captured_msg = captured_msg or f"Asiento {seat + 1} avanzó {steps} (dado {dice})."
 
     winner_uids: list[str] = []
     if room["team_mode"] == "2v2":
@@ -2924,10 +2922,7 @@ def _parchis_apply_move(
     ):
         winner_uids = [actor_uid]
 
-    room["last_event"] = (
-        captured_msg
-        or f"Asiento {seat + 1} avanzó {dice}."
-    )
+    room["last_event"] = captured_msg
 
     if winner_uids:
         room["status"] = "finished"
@@ -3329,22 +3324,20 @@ async def parchis_ws_endpoint(
                     if room["must_move"]:
                         await send_error(
                             websocket,
-                            "Debes usar los dados disponibles antes de volver a lanzar.",
+                            "Debes usar el dado disponible antes de volver a lanzar.",
                         )
                         continue
 
-                    die_one = random.randint(1, 6)
-                    die_two = random.randint(1, 6)
-                    room["dice_pair"] = [die_one, die_two]
-                    room["dice_remaining"] = [die_one, die_two]
-                    room["dice"] = die_one + die_two
-                    room["extra_turn"] = die_one == die_two
-                    if die_one == die_two:
+                    die = random.randint(1, 6)
+                    room["dice"] = die
+                    room["dice_pair"] = [die]
+                    room["dice_remaining"] = [die]
+                    room["extra_turn"] = die == 6
+                    if die == 6:
                         room["double_count"] = room.get("double_count", 0) + 1
                     else:
                         room["double_count"] = 0
 
-                    # 3 oportunidades de par; al 4.º par consecutivo regresa ficha a casa
                     if room["double_count"] >= 4:
                         active_pieces = [
                             pc for pc in actor["pieces"]
@@ -3360,7 +3353,7 @@ async def parchis_ws_endpoint(
                             only_pc = active_pieces[0]
                             only_pc.update({"stage": -1, "pos": -1, "steps_walked": 0})
                             room["penalty_pending"] = False
-                            room["last_event"] = "¡Cuarto par seguido! Tu ficha regresó al inicio."
+                            room["last_event"] = "¡Cuarto 6 seguido! Tu ficha regresó al inicio."
                             try:
                                 supabase.table("parchis_players").update({"pieces_json": actor["pieces"]}).eq("match_id", room["room_id"]).eq("user_id", user_id).execute()
                             except Exception:
@@ -3368,10 +3361,10 @@ async def parchis_ws_endpoint(
                             _parchis_next_turn(room, actor["seat_index"])
                         elif len(active_pieces) > 1:
                             room["penalty_pending"] = True
-                            room["last_event"] = "¡Cuarto par seguido! Elige una ficha para regresarla al inicio."
+                            room["last_event"] = "¡Cuarto 6 seguido! Elige una ficha para regresarla al inicio."
                         else:
                             room["penalty_pending"] = False
-                            room["last_event"] = "¡Cuarto par seguido! Pierdes el turno."
+                            room["last_event"] = "¡Cuarto 6 seguido! Pierdes el turno."
                             _parchis_next_turn(room, actor["seat_index"])
 
                         await _parchis_broadcast(room)
@@ -3385,8 +3378,7 @@ async def parchis_ws_endpoint(
                     if not has_valid:
                         room["must_move"] = False
                         room["last_event"] = (
-                            f"Asiento {actor['seat_index'] + 1} sacó "
-                            f"{die_one} y {die_two}; no tiene movimientos."
+                            f"Asiento {actor['seat_index'] + 1} sacó {die}; no tiene movimientos."
                         )
                         room["dice_remaining"] = []
                         room["dice"] = None
@@ -3394,8 +3386,7 @@ async def parchis_ws_endpoint(
                     else:
                         room["must_move"] = True
                         room["last_event"] = (
-                            f"Asiento {actor['seat_index'] + 1} sacó "
-                            f"{die_one} y {die_two}."
+                            f"Asiento {actor['seat_index'] + 1} sacó {die}."
                         )
 
                     await _parchis_broadcast(room)
@@ -3419,7 +3410,7 @@ async def parchis_ws_endpoint(
                     room["must_move"] = False
                     room["dice_remaining"] = []
                     room["dice"] = None
-                    room["last_event"] = f"La ficha {penalty_piece_id + 1} regresó al inicio por cuarto par."
+                    room["last_event"] = f"La ficha {penalty_piece_id + 1} regresó al inicio por cuarto 6."
                     try:
                         supabase.table("parchis_players").update({"pieces_json": actor["pieces"]}).eq("match_id", room["room_id"]).eq("user_id", user_id).execute()
                     except Exception:
@@ -3430,16 +3421,13 @@ async def parchis_ws_endpoint(
                 elif msg_type == "MOVE_PIECE":
                     dice_remaining = room.get("dice_remaining") or []
                     if not room["must_move"] or not dice_remaining:
-                        await send_error(websocket, "Primero lanza los dados.")
+                        await send_error(websocket, "Primero lanza el dado.")
                         continue
 
                     try:
                         piece_id = int(data.get("piece_id", -1))
-                        raw_die = data.get("dice_value", data.get("steps_moved", 0))
-                        requested_die = int(raw_die)
-                        raw_used = data.get("used_dice_values")
                     except (TypeError, ValueError):
-                        await send_error(websocket, "Ficha o dado inválido.")
+                        await send_error(websocket, "Ficha inválida.")
                         continue
 
                     piece = next(
@@ -3450,53 +3438,27 @@ async def parchis_ws_endpoint(
                         await send_error(websocket, "Ficha no encontrada.")
                         continue
 
-                    use_pair_sum_five = (
-                        piece.get("stage", -1) == -1
-                        and requested_die == 5
-                        and 5 not in dice_remaining
-                        and _parchis_can_exit_with_pair_sum(dice_remaining)
-                    )
-
-                    if not use_pair_sum_five:
-                        if requested_die not in dice_remaining:
-                            requested_die = next(
-                                (
-                                    die for die in dice_remaining
-                                    if _parchis_can_move_piece(piece, die, dice_remaining)
-                                ),
-                                0,
-                            )
-
-                        if requested_die not in dice_remaining:
-                            await send_error(
-                                websocket,
-                                "Ese dado ya fue utilizado o no permite ese movimiento.",
-                            )
-                            continue
+                    active_die = int(dice_remaining[0])
+                    if not _parchis_can_move_piece(piece, active_die):
+                        await send_error(
+                            websocket,
+                            "Ese movimiento no es válido con el dado actual.",
+                        )
+                        continue
 
                     ok, status_code = _parchis_apply_move(
                         room,
                         user_id,
                         piece_id,
-                        requested_die,
-                        use_pair_sum_five=use_pair_sum_five,
+                        active_die,
                     )
                     if not ok:
                         await send_error(websocket, status_code)
                         continue
 
-                    if use_pair_sum_five:
-                        room["dice_remaining"] = []
-                    elif (
-                        isinstance(raw_used, list)
-                        and len(raw_used) == 2
-                        and sum(int(x) for x in raw_used) == 5
-                        and piece.get("stage", -1) == 0
-                        and piece.get("steps_walked", 0) == 0
-                    ):
-                        room["dice_remaining"] = []
-                    else:
-                        room["dice_remaining"].remove(requested_die)
+                    room["dice_remaining"] = []
+                    room["dice"] = None
+                    room["must_move"] = False
 
                     try:
                         supabase.table("parchis_players").update({
@@ -3506,20 +3468,11 @@ async def parchis_ws_endpoint(
                         pass
 
                     if status_code == "WIN":
-                        await _parchis_settle_winners(room, room["winners"])
-                    else:
-                        remaining = room.get("dice_remaining") or []
-                        if remaining and _parchis_has_any_move(
-                            actor["pieces"],
-                            remaining,
-                        ):
-                            room["must_move"] = True
-                        else:
-                            room["must_move"] = False
-                            room["dice_remaining"] = []
-                            room["dice"] = None
-                            _parchis_next_turn(room, actor["seat_index"])
+                        await _parchis_settle_winners(room, room.get("winners", []))
+                        await _parchis_broadcast(room)
+                        continue
 
+                    _parchis_next_turn(room, actor["seat_index"])
                     await _parchis_broadcast(room)
 
     except WebSocketDisconnect:
