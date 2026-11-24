@@ -1,113 +1,196 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { supabase } from "../lib/supabase";
 import Header from "../components/Header";
 
 type Wallet = "play" | "bonus";
-type Bet = 0.25 | 1 | 10;
 type Piece = { id: number; stage: number; pos: number; steps_walked: number };
 type Player = { user_id: string; player_name?: string; seat_index: number; team: string | null; wallet: Wallet; connected: boolean; pieces: Piece[] };
-type Game = { type: string; room_id: string; bet: number; max_players: number; team_mode: string; is_private: boolean; room_code?: string | null; status: string; turn_seat: number; turn_deadline?: number | null; turn_seconds?: number; turn_seconds_remaining?: number; dice: number | null; dice_pair?: number[] | null; dice_remaining?: number[]; must_move: boolean; penalty_pending?: boolean; pot_total: number; net_pot?: number; commission_total?: number; winners: string[]; last_event: string; players: Player[] };
-type Room = { room_id: string; bet: number; max_players: number; players_count: number; team_mode: string; host_name?: string };
-type Profile = { first_name: string | null; balance: number | null; bonus_balance: number | null; doc_number?: string | null };
+type GameState = { type: string; room_id: string; bet: number; max_players: number; team_mode: string; is_private: boolean; room_code: string | null; status: string; turn_seat: number; turn_seconds: number; dice: number | null; dice_pair: number[] | null; dice_remaining: number[]; double_count: number; penalty_pending: boolean; must_move: boolean; pot_total: number; net_pot: number; commission_total: number; winners: string[]; last_event: string; players: Player[] };
+type Room = { room_id: string; bet: number; max_players: number; players_count: number; team_mode: string; is_private: boolean };
+type Seat = { color: string; dark: string; light: string; label: string };
 
 const API = (process.env.NEXT_PUBLIC_API_URL || "https://casino-axiom.ethiodeploy.app").replace(/\/$/, "");
-const COLORS = ["#d94a45", "#e5b83f", "#3c9b70", "#477fc0"];
-const NAMES = ["ROJO", "AMARILLO", "VERDE", "AZUL"];
+const BETS = [0.25, 1, 10];
+const SEATS: Seat[] = [
+    { color: "#18a66a", dark: "#075b3a", light: "#a7f3d0", label: "VERDE" },
+    { color: "#e34455", dark: "#8e1729", light: "#fecdd3", label: "ROJO" },
+    { color: "#3478df", dark: "#173d83", light: "#bfdbfe", label: "AZUL" },
+    { color: "#e9b52d", dark: "#93620a", light: "#fef3a6", label: "AMARILLO" },
+];
+const TRACK: [number, number][] = [
+    ...Array.from({ length: 17 }, (_, i): [number, number] => [i + 1, 0]),
+    ...Array.from({ length: 17 }, (_, i): [number, number] => [18, i + 1]),
+    ...Array.from({ length: 17 }, (_, i): [number, number] => [17 - i, 18]),
+    ...Array.from({ length: 17 }, (_, i): [number, number] => [0, 17 - i]),
+];
+const STARTS = [5, 22, 39, 56];
 const SAFE = new Set([0, 5, 12, 17, 22, 29, 34, 39, 46, 51, 56, 63]);
-const START = [5, 22, 39, 56];
-const BETS: Bet[] = [0.25, 1, 10];
 const money = (n: number) => `$${Number(n || 0).toFixed(2)}`;
+const seatOf = (state: GameState | null, uid: string | null) => state?.players?.find(p => p.user_id === uid)?.seat_index ?? -1;
 
-// Circuito perimetral de 68 casillas, generado como coordenadas únicas.
-const TRACK: [number, number][] = (() => {
-    const points: [number, number][] = [];
-    // Anillo de 18 x 18: 18 + 17 + 17 + 16 = 68 casillas distintas.
-    for (let x = 0; x <= 17; x++) points.push([x, 0]);
-    for (let y = 1; y <= 17; y++) points.push([17, y]);
-    for (let x = 16; x >= 0; x--) points.push([x, 17]);
-    for (let y = 16; y >= 1; y--) points.push([0, y]);
-    return points;
-})();;
-
-function Board({ game, me, onMove, onPenalty, busy }: { game: Game; me: string; onMove: (piece: Piece, die: number) => void; onPenalty: (id: number) => void; busy: boolean }) {
-    const mine = game.players.find(p => p.user_id === me);
-    const active = !!mine && mine.seat_index === game.turn_seat;
-    const [selectedDie, setSelectedDie] = useState<number | null>(null);
-    useEffect(() => setSelectedDie(null), [game.dice_pair, game.turn_seat, game.dice_remaining]);
-    const cells = useMemo(() => TRACK, []);
-    const piecesAt = (idx: number) => game.players.flatMap(p => p.pieces.filter(x => x.stage === 0 && x.pos === idx).map(x => ({ p, x })));
-    const lane = (seat: number, i: number): [number, number] => {
-        const t = i / 7;
-        if (seat === 0) return [7, 1 + t * 5];
-        if (seat === 1) return [13 - t * 5, 7];
-        if (seat === 2) return [7, 13 - t * 5];
-        return [1 + t * 5, 7];
-    };
-    const piecePosition = (p: Player, piece: Piece): [number, number] => {
-        if (piece.stage === -1) {
-            const base = [[2.8, 2.8], [11.2, 2.8], [11.2, 11.2], [2.8, 11.2]][p.seat_index] as [number, number];
-            return [base[0] + (piece.id % 2) * 1.05 - .5, base[1] + Math.floor(piece.id / 2) * 1.05 - .5];
-        }
-        if (piece.stage === 100) return lane(p.seat_index, Math.min(7, piece.pos));
-        const index = ((START[p.seat_index] + piece.steps_walked) % 68 + 68) % 68;
-        return cells[index];
-    };
-    const canSelect = (p: Player, piece: Piece) => active && p.user_id === me && game.must_move && !busy && (game.dice_remaining || []).length > 0 && piece.stage !== 2;
-    return <div className="board-shell"><div className="board" role="img" aria-label="Tablero de Parchís">
-        <div className="board-center"><div className="center-diamond"><span>AXIOM</span><small>PARCHÍS</small></div></div>
-        {([0, 1, 2, 3] as const).map(s => <div key={s} className={`home home-${s}`} style={{ background: `${COLORS[s]}20`, borderColor: `${COLORS[s]}90` }}><div className="home-label" style={{ color: COLORS[s] }}>{NAMES[s]}</div><div className="home-holes">{[0, 1, 2, 3].map(i => <span key={i} style={{ borderColor: COLORS[s], background: `${COLORS[s]}18` }} />)}</div></div>)}
-        {cells.map(([x, y], i) => <div key={`c${i}`} className={`track-cell ${SAFE.has(i) ? "safe" : ""} ${START.includes(i) ? "start" : ""}`} style={{ left: `${(x / 17) * 100}%`, top: `${(y / 17) * 100}%` }}>{SAFE.has(i) ? <span>✦</span> : null}</div>)}
-        {game.players.flatMap(p => p.pieces.map(piece => {
-            const [x, y] = piecePosition(p, piece);
-            const clickable = canSelect(p, piece);
-            return <button key={`${p.user_id}-${piece.id}`} aria-label={`Ficha ${piece.id + 1} ${NAMES[p.seat_index]}`} disabled={!clickable && !(game.penalty_pending && active && p.user_id === me && piece.stage !== -1)} onClick={() => game.penalty_pending ? onPenalty(piece.id) : onMove(piece, piece.stage === -1 && (game.dice_pair || []).length === 2 && (game.dice_pair || [0, 0]).reduce((a, b) => a + b, 0) === 5 && !(game.dice_remaining || []).includes(5) ? 5 : (selectedDie ?? (game.dice_remaining || [])[0]))} className={`piece ${clickable ? "piece-ready" : ""}`} style={{ left: `${(x / 17) * 100}%`, top: `${(y / 17) * 100}%`, background: `radial-gradient(circle at 32% 28%, #fff9, ${COLORS[p.seat_index]} 42%, #111 115%)`, borderColor: "#ffffffd0", zIndex: 10 + piece.id }} />;
-        }))}
-    </div>
-        {active && game.dice_pair && <div className="dice-select">{game.dice_pair.map((d, i) => <button key={i} className={`die ${game.dice_remaining?.includes(d) ? "die-live" : "die-used"} ${selectedDie === d ? "die-picked" : ""}`} onClick={() => setSelectedDie(d)}>{d}</button>)}</div>}
-    </div>;
+function pieceCell(piece: Piece, seat: number): [number, number] | null {
+    if (piece.stage === -1) {
+        const bases: [number, number][] = [[3, 3], [15, 3], [15, 15], [3, 15]];
+        const offsets: [number, number][] = [[-1, -1], [1, -1], [-1, 1], [1, 1]];
+        return [bases[seat][0] + offsets[piece.id][0] * 1.05, bases[seat][1] + offsets[piece.id][1] * 1.05];
+    }
+    if (piece.stage === 0) return TRACK[piece.pos] || null;
+    if (piece.stage === 100) {
+        const lanes: [number, number][][] = [
+            Array.from({ length: 8 }, (_, i): [number, number] => [9, i + 1]),
+            Array.from({ length: 8 }, (_, i): [number, number] => [17 - i, 9]),
+            Array.from({ length: 8 }, (_, i): [number, number] => [9, 17 - i]),
+            Array.from({ length: 8 }, (_, i): [number, number] => [i + 1, 9]),
+        ];
+        return lanes[seat][piece.pos] || null;
+    }
+    return null;
 }
 
 export default function ParchisPage() {
-    const [userId, setUserId] = useState(""); const [token, setToken] = useState(""); const [name, setName] = useState("Jugador");
-    const [play, setPlay] = useState(0); const [bonus, setBonus] = useState(0); const [wallet, setWallet] = useState<Wallet>("play");
-    const [bet, setBet] = useState<Bet>(0.25); const [maxPlayers, setMaxPlayers] = useState<2 | 3 | 4>(2); const [privateRoom, setPrivateRoom] = useState(false); const [password, setPassword] = useState(""); const [roomCode, setRoomCode] = useState("");
-    const [rooms, setRooms] = useState<Room[]>([]); const [game, setGame] = useState<Game | null>(null); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [seconds, setSeconds] = useState(0); const [loading, setLoading] = useState(true);
-    const socket = useRef<WebSocket | null>(null); const timer = useRef<ReturnType<typeof setInterval> | null>(null);
-    const me = game?.players.find(p => p.user_id === userId); const isMyTurn = !!me && me.seat_index === game?.turn_seat;
-    const refreshProfile = useCallback(async (session?: any) => { const s = session || (await supabase.auth.getSession()).data.session; if (!s?.user?.id) return; setUserId(s.user.id); setToken(s.access_token); const { data } = await supabase.from("profiles").select("first_name,balance,bonus_balance").eq("id", s.user.id).maybeSingle(); const p = data as Profile | null; setName(p?.first_name?.trim() || s.user.email?.split("@")[0] || "Jugador"); setPlay(Number(p?.balance || 0)); setBonus(Number(p?.bonus_balance || 0)); }, []);
-    useEffect(() => { let live = true; supabase.auth.getSession().then(async ({ data }) => { if (live) { await refreshProfile(data.session); setLoading(false); } }); const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => { if (live) void refreshProfile(s); }); return () => { live = false; subscription.unsubscribe(); }; }, [refreshProfile]);
-    const loadRooms = useCallback(async () => { try { const r = await fetch(`${API}/parchis/rooms?bet=${bet}`); const j = await r.json(); setRooms(Array.isArray(j.rooms) ? j.rooms : []); } catch { setRooms([]); } }, [bet]);
-    useEffect(() => { if (!userId || game) return; void loadRooms(); const t = setInterval(() => void loadRooms(), 4500); return () => clearInterval(t); }, [userId, game, loadRooms]);
-    useEffect(() => { if (game?.status !== "playing") { setSeconds(0); return; } setSeconds(Number(game.turn_seconds ?? game.turn_seconds_remaining ?? 0)); const t = setInterval(() => setSeconds(v => Math.max(0, v - 1)), 1000); return () => clearInterval(t); }, [game?.turn_seat, game?.turn_seconds, game?.turn_seconds_remaining, game?.status]);
-    const connect = useCallback((rid: string, pwd = "") => { if (!userId || !token) { setError("Inicia sesión para jugar."); return; } if (socket.current) { socket.current.close(); socket.current = null; } setBusy(true); setError(""); const base = (process.env.NEXT_PUBLIC_WS_URL || API).replace(/^https:/, "wss:").replace(/^http:/, "ws:").replace(/\/$/, ""); const url = `${base}/ws/parchis/${encodeURIComponent(rid)}?user_id=${encodeURIComponent(userId)}&access_token=${encodeURIComponent(token)}&player_name=${encodeURIComponent(name)}&bet=${bet}&max_players=${maxPlayers}&wallet=${wallet}&password=${encodeURIComponent(pwd)}`; const ws = new WebSocket(url); socket.current = ws; ws.onmessage = e => { try { const d = JSON.parse(e.data); if (d.type === "PARCHIS_STATE") { setGame(d as Game); setBusy(false); } else if (d.type === "ERROR") { setError(d.message || d.detail || "No se pudo entrar."); setBusy(false); } } catch { } }; ws.onerror = () => { setError("No se pudo conectar con la sala."); setBusy(false); }; ws.onclose = () => { setBusy(false); }; }, [userId, token, name, bet, maxPlayers, wallet]);
-    useEffect(() => () => { if (timer.current) clearInterval(timer.current); socket.current?.close(); }, []);
-    const createRoom = async () => { setBusy(true); setError(""); try { const r = await fetch(`${API}/parchis/rooms/create`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ bet, max_players: maxPlayers, wallet, is_private: privateRoom, password }) }); const j = await r.json(); if (!r.ok) throw new Error(j.detail || "No se pudo crear la sala."); connect(j.room_id, j.room_code || password); } catch (e: any) { setError(e.message || "Error al crear sala."); setBusy(false); } };
-    const send = (data: Record<string, unknown>) => { if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(data)); };
-    const move = (piece: Piece, die: number) => { if (!Number.isFinite(die)) { setError("Selecciona un dado disponible."); return; } setBusy(true); send({ type: "MOVE_PIECE", piece_id: piece.id, dice_value: die }); setTimeout(() => setBusy(false), 450); };
-    const leave = () => { send({ type: "LEAVE_ROOM" }); socket.current?.close(); socket.current = null; setGame(null); setBusy(false); void refreshProfile(); };
-    const myBalance = wallet === "play" ? play : bonus;
-    if (loading) return <main className="parchis-page"><Header /><div className="loading">Preparando Parchís…</div><ParchisStyles /></main>;
-    return <main className="parchis-page"><Header /><div className="parchis-wrap">
-        <header className="hero"><div><div className="eyebrow">AXIOM ARENA · JUEGO DE MESA</div><h1>PARCHÍS</h1><p>Una partida. Cuatro colores. Una sola meta.</p></div><div className="balance-pill"><small>SALDO DISPONIBLE</small><strong>{money(myBalance)}</strong><span>{wallet === "play" ? "Billetera de juego" : "Billetera bono"}</span></div></header>
-        {!userId ? <section className="panel login"><h2>Inicia sesión para entrar a la arena</h2><Link href="/login" className="primary-link">Ir a iniciar sesión</Link></section> : !game ? <div className="lobby-grid"><section className="panel create-panel"><div className="section-top"><div><span className="eyebrow">CONFIGURA TU PARTIDA</span><h2>Nueva mesa</h2></div><span className="online-dot">EN VIVO</span></div>
-            <label>Billetera</label><div className="choice-row"><button className={wallet === "play" ? "chosen" : ""} onClick={() => setWallet("play")}>Jugar <b>{money(play)}</b></button><button className={wallet === "bonus" ? "chosen" : ""} onClick={() => setWallet("bonus")}>Bono <b>{money(bonus)}</b></button></div>
-            <label>Apuesta por jugador</label><div className="choice-row">{BETS.map(v => <button key={v} className={bet === v ? "chosen" : ""} onClick={() => setBet(v)}>{money(v)}</button>)}</div>
-            <label>Jugadores</label><div className="choice-row">{([2, 3, 4] as const).map(v => <button key={v} className={maxPlayers === v ? "chosen" : ""} onClick={() => setMaxPlayers(v)}>{v} jugadores</button>)}</div>
-            <div className="toggle-row"><div><b>Sala privada</b><small>Solo entran quienes tengan el código</small></div><input type="checkbox" checked={privateRoom} onChange={e => setPrivateRoom(e.target.checked)} /></div>
-            {privateRoom && <input className="text-input" placeholder="Contraseña (opcional)" value={password} onChange={e => setPassword(e.target.value)} />}
-            <button className="main-action" disabled={busy || myBalance < bet} onClick={createRoom}>{busy ? "Conectando…" : "CREAR MESA"}</button>{myBalance < bet && <small className="warn">Saldo insuficiente en esta billetera.</small>}
-            <div className="fee-note">La comisión de la partida es del 6%: 2% para referente y 4% para AXIOM.</div>
-            <div className="join-private"><label>Entrar con código de sala</label><div className="inline-input"><input className="text-input" placeholder="ID de sala" value={roomCode} onChange={e => setRoomCode(e.target.value)} /><input className="text-input" placeholder="Contraseña" value={password} onChange={e => setPassword(e.target.value)} /></div><button className="secondary-action" disabled={busy || !roomCode.trim()} onClick={() => connect(roomCode.trim(), password)}>UNIRME A LA MESA</button></div>
-        </section><section className="panel rooms-panel"><div className="section-top"><div><span className="eyebrow">BUSCA RIVALES</span><h2>Mesas públicas</h2></div><button className="refresh" onClick={() => void loadRooms()}>↻</button></div><div className="room-filter">Apuesta seleccionada: <b>{money(bet)}</b></div>{rooms.filter(r => r.bet === bet).length === 0 ? <div className="empty-rooms"><div className="empty-icon">♟</div><b>No hay mesas disponibles</b><span>Crea una y espera a los demás jugadores.</span></div> : rooms.filter(r => r.bet === bet).map(r => <div className="room-row" key={r.room_id}><div className="room-token"><span>♟</span></div><div className="room-info"><b>Mesa {r.room_id.slice(-6).toUpperCase()}</b><small>{r.players_count}/{r.max_players} jugadores · {r.team_mode === "2v2" ? "Equipos" : "Todos contra todos"}</small></div><strong>{money(r.bet)}</strong><button disabled={busy || myBalance < r.bet} onClick={() => { setMaxPlayers(r.max_players as 2 | 3 | 4); connect(r.room_id); }}>ENTRAR</button></div>)}</section></div> : <section className="game-layout"><div className="game-top"><div><span className="eyebrow">MESA {game.room_id.slice(-6).toUpperCase()}</span><h2>Partida en curso</h2></div><button className="exit-button" onClick={leave}>SALIR</button></div><div className="game-meta"><span>Apuesta <b>{money(game.bet)}</b></span><span>Bote <b>{money(game.pot_total)}</b></span><span>Turno <b>{seconds}s</b></span></div><div className="players-strip">{game.players.map(p => <div key={p.user_id} className={`player-chip ${p.seat_index === game.turn_seat ? "player-active" : ""}`}><i style={{ background: COLORS[p.seat_index] }} /><span>{p.player_name || `Jugador ${p.seat_index + 1}`}</span><small>{p.seat_index === game.turn_seat ? "JUGANDO" : "EN MESA"}</small></div>)}</div><Board game={game} me={userId} busy={busy} onMove={move} onPenalty={id => send({ type: "SELECT_PENALTY_PIECE", piece_id: id })} /><div className="action-panel"><div className="turn-message"><b>{isMyTurn ? "ES TU TURNO" : "ESPERANDO TURNO"}</b><span>{game.last_event}</span></div>{isMyTurn && <button className="main-action roll-button" disabled={busy || game.must_move || game.penalty_pending} onClick={() => send({ type: "ROLL_DICE" })}>LANZAR DADOS</button>}{!isMyTurn && <div className="waiting-tag">Los dados se muestran solo durante tu turno.</div>}{game.status === "finished" && <div className="winner-banner">Partida finalizada · {game.winners.length} ganador(es)</div>}</div></section>}
-        {error && <div className="error-toast" role="alert">{error}<button onClick={() => setError("")}>×</button></div>}
-    </div><ParchisStyles /></main>;
-}
+    const [uid, setUid] = useState("");
+    const [token, setToken] = useState("");
+    const [name, setName] = useState("Jugador");
+    const [playBalance, setPlayBalance] = useState(0);
+    const [bonusBalance, setBonusBalance] = useState(0);
+    const [wallet, setWallet] = useState<Wallet>("play");
+    const [bet, setBet] = useState(0.25);
+    const [maxPlayers, setMaxPlayers] = useState<2 | 3 | 4>(2);
+    const [privateRoom, setPrivateRoom] = useState(false);
+    const [password, setPassword] = useState("");
+    const [joinCode, setJoinCode] = useState("");
+    const [rooms, setRooms] = useState<Room[]>([]);
+    const [state, setState] = useState<GameState | null>(null);
+    const [roomId, setRoomId] = useState("");
+    const [connected, setConnected] = useState(false);
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState("");
+    const [selectedPiece, setSelectedPiece] = useState<number | null>(null);
+    const socket = useRef<WebSocket | null>(null);
+    const mySeat = seatOf(state, uid || null);
+    const myTurn = Boolean(state && mySeat >= 0 && state.turn_seat === mySeat && state.status === "playing");
+    const myPlayer = state?.players.find(p => p.user_id === uid);
+    const availableBalance = wallet === "play" ? playBalance : bonusBalance;
 
-function ParchisStyles() {
-    return <style jsx global>{`
-.parchis-page{min-height:100vh;background:radial-gradient(ellipse at 50% -10%,#173b31 0,#101815 38%,#090d0c 78%);color:#f1f5f2;padding-bottom:48px;font-family:Arial,sans-serif}.parchis-wrap{width:min(1180px,94vw);margin:30px auto}.hero{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:26px}.eyebrow{font-size:10px;letter-spacing:2.5px;color:#71cba0;font-weight:800}.hero h1{font-size:clamp(38px,6vw,64px);letter-spacing:5px;margin:8px 0 2px;font-weight:950}.hero p{color:#9eaaa3;margin:0}.balance-pill{background:#17241f;border:1px solid #345244;border-radius:14px;padding:14px 20px;display:grid;gap:4px;min-width:170px}.balance-pill small,.balance-pill span{color:#91a49a;font-size:10px}.balance-pill strong{font-size:25px;color:#83e0ad}.panel{background:linear-gradient(145deg,#17211d,#111815);border:1px solid #2c4036;border-radius:18px;padding:24px;box-shadow:0 18px 50px #0005}.lobby-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px}.section-top,.game-top{display:flex;align-items:center;justify-content:space-between}.section-top h2,.game-top h2,.panel h2{font-size:24px;margin:5px 0 22px}.online-dot{font-size:9px;color:#82e3ac;border:1px solid #397653;border-radius:30px;padding:6px 9px}.create-panel label{display:block;color:#aab8af;font-size:11px;font-weight:700;margin:18px 0 9px}.choice-row{display:flex;gap:8px}.choice-row button{flex:1;background:#101713;color:#b8c4bc;border:1px solid #33453b;border-radius:10px;padding:12px 7px;font-size:12px;cursor:pointer}.choice-row button b{display:block;margin-top:4px;color:#dce7df}.choice-row button.chosen{border-color:#6bc895;background:#1c392b;color:#a5f0c2;box-shadow:inset 0 0 0 1px #6bc89544}.toggle-row{display:flex;align-items:center;justify-content:space-between;background:#101713;border-radius:10px;padding:13px;margin-top:18px}.toggle-row b,.toggle-row small{display:block}.toggle-row small{color:#84958b;font-size:10px;margin-top:4px}.toggle-row input{accent-color:#55c98c;width:18px;height:18px}.text-input{width:100%;min-width:0;background:#0c120f;border:1px solid #34463b;border-radius:9px;padding:12px;color:#fff;outline:none}.text-input:focus{border-color:#6bc895}.main-action,.secondary-action{width:100%;border:0;border-radius:10px;padding:15px;background:linear-gradient(100deg,#238b5b,#42b878);color:#06150d;font-weight:950;letter-spacing:1.3px;margin-top:20px;cursor:pointer}.main-action:disabled,.secondary-action:disabled{opacity:.45;cursor:not-allowed}.secondary-action{background:#25372d;color:#b6e8c8;border:1px solid #456b55;margin-top:9px}.warn{display:block;color:#f0a77d;margin-top:8px}.fee-note{font-size:10px;color:#82948a;line-height:1.6;margin-top:14px}.join-private{border-top:1px solid #2c3c33;margin-top:22px;padding-top:8px}.inline-input{display:flex;gap:8px}.rooms-panel{min-height:460px}.room-filter{font-size:11px;color:#899b90;background:#101713;border-radius:8px;padding:10px;margin-bottom:10px}.room-filter b{color:#b9eacb}.empty-rooms{height:300px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:#93a198}.empty-rooms span{font-size:11px;color:#718178}.empty-icon{font-size:38px;color:#42644f}.room-row{display:flex;align-items:center;gap:12px;padding:13px 0;border-bottom:1px solid #29382f}.room-token{width:36px;height:36px;display:grid;place-items:center;border-radius:10px;background:#243a2d;color:#8ce1ad;font-size:20px}.room-info{flex:1;min-width:0}.room-info b,.room-info small{display:block}.room-info small{font-size:10px;color:#8b9b91;margin-top:4px}.room-row>strong{font-size:13px;color:#bce9ca}.room-row button,.refresh{background:#244b35;border:1px solid #477d5b;border-radius:8px;padding:9px 12px;color:#baf0cb;font-size:10px;font-weight:800;cursor:pointer}.refresh{font-size:20px;padding:2px 10px}.game-layout{background:#121a16;border:1px solid #2c4036;border-radius:18px;padding:20px}.exit-button{background:#2c211e;border:1px solid #68443a;color:#f0a28b;border-radius:8px;padding:10px 14px;font-size:10px;font-weight:800}.game-meta{display:flex;gap:22px;color:#87988e;font-size:11px;padding:10px 0;border-block:1px solid #29382f}.game-meta b{color:#e5eee8;margin-left:5px}.players-strip{display:flex;gap:8px;overflow-x:auto;padding:14px 0}.player-chip{display:flex;align-items:center;gap:7px;background:#1b2620;border:1px solid #2c3c32;border-radius:9px;padding:9px 11px;font-size:11px;white-space:nowrap}.player-chip i{width:9px;height:9px;border-radius:50%}.player-chip small{font-size:8px;color:#819187}.player-active{border-color:#70c995;background:#20382a}.board-shell{width:min(700px,100%);margin:12px auto 20px}.board{position:relative;width:100%;aspect-ratio:1;background:linear-gradient(145deg,#f1e9d7,#cfc4ae);border:9px solid #6b4a30;border-radius:12px;box-shadow:0 16px 34px #0008,inset 0 0 0 3px #f7f0df;overflow:hidden;background-image:linear-gradient(90deg,#9b896e12 1px,transparent 1px),linear-gradient(#9b896e12 1px,transparent 1px),linear-gradient(145deg,#f1e9d7,#d8cdb8);background-size:6.666% 6.666%,6.666% 6.666%,cover}.home{position:absolute;width:36%;height:36%;border:2px solid;border-radius:8px;display:grid;place-items:center}.home-0{left:1%;top:1%}.home-1{right:1%;top:1%}.home-2{right:1%;bottom:1%}.home-3{left:1%;bottom:1%}.home-label{font-size:clamp(8px,1.5vw,13px);font-weight:900;letter-spacing:2px}.home-holes{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.home-holes span{width:clamp(16px,3.5vw,30px);aspect-ratio:1;border:2px solid;border-radius:50%;box-shadow:inset 0 2px 5px #0002}.board-center{position:absolute;left:38%;top:38%;width:24%;height:24%;background:conic-gradient(#d94a45 0 25%,#e5b83f 0 50%,#3c9b70 0 75%,#477fc0 0);clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);display:grid;place-items:center}.center-diamond{width:70%;height:70%;background:#eee4d1;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);display:grid;place-content:center;text-align:center;color:#26342b;font-size:clamp(8px,1.4vw,13px);font-weight:950}.center-diamond small{font-size:7px;letter-spacing:1px}.track-cell{position:absolute;width:5.5%;height:5.5%;transform:translate(-50%,-50%);border:1px solid #8e877b;background:#f8f4e9;border-radius:2px;display:grid;place-items:center;color:#8b806d;font-size:9px}.track-cell.safe{background:#e4d5ad;color:#95763a}.track-cell.start{border:2px solid #bd9a4b;background:#fff4d7}.piece{position:absolute;width:4.3%;aspect-ratio:1;transform:translate(-50%,-50%);border:2px solid;border-radius:50%;box-shadow:0 3px 5px #0008,inset 0 -3px 5px #0005;cursor:default}.piece-ready{cursor:pointer;outline:3px solid #fff;outline-offset:2px;animation:pulsepiece 1s infinite}.dice-select{display:flex;justify-content:center;gap:14px}.die{width:48px;height:48px;background:#f7f4eb;border:2px solid #b8a98e;border-radius:10px;color:#1c2821;font-size:23px;font-weight:900;box-shadow:0 4px 0 #8d806c}.die-live{border-color:#62c78e}.die-used{opacity:.35}.die-picked{outline:3px solid #70d69c}.action-panel{max-width:700px;margin:auto;background:#1a2820;border:1px solid #355441;border-radius:12px;padding:15px;display:flex;align-items:center;justify-content:space-between;gap:15px}.turn-message b,.turn-message span{display:block}.turn-message b{font-size:10px;color:#82dca5;letter-spacing:1px}.turn-message span{font-size:12px;color:#b2c0b7;margin-top:5px}.roll-button{width:auto;min-width:170px;margin:0}.waiting-tag{font-size:11px;color:#8d9c92}.winner-banner{color:#9de9b8;font-weight:900}.error-toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#512a25;border:1px solid #a85b4b;color:#ffe0d6;padding:12px 18px;border-radius:10px;z-index:100;display:flex;gap:20px;max-width:90vw}.error-toast button{background:none;border:0;color:inherit;font-size:20px}.loading{padding:100px;text-align:center;color:#9edbb5}.login{text-align:center}.primary-link{display:inline-block;padding:12px 20px;background:#2c9a63;color:#07160d;border-radius:8px;font-weight:900}@keyframes pulsepiece{50%{outline-color:#80e8a8;outline-offset:5px}}@media(max-width:800px){.lobby-grid{grid-template-columns:1fr}.hero{align-items:flex-start}.balance-pill{min-width:135px;padding:11px}.game-layout{padding:12px}.action-panel{align-items:stretch;flex-direction:column}.roll-button{width:100%}.home{width:36%;height:36%}}@media(max-width:480px){.parchis-wrap{width:96vw;margin:18px auto}.hero h1{font-size:38px}.hero p{font-size:11px}.balance-pill{min-width:112px}.balance-pill strong{font-size:19px}.panel{padding:16px}.game-meta{gap:10px;justify-content:space-between;font-size:10px}.player-chip{font-size:10px}.board{border-width:5px}.inline-input{flex-direction:column}}
-`}</style>
+    const refreshProfile = useCallback(async () => {
+        const { data } = await supabase.auth.getSession();
+        const session = data.session;
+        if (!session) { setUid(""); setToken(""); return; }
+        setUid(session.user.id); setToken(session.access_token);
+        const { data: profile } = await supabase.from("profiles").select("first_name,balance,bonus_balance").eq("id", session.user.id).maybeSingle();
+        if (profile) {
+            setName(profile.first_name || "Jugador");
+            setPlayBalance(Number(profile.balance || 0));
+            setBonusBalance(Number(profile.bonus_balance || 0));
+        }
+    }, []);
+
+    const loadRooms = useCallback(async () => {
+        try {
+            const response = await fetch(`${API}/parchis/rooms`);
+            const data = await response.json();
+            setRooms(Array.isArray(data.rooms) ? data.rooms : []);
+        } catch { setError("No se pudo cargar la lista de salas."); }
+    }, []);
+
+    useEffect(() => { void refreshProfile(); void loadRooms(); }, [refreshProfile, loadRooms]);
+    useEffect(() => {
+        const channel = supabase.auth.onAuthStateChange(() => { void refreshProfile(); });
+        return () => { channel.data.subscription.unsubscribe(); };
+    }, [refreshProfile]);
+    useEffect(() => () => { socket.current?.close(); }, []);
+
+    const connect = useCallback((target: string, roomPassword = "") => {
+        if (!uid || !token) { setError("Inicie sesión para entrar a Parchís."); return; }
+        socket.current?.close();
+        setBusy(true); setError(""); setRoomId(target); setState(null); setSelectedPiece(null);
+        const wsBase = (process.env.NEXT_PUBLIC_WS_URL || API).replace(/^https:/, "wss:").replace(/^http:/, "ws:").replace(/\/$/, "");
+        const query = new URLSearchParams({ user_id: uid, access_token: token, player_name: name, bet: String(bet), max_players: String(maxPlayers), wallet, password: roomPassword });
+        const ws = new WebSocket(`${wsBase}/ws/parchis/${encodeURIComponent(target)}?${query.toString()}`);
+        socket.current = ws;
+        ws.onopen = () => { setConnected(true); setBusy(false); };
+        ws.onmessage = event => {
+            let msg: any; try { msg = JSON.parse(event.data); } catch { return; }
+            if (msg.type === "PARCHIS_STATE") { setState(msg as GameState); setRoomId(msg.room_id); setError(""); }
+            else if (msg.type === "ERROR") { setError(msg.message || "Error en la partida."); setBusy(false); }
+            else if (msg.type === "PONG") return;
+        };
+        ws.onerror = () => { setError("No se pudo conectar con el servidor de Parchís."); setBusy(false); };
+        ws.onclose = () => { setConnected(false); setBusy(false); };
+    }, [uid, token, name, bet, maxPlayers, wallet]);
+
+    useEffect(() => {
+        if (!connected || !socket.current) return;
+        const timer = window.setInterval(() => { if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify({ type: "PING" })); }, 20000);
+        return () => window.clearInterval(timer);
+    }, [connected]);
+
+    const createRoom = async () => {
+        if (!token) { setError("Inicie sesión para crear una sala."); return; }
+        if (availableBalance < bet) { setError(`Saldo insuficiente en la billetera ${wallet}.`); return; }
+        setBusy(true); setError("");
+        try {
+            const response = await fetch(`${API}/parchis/rooms/create`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ bet, max_players: maxPlayers, wallet, is_private: privateRoom, password: privateRoom ? password : "" }) });
+            const data = await response.json();
+            if (!response.ok || !data.room_id) throw new Error(data.detail || "No se pudo crear la sala.");
+            connect(data.room_id, data.room_code || password);
+        } catch (e) { setError(e instanceof Error ? e.message : "Error al crear sala."); setBusy(false); }
+    };
+
+    const send = (type: string, extra: Record<string, unknown> = {}) => {
+        if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify({ type, ...extra }));
+    };
+    const move = (piece: Piece, die: number) => { send("MOVE_PIECE", { piece_id: piece.id, dice_value: die }); setSelectedPiece(null); };
+    const canMoveWithDie = (piece: Piece, die: number) => piece.stage === -1 ? die === 5 || (state?.dice_remaining?.length === 2 && state.dice_remaining.reduce((a, b) => a + b, 0) === 5) : true;
+
+    const piecePositions = useMemo(() => {
+        if (!state) return [] as { player: Player; piece: Piece; x: number; y: number; stack: number; total: number }[];
+        const entries: { player: Player; piece: Piece; x: number; y: number; stack: number; total: number }[] = [];
+        state.players.forEach(player => player.pieces.forEach(piece => {
+            const cell = pieceCell(piece, player.seat_index); if (!cell) return;
+            const same = entries.filter(e => e.x === cell[0] && e.y === cell[1]);
+            entries.push({ player, piece, x: cell[0], y: cell[1], stack: same.length, total: same.length + 1 });
+        }));
+        return entries;
+    }, [state]);
+
+    const leave = () => { socket.current?.close(1000, "Salida voluntaria"); socket.current = null; setState(null); setRoomId(""); setConnected(false); setSelectedPiece(null); void refreshProfile(); void loadRooms(); };
+
+    return <main className="min-h-screen bg-[#090d12] text-white"><Header />
+        <div className="mx-auto max-w-[1500px] px-3 pb-10 pt-5 sm:px-6">
+            <div className="mb-5 flex flex-wrap items-end justify-between gap-3"><div><p className="text-xs font-bold tracking-[.35em] text-emerald-400">AXIOM · MULTIPLAYER</p><h1 className="mt-1 text-3xl font-black tracking-tight sm:text-4xl">PARCHÍS</h1><p className="mt-1 text-sm text-slate-400">Una partida. Cuatro colores. La victoria se gana ficha a ficha.</p></div><div className="flex gap-2 text-sm"><span className="rounded-xl border border-white/10 bg-white/5 px-3 py-2">Jugar: <b>{money(playBalance)}</b></span><span className="rounded-xl border border-white/10 bg-white/5 px-3 py-2">Bono: <b>{money(bonusBalance)}</b></span></div></div>
+            {error && <div className="mb-4 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div>}
+            {!state ? <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
+                <section className="rounded-3xl border border-white/10 bg-[#111923] p-5 shadow-2xl"><h2 className="text-lg font-extrabold">Crear partida</h2>
+                    <label className="mt-5 block text-xs font-bold uppercase tracking-wider text-slate-400">Billetera</label><div className="mt-2 grid grid-cols-2 gap-2">{(["play", "bonus"] as Wallet[]).map(w => <button key={w} onClick={() => setWallet(w)} className={`rounded-xl border px-3 py-3 text-sm font-bold ${wallet === w ? "border-emerald-400 bg-emerald-400/15 text-emerald-200" : "border-white/10 bg-black/20 text-slate-400"}`}>{w === "play" ? "Saldo para jugar" : "Saldo bono"}</button>)}</div>
+                    <label className="mt-5 block text-xs font-bold uppercase tracking-wider text-slate-400">Apuesta</label><div className="mt-2 grid grid-cols-3 gap-2">{BETS.map(v => <button key={v} onClick={() => setBet(v)} className={`rounded-xl border py-3 font-black ${bet === v ? "border-emerald-400 bg-emerald-400/15 text-emerald-200" : "border-white/10 bg-black/20 text-slate-300"}`}>{money(v)}</button>)}</div>
+                    <label className="mt-5 block text-xs font-bold uppercase tracking-wider text-slate-400">Jugadores</label><div className="mt-2 grid grid-cols-3 gap-2">{([2, 3, 4] as const).map(n => <button key={n} onClick={() => setMaxPlayers(n)} className={`rounded-xl border py-3 font-bold ${maxPlayers === n ? "border-emerald-400 bg-emerald-400/15 text-emerald-200" : "border-white/10 bg-black/20 text-slate-300"}`}>{n}</button>)}</div>
+                    <label className="mt-5 flex items-center gap-3 text-sm text-slate-300"><input type="checkbox" checked={privateRoom} onChange={e => setPrivateRoom(e.target.checked)} className="accent-emerald-400" /> Sala privada</label>
+                    {privateRoom && <input value={password} onChange={e => setPassword(e.target.value)} placeholder="Contraseña (opcional)" className="mt-3 w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 outline-none focus:border-emerald-400" />}
+                    <button disabled={busy} onClick={() => void createRoom()} className="mt-5 w-full rounded-xl bg-emerald-500 px-4 py-3.5 font-black text-[#04130d] transition hover:bg-emerald-400 disabled:opacity-50">{busy ? "Conectando…" : "CREAR SALA"}</button>
+                    <div className="mt-6 border-t border-white/10 pt-5"><h3 className="font-bold">Entrar con código</h3><div className="mt-2 flex gap-2"><input value={joinCode} onChange={e => setJoinCode(e.target.value)} placeholder="Código de sala" className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/30 px-3 py-3 outline-none focus:border-emerald-400" /><button onClick={() => connect(joinCode.trim(), password)} disabled={!joinCode.trim() || busy} className="rounded-xl border border-white/10 px-4 font-bold hover:bg-white/10 disabled:opacity-40">ENTRAR</button></div></div>
+                </section>
+                <section className="rounded-3xl border border-white/10 bg-[#111923] p-5"><div className="flex items-center justify-between"><h2 className="text-lg font-extrabold">Salas públicas</h2><button onClick={() => void loadRooms()} className="text-sm font-bold text-emerald-300">Actualizar</button></div><div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{rooms.map(room => <div key={room.room_id} className="rounded-2xl border border-white/10 bg-black/20 p-4"><div className="flex items-center justify-between"><b>{money(room.bet)} por jugador</b><span className="text-xs text-slate-400">{room.players_count}/{room.max_players}</span></div><p className="mt-1 text-xs text-slate-500">{room.team_mode === "2v2" ? "Equipos 2 contra 2" : "Todos contra todos"}</p><button onClick={() => { setBet(room.bet); setMaxPlayers(room.max_players as 2 | 3 | 4); connect(room.room_id); }} className="mt-4 w-full rounded-xl border border-emerald-500/40 bg-emerald-500/10 py-2.5 text-sm font-bold text-emerald-200 hover:bg-emerald-500/20">UNIRSE</button></div>)}{rooms.length === 0 && <p className="rounded-xl border border-dashed border-white/10 p-8 text-center text-sm text-slate-500 sm:col-span-2 xl:col-span-3">No hay salas públicas disponibles.</p>}</div></section>
+            </div> : <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+                <section className="overflow-hidden rounded-3xl border border-white/10 bg-[#111923] p-2 shadow-2xl sm:p-4"><div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-2"><div><p className="text-[10px] font-bold tracking-[.3em] text-emerald-300">SALA {roomId}{state.is_private && state.room_code ? ` · CÓDIGO ${state.room_code}` : ""}</p><h2 className="text-lg font-black">Tablero de Parchís</h2></div><button onClick={leave} className="rounded-lg border border-white/10 px-3 py-2 text-xs font-bold text-slate-300 hover:bg-white/10">SALIR</button></div>
+                    <div className="mx-auto w-full max-w-[900px] rounded-[26px] border-[7px] border-[#4c3524] bg-[#e8dfc9] p-1 shadow-[inset_0_0_0_3px_#bca98b,0_18px_50px_#0009]"><svg viewBox="-0.5 -0.5 19 19" className="block h-auto w-full rounded-[18px]" role="img" aria-label="Tablero de Parchís visto desde arriba"><defs><pattern id="wood" width=".5" height=".5" patternUnits="userSpaceOnUse"><path d="M0 .25H.5" stroke="#b7a487" strokeWidth=".025" opacity=".4" /></pattern><filter id="shadow"><feDropShadow dx="0.03" dy="0.06" stdDeviation=".05" floodOpacity=".35" /></filter></defs><rect x="0" y="0" width="18" height="18" fill="#e9e0cb" /><rect x="0" y="0" width="18" height="18" fill="url(#wood)" />
+                        {[{ x: 0, y: 0, c: SEATS[0] }, { x: 12, y: 0, c: SEATS[1] }, { x: 12, y: 12, c: SEATS[2] }, { x: 0, y: 12, c: SEATS[3] }].map((b, i) => <g key={i}><rect x={b.x} y={b.y} width="6" height="6" rx=".35" fill={b.c.color} /><rect x={b.x + .55} y={b.y + .55} width="4.9" height="4.9" rx=".55" fill="#f3ead8" stroke={b.c.dark} strokeWidth=".12" /><rect x={b.x + .85} y={b.y + .85} width="4.3" height="4.3" rx=".4" fill={b.c.light} opacity=".25" /></g>)}
+                        {TRACK.map(([x, y], i) => <g key={i}><rect x={x - .48} y={y - .48} width=".96" height=".96" fill={SAFE.has(i) ? "#f8edc9" : "#f4eee1"} stroke="#a99a7e" strokeWidth=".035" /><rect x={x - .4} y={y - .4} width=".8" height=".8" fill={SAFE.has(i) ? "#fff6d9" : "#fffaf0"} opacity=".8" /><text x={x} y={y + .12} textAnchor="middle" fontSize=".2" fill="#7c705e">{SAFE.has(i) ? "◆" : ""}</text></g>)}
+                        {STARTS.map((pos, seat) => { const [x, y] = TRACK[pos]; return <g key={seat}><rect x={x - .48} y={y - .48} width=".96" height=".96" fill={SEATS[seat].color} stroke="#fff" strokeWidth=".09" /><path d={`M${x - .25} ${y}h.5 M${x} ${y - .25}v.5`} stroke="#fff" strokeWidth=".07" /></g>; })}
+                        {Array.from({ length: 8 }, (_, i) => <g key={i}>{[[9, i + 1], [17 - i, 9], [9, 17 - i], [i + 1, 9]].map(([x, y], s) => <rect key={s} x={x - .46} y={y - .46} width=".92" height=".92" fill={SEATS[s].light} stroke={SEATS[s].dark} strokeWidth=".035" />)}</g>)}
+                        <path d="M6 6L9 9L12 6L12 12L9 9L6 12Z" fill="#e7d9b9" stroke="#8d7a5e" strokeWidth=".08" /><path d="M9 6L12 9L9 12L6 9Z" fill="#f4ead5" stroke="#8d7a5e" strokeWidth=".08" />
+                        {piecePositions.map(({ player, piece, x, y, stack, total }) => { const c = SEATS[player.seat_index]; const dx = total > 1 ? (stack % 2 ? -.16 : .16) : 0; const dy = total > 1 ? (stack > 1 ? .16 : -.16) : 0; const mine = player.user_id === uid; const selectable = mine && myTurn && (state.must_move || state.penalty_pending); return <g key={`${player.user_id}-${piece.id}`} onClick={() => { if (!selectable) return; if (state.penalty_pending) { send("SELECT_PENALTY_PIECE", { piece_id: piece.id }); setSelectedPiece(null); } else { setSelectedPiece(piece.id); } }} className={selectable ? "cursor-pointer" : ""}><circle cx={x + dx} cy={y + dy} r=".32" fill={c.dark} opacity=".25" /><circle cx={x + dx} cy={y + dy - .035} r=".27" fill={c.color} stroke={selectedPiece === piece.id ? "#fff" : c.dark} strokeWidth={selectedPiece === piece.id ? ".13" : ".07"} filter="url(#shadow)" /><circle cx={x + dx - .07} cy={y + dy - .12} r=".07" fill="#fff" opacity=".65" /><text x={x + dx} y={y + dy + .08} textAnchor="middle" fontSize=".18" fontWeight="bold" fill="#fff">{piece.id + 1}</text></g>; })}
+                    </svg></div><div className="mt-3 flex flex-wrap justify-center gap-3">{SEATS.map((s, i) => <span key={i} className="flex items-center gap-2 text-xs text-slate-400"><i className="h-2.5 w-2.5 rounded-full" style={{ background: s.color }} />{s.label}</span>)}</div></section>
+                <aside className="space-y-4"><section className="rounded-3xl border border-white/10 bg-[#111923] p-5"><div className="flex items-center justify-between"><span className="text-xs font-bold uppercase tracking-widest text-slate-400">Bote</span><span className="text-xs text-slate-500">Comisión 6%</span></div><p className="mt-1 text-3xl font-black text-emerald-300">{money(state.net_pot || 0)}</p><p className="text-xs text-slate-500">Total apostado {money(state.pot_total)} · Comisión {money(state.commission_total)}</p><div className="my-4 h-px bg-white/10" /><div className="flex items-center justify-between"><span className="text-sm text-slate-400">Estado</span><b className="text-sm">{state.status === "waiting" ? "Esperando jugadores" : state.status === "finished" ? "Finalizada" : "En juego"}</b></div><div className="mt-3 flex items-center justify-between"><span className="text-sm text-slate-400">Turno</span><b className="text-sm" style={{ color: SEATS[state.turn_seat]?.color }}>{state.players.find(p => p.seat_index === state.turn_seat)?.player_name || `Jugador ${state.turn_seat + 1}`}</b></div><div className="mt-2 flex items-center justify-between"><span className="text-sm text-slate-400">Tiempo</span><b className="text-xl tabular-nums">{state.turn_seconds}s</b></div></section>
+                    <section className="rounded-3xl border border-white/10 bg-[#111923] p-5"><h3 className="font-extrabold">Jugadores</h3><div className="mt-3 space-y-2">{state.players.map(p => <div key={p.user_id} className={`flex items-center justify-between rounded-xl border px-3 py-2 ${p.seat_index === state.turn_seat ? "border-emerald-400/50 bg-emerald-400/5" : "border-white/5 bg-black/20"}`}><div className="flex items-center gap-2"><i className="h-3 w-3 rounded-full" style={{ background: SEATS[p.seat_index].color }} /><span className="text-sm font-semibold">{p.player_name || `Jugador ${p.seat_index + 1}`}{p.user_id === uid ? " (tú)" : ""}</span></div><span className={`text-[10px] font-bold ${p.connected ? "text-emerald-300" : "text-slate-500"}`}>{p.connected ? "EN LÍNEA" : "DESCONECTADO"}</span></div>)}</div></section>
+                    <section className="rounded-3xl border border-white/10 bg-[#111923] p-5"><h3 className="font-extrabold">Dados</h3>{myTurn ? <><div className="my-4 flex justify-center gap-3">{(state.dice_pair || []).map((d, i) => <div key={i} className="grid h-16 w-16 place-items-center rounded-2xl border border-white/20 bg-[#f6f0e3] text-3xl font-black text-[#18202a] shadow-lg">{d}</div>)}{!state.dice_pair && <div className="grid h-16 w-36 place-items-center rounded-2xl border border-dashed border-white/20 text-xs text-slate-500">Lanza los dados</div>}</div><button disabled={state.must_move || state.penalty_pending} onClick={() => send("ROLL_DICE")} className="w-full rounded-xl bg-emerald-500 py-3 font-black text-[#04130d] disabled:opacity-40">LANZAR DADOS</button>{state.must_move && <p className="mt-3 text-center text-xs text-emerald-200">Seleccione una ficha en el tablero.</p>}{state.penalty_pending && <p className="mt-3 text-center text-xs text-rose-300">Seleccione una ficha para devolverla a casa.</p>}{selectedPiece !== null && <div className="mt-3 rounded-xl border border-emerald-400/30 bg-emerald-400/5 p-3"><p className="mb-2 text-xs text-emerald-200">Elija el dado para la ficha {selectedPiece + 1}</p><div className="flex gap-2">{(state.dice_remaining || []).map((d, i) => <button key={`${d}-${i}`} onClick={() => { const pc = myPlayer?.pieces.find(p => p.id === selectedPiece); if (pc) move(pc, d); }} disabled={!myPlayer?.pieces.some(p => p.id === selectedPiece && canMoveWithDie(p, d))} className="flex-1 rounded-lg border border-white/15 bg-white/5 py-2 font-black disabled:opacity-30">{d}</button>)}{myPlayer?.pieces.find(p => p.id === selectedPiece)?.stage === -1 && state.dice_remaining?.length === 2 && state.dice_remaining.reduce((a, b) => a + b, 0) === 5 && !state.dice_remaining.includes(5) && <button onClick={() => move(myPlayer.pieces.find(p => p.id === selectedPiece)!, 5)} className="flex-1 rounded-lg bg-amber-400 py-2 font-black text-black">SUMA 5</button>}</div></div>}</> : <div className="my-5 rounded-xl bg-black/20 p-4 text-center text-sm text-slate-500">Los dados se muestran únicamente durante su turno.</div>}</section>
+                    <p className="rounded-xl border border-white/5 bg-black/20 p-3 text-xs leading-relaxed text-slate-400">{state.last_event || (connected ? "Conectado al servidor." : "Conectando…")}</p>
+                    {state.status === "finished" && <button onClick={leave} className="w-full rounded-xl bg-emerald-500 py-3 font-black text-black">VOLVER A SALAS</button>}
+                </aside>
+            </div>}
+            {!connected && state && <p className="mt-3 text-center text-xs text-amber-300">Reconectando con la sala…</p>}
+        </div>
+    </main>;
 }
