@@ -1,214 +1,2449 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+    useState,
+    useEffect,
+    useRef,
+    useCallback,
+    type PointerEvent,
+} from "react";
+import Link from "next/link";
 import { supabase } from "../lib/supabase";
 import Header from "../components/Header";
 
 type Wallet = "play" | "bonus";
-type Piece = { id: number; stage: number; pos: number; steps_walked: number };
-type Player = { user_id: string; player_name?: string; seat_index: number; team: string | null; wallet: Wallet; connected: boolean; pieces: Piece[] };
-type GameState = { type: string; room_id: string; bet: number; max_players: number; team_mode: string; is_private: boolean; room_code: string | null; status: string; turn_seat: number; turn_seconds: number; dice: number | null; dice_pair: number[] | null; dice_remaining: number[]; double_count: number; penalty_pending: boolean; must_move: boolean; pot_total: number; net_pot: number; commission_total: number; winners: string[]; last_event: string; players: Player[] };
-type Room = { room_id: string; bet: number; max_players: number; players_count: number; team_mode: string; is_private: boolean };
-type Seat = { color: string; dark: string; light: string; label: string };
+type ParchisBet = "0.25" | "1.00" | "10.00";
+type MaxPlayers = 2 | 3 | 4;
 
-const API = (process.env.NEXT_PUBLIC_API_URL || "https://casino-axiom.ethiodeploy.app").replace(/\/$/, "");
-const BETS = [0.25, 1, 10];
-const SEATS: Seat[] = [
-    { color: "#18a66a", dark: "#075b3a", light: "#a7f3d0", label: "VERDE" },
-    { color: "#e34455", dark: "#8e1729", light: "#fecdd3", label: "ROJO" },
-    { color: "#3478df", dark: "#173d83", light: "#bfdbfe", label: "AZUL" },
-    { color: "#e9b52d", dark: "#93620a", light: "#fef3a6", label: "AMARILLO" },
-];
-const TRACK: [number, number][] = [
-    ...Array.from({ length: 17 }, (_, i): [number, number] => [i + 1, 0]),
-    ...Array.from({ length: 17 }, (_, i): [number, number] => [18, i + 1]),
-    ...Array.from({ length: 17 }, (_, i): [number, number] => [17 - i, 18]),
-    ...Array.from({ length: 17 }, (_, i): [number, number] => [0, 17 - i]),
-];
-const STARTS = [5, 22, 39, 56];
-const SAFE = new Set([0, 5, 12, 17, 22, 29, 34, 39, 46, 51, 56, 63]);
-const money = (n: number) => `$${Number(n || 0).toFixed(2)}`;
-const seatOf = (state: GameState | null, uid: string | null) => state?.players?.find(p => p.user_id === uid)?.seat_index ?? -1;
-
-function pieceCell(piece: Piece, seat: number): [number, number] | null {
-    if (piece.stage === -1) {
-        const bases: [number, number][] = [[3, 3], [15, 3], [15, 15], [3, 15]];
-        const offsets: [number, number][] = [[-1, -1], [1, -1], [-1, 1], [1, 1]];
-        return [bases[seat][0] + offsets[piece.id][0] * 1.05, bases[seat][1] + offsets[piece.id][1] * 1.05];
-    }
-    if (piece.stage === 0) return TRACK[piece.pos] || null;
-    if (piece.stage === 100) {
-        const lanes: [number, number][][] = [
-            Array.from({ length: 8 }, (_, i): [number, number] => [9, i + 1]),
-            Array.from({ length: 8 }, (_, i): [number, number] => [17 - i, 9]),
-            Array.from({ length: 8 }, (_, i): [number, number] => [9, 17 - i]),
-            Array.from({ length: 8 }, (_, i): [number, number] => [i + 1, 9]),
-        ];
-        return lanes[seat][piece.pos] || null;
-    }
-    return null;
+interface ParchisPiece {
+    id: number;
+    stage: number;
+    pos: number;
+    steps_walked: number;
 }
 
-export default function ParchisPage() {
-    const [uid, setUid] = useState("");
-    const [token, setToken] = useState("");
-    const [name, setName] = useState("Jugador");
+interface ParchisPlayerState {
+    user_id: string;
+    player_name?: string;
+    doc_number?: string;
+    cedula?: string;
+    seat_index: number;
+    team: string | null;
+    wallet: string;
+    connected: boolean;
+    pieces: ParchisPiece[];
+}
+
+interface ParchisState {
+    type: string;
+    room_id: string;
+    host_user_id?: string;
+    host_name?: string;
+    host_doc_number?: string;
+    host_cedula?: string;
+    bet: number;
+    max_players: number;
+    team_mode: "ffa" | "2v2";
+    is_private: boolean;
+    room_code: string | null;
+    status: string;
+    turn_seat: number;
+    dice: number | null;
+    dice_pair?: number[] | null;
+    dice_remaining?: number[];
+    double_count?: number;
+    penalty_pending?: boolean;
+    must_move: boolean;
+    pot_total: number;
+    net_pot?: number;
+    commission_total?: number;
+    winners: string[];
+    last_event: string;
+    players: ParchisPlayerState[];
+    turn_seconds?: number;
+}
+
+interface PublicRoomItem {
+    room_id: string;
+    host_name?: string;
+    host_doc_number?: string;
+    host_cedula?: string;
+    bet: number;
+    max_players: number;
+    players_count: number;
+    team_mode: string;
+    is_private: boolean;
+}
+
+interface ProfileRow {
+    first_name: string | null;
+    doc_number: string | null;
+    balance: number | null;
+    bonus_balance: number | null;
+}
+
+interface MoveOption {
+    label: string;
+    diceValue: number;
+    steps: number;
+    stepSequence: number[];
+    sequenceString: string;
+    usedDiceValues: number[];
+    isExitFive: boolean;
+}
+
+const API_BASE =
+    process.env.NEXT_PUBLIC_API_URL || "https://casino-axiom.ethiodeploy.app";
+
+const TURN_TRANSITION_DELAY_MS = 1400;
+const STEP_INTERVAL_MS = 150;
+
+const PARCHIS_BETS: Record<ParchisBet, number> = {
+    "0.25": 0.25,
+    "1.00": 1.0,
+    "10.00": 10.0,
+};
+
+const SEAT_PALETTE = [
+    {
+        name: "Verde",
+        main: "#22a043",
+        light: "#4ade80",
+        dark: "#14532d",
+        ring: "#bbf7d0",
+    },
+    {
+        name: "Rojo",
+        main: "#e11d48",
+        light: "#fb7185",
+        dark: "#881337",
+        ring: "#fecdd3",
+    },
+    {
+        name: "Azul",
+        main: "#2563eb",
+        light: "#60a5fa",
+        dark: "#1e3a8a",
+        ring: "#bfdbfe",
+    },
+    {
+        name: "Amarillo",
+        main: "#eab308",
+        light: "#fde047",
+        dark: "#713f12",
+        ring: "#fef08a",
+    },
+];
+
+const TRACK_LEN = 68;
+const GRAY_STAR_SPOTS = new Set([5, 12, 22, 29, 39, 46, 56, 63]);
+const SAFE_SPOTS = new Set([0, 5, 12, 17, 22, 29, 34, 39, 46, 51, 56, 63]);
+
+const SEAT_START_SPOTS: Record<number, number> = {
+    0: 5,
+    1: 22,
+    2: 39,
+    3: 56,
+};
+
+function getSeatPalette(seatIndex: number) {
+    const idx = (((Number(seatIndex) || 0) % 4) + 4) % 4;
+    return SEAT_PALETTE[idx];
+}
+
+function getMainName(
+    profile: Partial<ProfileRow> | null,
+    fallback = "Jugador"
+): string {
+    const raw = (profile?.first_name || "").trim();
+    if (!raw) return fallback;
+    return raw.split(/\s+/)[0] || fallback;
+}
+
+function getCleanPlayerLabel(
+    player: ParchisPlayerState | null | undefined,
+    fallback: string
+): string {
+    const raw = (player?.player_name || "").trim();
+    if (!raw) return fallback;
+    return raw.split(/\s+/)[0] || fallback;
+}
+
+function getSeatHomeCenter(seatIndex: number): { x: number; y: number } {
+    const corner = (((Number(seatIndex) || 0) % 4) + 4) % 4;
+    switch (corner) {
+        case 0:
+            return { x: 0.21, y: 0.21 };
+        case 1:
+            return { x: 0.79, y: 0.21 };
+        case 2:
+            return { x: 0.79, y: 0.79 };
+        default:
+            return { x: 0.21, y: 0.79 };
+    }
+}
+
+function getHomeSlotOffset(
+    pieceId: number,
+    cellSize: number
+): { dx: number; dy: number } {
+    const d = cellSize * 0.72;
+    const slots = [
+        { dx: -d, dy: -d },
+        { dx: d, dy: -d },
+        { dx: -d, dy: d },
+        { dx: d, dy: d },
+    ];
+    return slots[pieceId % 4];
+}
+
+function buildTrackGridCoords(): Array<{ gx: number; gy: number }> {
+    const perimeter: Array<{ gx: number; gy: number }> = [];
+    for (let y = 0; y < 6; y++) perimeter.push({ gx: 6, gy: y });
+    for (let x = 5; x >= 0; x--) perimeter.push({ gx: x, gy: 6 });
+    perimeter.push({ gx: 0, gy: 7 });
+    for (let x = 0; x < 6; x++) perimeter.push({ gx: x, gy: 8 });
+    for (let y = 9; y <= 14; y++) perimeter.push({ gx: 6, gy: y });
+    perimeter.push({ gx: 7, gy: 14 });
+    for (let y = 14; y > 8; y--) perimeter.push({ gx: 8, gy: y });
+    for (let x = 9; x <= 14; x++) perimeter.push({ gx: x, gy: 8 });
+    perimeter.push({ gx: 14, gy: 7 });
+    for (let x = 14; x > 8; x--) perimeter.push({ gx: x, gy: 6 });
+    for (let y = 5; y >= 0; y--) perimeter.push({ gx: 8, gy: y });
+    perimeter.push({ gx: 7, gy: 0 });
+
+    const result: Array<{ gx: number; gy: number }> = [];
+    const totalPts = perimeter.length;
+    for (let i = 0; i < TRACK_LEN; i++) {
+        const idx = Math.floor((i * totalPts) / TRACK_LEN) % totalPts;
+        result.push(perimeter[idx]);
+    }
+    return result;
+}
+
+const TRACK_GRID = buildTrackGridCoords();
+
+function getGoalLanePoint(
+    seatIndex: number,
+    pos: number,
+    boardSize: number
+): { x: number; y: number } {
+    const pad = boardSize * 0.036;
+    const inner = boardSize - pad * 2;
+    const cell = inner / 15;
+    const step = Math.max(0, Math.min(7, pos)) / 7;
+    const corner = (((Number(seatIndex) || 0) % 4) + 4) % 4;
+
+    switch (corner) {
+        case 0:
+            return {
+                x: pad + 7.5 * cell,
+                y: pad + (1.5 + step * 5.2) * cell,
+            };
+        case 1:
+            return {
+                x: pad + (13.5 - step * 5.2) * cell,
+                y: pad + 7.5 * cell,
+            };
+        case 2:
+            return {
+                x: pad + 7.5 * cell,
+                y: pad + (13.5 - step * 5.2) * cell,
+            };
+        default:
+            return {
+                x: pad + (1.5 + step * 5.2) * cell,
+                y: pad + 7.5 * cell,
+            };
+    }
+}
+
+function getPieceBoardPoint(
+    piece: ParchisPiece,
+    seatIndex: number,
+    boardSize: number
+): { x: number; y: number } {
+    const pad = boardSize * 0.036;
+    const inner = boardSize - pad * 2;
+    const cell = inner / 15;
+
+    if (piece.stage === -1) {
+        const home = getSeatHomeCenter(seatIndex);
+        const slot = getHomeSlotOffset(piece.id, cell);
+        return {
+            x: home.x * boardSize + slot.dx,
+            y: home.y * boardSize + slot.dy,
+        };
+    }
+
+    if (piece.stage === 100) {
+        const pt = getGoalLanePoint(seatIndex, piece.pos, boardSize);
+        const jitter = (piece.id % 2 === 0 ? -1 : 1) * (cell * 0.14);
+        return {
+            x: pt.x + (seatIndex % 2 === 0 ? jitter : 0),
+            y: pt.y + (seatIndex % 2 === 1 ? jitter : 0),
+        };
+    }
+
+    const spot = ((piece.pos % TRACK_LEN) + TRACK_LEN) % TRACK_LEN;
+    const g = TRACK_GRID[spot];
+    const baseX = pad + (g.gx + 0.5) * cell;
+    const baseY = pad + (g.gy + 0.5) * cell;
+    const angle = ((piece.id + seatIndex) % 4) * (Math.PI / 2);
+    const offset = cell * 0.56;
+
+    return {
+        x: baseX + Math.cos(angle) * offset,
+        y: baseY + Math.sin(angle) * offset,
+    };
+}
+
+function getExactSteps(diceValue: number | null): number {
+    if (
+        typeof diceValue !== "number" ||
+        !Number.isFinite(diceValue) ||
+        diceValue <= 0
+    ) {
+        return 0;
+    }
+    return Math.round(diceValue);
+}
+
+// Genera 0 (lugar de la ficha) seguido de 1..N para cualquier digito N
+function buildZeroToNSequence(n: number): number[] {
+    const count = Math.max(0, Math.round(n));
+    const seq: number[] = [0];
+    for (let i = 1; i <= count; i++) {
+        seq.push(i);
+    }
+    return seq;
+}
+
+function getPieceMoveOptions(
+    piece: ParchisPiece,
+    diceValues: number[] | null | undefined
+): MoveOption[] {
+    if (!Array.isArray(diceValues) || diceValues.length === 0) return [];
+
+    if (piece.stage === -1) {
+        const sumIsFive =
+            diceValues.length === 2 &&
+            diceValues[0] + diceValues[1] === 5 &&
+            !diceValues.includes(5);
+        if (diceValues.includes(5) || sumIsFive) {
+            const usedValues = diceValues.includes(5)
+                ? [5]
+                : [...diceValues];
+            const seq = buildZeroToNSequence(1);
+            return [
+                {
+                    label: sumIsFive ? "Salir (suma 5)" : "Salir (5)",
+                    diceValue: 5,
+                    steps: 1,
+                    stepSequence: seq,
+                    sequenceString: seq.join(""),
+                    usedDiceValues: usedValues,
+                    isExitFive: true,
+                },
+            ];
+        }
+        return [];
+    }
+
+    const uniqueDice = Array.from(new Set(diceValues));
+    const options: MoveOption[] = [];
+
+    for (const val of uniqueDice) {
+        const steps = getExactSteps(val);
+        if (steps <= 0) continue;
+        const seq = buildZeroToNSequence(steps);
+        if (piece.stage === 0 && piece.steps_walked + steps <= 70) {
+            options.push({
+                label: `+${val} (${seq.join("")})`,
+                diceValue: val,
+                steps,
+                stepSequence: seq,
+                sequenceString: seq.join(""),
+                usedDiceValues: [val],
+                isExitFive: false,
+            });
+        } else if (piece.stage === 100 && piece.pos + steps <= 7) {
+            options.push({
+                label: `+${val} (${seq.join("")})`,
+                diceValue: val,
+                steps,
+                stepSequence: seq,
+                sequenceString: seq.join(""),
+                usedDiceValues: [val],
+                isExitFive: false,
+            });
+        }
+    }
+
+    return options;
+}
+
+function money(value: number): string {
+    return `$${Number(value || 0).toFixed(2)}`;
+}
+
+function getNetPotDisplay(state: ParchisState | null): number {
+    if (!state) return 0;
+    if (typeof state.net_pot === "number" && Number.isFinite(state.net_pot)) {
+        return state.net_pot;
+    }
+    const gross = Number(state.pot_total || 0);
+    return Number((gross * 0.94).toFixed(2));
+}
+
+function clampDieFace(val: unknown, fallback = 1): number {
+    const n = Number(val);
+    if (!Number.isFinite(n) || n < 1) return fallback;
+    return Math.min(6, Math.max(1, Math.round(n)));
+}
+
+function randomDieFace(exclude?: number): number {
+    const candidates = [1, 2, 3, 4, 5, 6].filter((n) => n !== exclude);
+    return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+function getPoseAtStep(
+    startPiece: ParchisPiece,
+    seatIndex: number,
+    stepIndex: number,
+    isExitFive: boolean
+): ParchisPiece {
+    const startSpot = SEAT_START_SPOTS[seatIndex] ?? 5;
+
+    if (stepIndex <= 0) {
+        return { ...startPiece };
+    }
+
+    if (startPiece.stage === -1) {
+        if (!isExitFive) return { ...startPiece };
+        return {
+            ...startPiece,
+            stage: 0,
+            pos: startSpot,
+            steps_walked: 0,
+        };
+    }
+
+    let stage = startPiece.stage;
+    let pos = startPiece.pos;
+    let stepsWalked = startPiece.steps_walked;
+
+    for (let s = 1; s <= stepIndex; s++) {
+        if (stage === 0) {
+            stepsWalked += 1;
+            if (stepsWalked >= 63) {
+                stage = 100;
+                pos = stepsWalked - 63;
+            } else {
+                pos = (startSpot + stepsWalked) % TRACK_LEN;
+            }
+        } else if (stage === 100) {
+            pos = Math.min(7, pos + 1);
+        }
+    }
+
+    return {
+        ...startPiece,
+        stage,
+        pos,
+        steps_walked: stepsWalked,
+    };
+}
+
+function getTurnFingerprint(st: ParchisState): string {
+    const piecesSig = (st.players || [])
+        .map((pl) =>
+            (pl.pieces || [])
+                .map((pc) => `${pc.id}:${pc.stage}:${pc.pos}:${pc.steps_walked}`)
+                .join(",")
+        )
+        .join("|");
+    return `${st.turn_seat}|${st.must_move}|${(st.dice_remaining || []).join("-")}|${piecesSig}`;
+}
+
+const PIP_COORDS: Record<number, Array<[number, number]>> = {
+    1: [[50, 50]],
+    2: [
+        [28, 28],
+        [72, 72],
+    ],
+    3: [
+        [28, 28],
+        [50, 50],
+        [72, 72],
+    ],
+    4: [
+        [28, 28],
+        [72, 28],
+        [28, 72],
+        [72, 72],
+    ],
+    5: [
+        [28, 28],
+        [72, 28],
+        [50, 50],
+        [28, 72],
+        [72, 72],
+    ],
+    6: [
+        [28, 26],
+        [72, 26],
+        [28, 50],
+        [72, 50],
+        [28, 74],
+        [72, 74],
+    ],
+};
+
+function PipDieBox({
+    num,
+    rolling,
+    used,
+    routeLabel,
+}: {
+    num: number;
+    rolling: boolean;
+    used?: boolean;
+    routeLabel?: string;
+}) {
+    const face = clampDieFace(num, 1);
+    const dots = PIP_COORDS[face] || PIP_COORDS[1];
+
+    return (
+        <div className="flex flex-col items-center gap-0.5">
+            <div
+                className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl border-2 p-1 flex items-center justify-center shadow-md transition-all duration-150 ${
+                    used
+                        ? "bg-zinc-900 border-zinc-700 opacity-35"
+                        : "bg-zinc-100 border-zinc-400"
+                } ${rolling ? "rotate-12 scale-105" : "rotate-0 scale-100"}`}
+            >
+                <svg viewBox="0 0 100 100" className="w-full h-full block">
+                    <rect
+                        x="2"
+                        y="2"
+                        width="96"
+                        height="96"
+                        rx="18"
+                        fill={used ? "#18181b" : "#f4f4f5"}
+                    />
+                    {dots.map(([cx, cy], idx) => (
+                        <circle
+                            key={idx}
+                            cx={cx}
+                            cy={cy}
+                            r="10.5"
+                            fill={used ? "#52525b" : "#18181b"}
+                        />
+                    ))}
+                </svg>
+            </div>
+            {routeLabel && (
+                <span className="text-[9px] font-mono font-black tracking-tight text-emerald-400 leading-none">
+                    {routeLabel}
+                </span>
+            )}
+        </div>
+    );
+}
+
+function BlackOffTurnDieBox({ num }: { num: number }) {
+    const face = clampDieFace(num, 1);
+
+    return (
+        <div
+            className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-black border border-zinc-800 p-1 flex items-center justify-center shadow-inner"
+            title={`Dado ${face}`}
+        >
+            <svg viewBox="0 0 100 100" className="w-full h-full block">
+                <rect
+                    x="2"
+                    y="2"
+                    width="96"
+                    height="96"
+                    rx="18"
+                    fill="#050505"
+                    stroke="#18181b"
+                    strokeWidth="3"
+                />
+                <circle cx="50" cy="50" r="9" fill="#09090b" />
+            </svg>
+        </div>
+    );
+}
+
+function PlayerTurnRow({
+    playerName,
+    colorName,
+    accentColor,
+    dice,
+    rolling,
+    isActiveTurn,
+    canRoll,
+    waitingTurn,
+    onRoll,
+    position,
+}: {
+    playerName: string;
+    colorName: string;
+    accentColor: string;
+    dice: number[];
+    rolling: boolean;
+    isActiveTurn: boolean;
+    canRoll: boolean;
+    waitingTurn: boolean;
+    onRoll: () => void;
+    position: "top" | "bottom";
+}) {
+    const [spinDice, setSpinDice] = useState<[number, number]>([3, 4]);
+
+    useEffect(() => {
+        if (!isActiveTurn || !rolling) return;
+        const timer = setInterval(() => {
+            setSpinDice(([a, b]) => [randomDieFace(a), randomDieFace(b)]);
+        }, 75);
+        return () => clearInterval(timer);
+    }, [isActiveTurn, rolling]);
+
+    const shownDice = rolling
+        ? spinDice
+        : [clampDieFace(dice[0], 1), clampDieFace(dice[1], 1)];
+
+    const badge = (
+        <div className="flex items-center gap-1.5">
+            <span
+                className="w-3 h-3 rounded-full border border-white/40 shadow"
+                style={{ backgroundColor: accentColor }}
+            />
+            <span className="text-xs sm:text-sm font-black text-white">
+                {playerName}
+            </span>
+            <span
+                className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full text-black"
+                style={{ backgroundColor: accentColor }}
+            >
+                {colorName}
+            </span>
+        </div>
+    );
+
+    const diceBox = isActiveTurn ? (
+        <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 rounded-2xl border border-zinc-800 bg-black/70 p-1.5">
+                <PipDieBox num={shownDice[0]} rolling={rolling} />
+                <PipDieBox num={shownDice[1]} rolling={rolling} />
+            </div>
+            {canRoll && !waitingTurn && (
+                <button
+                    type="button"
+                    disabled={rolling}
+                    onClick={onRoll}
+                    className="px-3.5 py-2.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-black font-black text-[11px] uppercase rounded-xl shadow-md active:scale-95 transition-all"
+                >
+                    {rolling ? "..." : "Lanzar"}
+                </button>
+            )}
+        </div>
+    ) : null;
+
+    if (position === "top") {
+        return (
+            <div className="w-full flex flex-col items-end gap-1">
+                {diceBox}
+                {badge}
+            </div>
+        );
+    }
+
+    return (
+        <div className="w-full flex flex-col items-start gap-1">
+            {badge}
+            {diceBox}
+        </div>
+    );
+}
+
+export default function ParchisGamePage() {
+    const [userId, setUserId] = useState<string | null>(null);
+    const [accessToken, setAccessToken] = useState("");
+    const [isAuthLoading, setIsAuthLoading] = useState(true);
+
+    const [playerName, setPlayerName] = useState("");
+    const [docNumber, setDocNumber] = useState("");
+    const [searchId, setSearchId] = useState("");
+
     const [playBalance, setPlayBalance] = useState(0);
     const [bonusBalance, setBonusBalance] = useState(0);
-    const [wallet, setWallet] = useState<Wallet>("play");
-    const [bet, setBet] = useState(0.25);
-    const [maxPlayers, setMaxPlayers] = useState<2 | 3 | 4>(2);
-    const [privateRoom, setPrivateRoom] = useState(false);
-    const [password, setPassword] = useState("");
-    const [joinCode, setJoinCode] = useState("");
-    const [rooms, setRooms] = useState<Room[]>([]);
-    const [state, setState] = useState<GameState | null>(null);
+    const [selectedWallet, setSelectedWallet] = useState<Wallet>("play");
+
+    const [selectedBet, setSelectedBet] = useState<ParchisBet>("0.25");
+    const [maxPlayers, setMaxPlayers] = useState<MaxPlayers>(2);
+    const [isPrivate, setIsPrivate] = useState(false);
+    const [roomPassword, setRoomPassword] = useState("");
+    const [joinRoomId, setJoinRoomId] = useState("");
+    const [joinPassword, setJoinPassword] = useState("");
+
+    const [publicRooms, setPublicRooms] = useState<PublicRoomItem[]>([]);
+    const [roomsUnavailable, setRoomsUnavailable] = useState(false);
+    const [isInGame, setIsInGame] = useState(false);
     const [roomId, setRoomId] = useState("");
-    const [connected, setConnected] = useState(false);
-    const [busy, setBusy] = useState(false);
-    const [error, setError] = useState("");
-    const [selectedPiece, setSelectedPiece] = useState<number | null>(null);
-    const socket = useRef<WebSocket | null>(null);
-    const mySeat = seatOf(state, uid || null);
-    const myTurn = Boolean(state && mySeat >= 0 && state.turn_seat === mySeat && state.status === "playing");
-    const myPlayer = state?.players.find(p => p.user_id === uid);
-    const availableBalance = wallet === "play" ? playBalance : bonusBalance;
+    const [isConnected, setIsConnected] = useState(false);
+    const [connectionMessage, setConnectionMessage] = useState(
+        "Preparando arena..."
+    );
+    const [gameState, setGameState] = useState<ParchisState | null>(null);
+    const [displayedDice, setDisplayedDice] = useState<number[]>([3, 4]);
+    const [turnSeconds, setTurnSeconds] = useState(10);
+    const [busyAction, setBusyAction] = useState(false);
+    const [rollingDice, setRollingDice] = useState(false);
+    const [isConnecting, setIsConnecting] = useState(false);
+    const [isTurnWaiting, setIsTurnWaiting] = useState(false);
+    const [isMovingPiece, setIsMovingPiece] = useState(false);
+    const [activeSocket, setActiveSocket] = useState<WebSocket | null>(null);
 
-    const refreshProfile = useCallback(async () => {
-        const { data } = await supabase.auth.getSession();
-        const session = data.session;
-        if (!session) { setUid(""); setToken(""); return; }
-        setUid(session.user.id); setToken(session.access_token);
-        const { data: profile } = await supabase.from("profiles").select("first_name,balance,bonus_balance").eq("id", session.user.id).maybeSingle();
-        if (profile) {
-            setName(profile.first_name || "Jugador");
-            setPlayBalance(Number(profile.balance || 0));
-            setBonusBalance(Number(profile.bonus_balance || 0));
+    const [pendingChoice, setPendingChoice] = useState<{
+        pieceId: number;
+        options: MoveOption[];
+    } | null>(null);
+
+    const [modal, setModal] = useState({
+        isOpen: false,
+        title: "",
+        message: "",
+    });
+
+    const boardCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const gameStateRef = useRef<ParchisState | null>(null);
+    const userIdRef = useRef<string | null>(null);
+    const socketRef = useRef<WebSocket | null>(null);
+    const closingByUserRef = useRef(false);
+    const isTurnWaitingRef = useRef(false);
+    const turnDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const lastDelayedFingerprintRef = useRef<string>("");
+    const stepAnimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const animatedPieceRef = useRef<{
+        userId: string;
+        pieceId: number;
+        piece: ParchisPiece;
+        stepSequence: number[];
+        currentStepIndex: number;
+    } | null>(null);
+
+    useEffect(() => {
+        userIdRef.current = userId;
+    }, [userId]);
+
+    const clearAllTimers = useCallback(() => {
+        if (turnDelayTimerRef.current) {
+            clearTimeout(turnDelayTimerRef.current);
+            turnDelayTimerRef.current = null;
+        }
+        if (stepAnimTimerRef.current) {
+            clearTimeout(stepAnimTimerRef.current);
+            stepAnimTimerRef.current = null;
+        }
+        animatedPieceRef.current = null;
+        lastDelayedFingerprintRef.current = "";
+        isTurnWaitingRef.current = false;
+        setPendingChoice(null);
+        setIsTurnWaiting(false);
+        setIsMovingPiece(false);
+    }, []);
+
+    const showAlert = useCallback((title: string, message: string) => {
+        setModal({ isOpen: true, title, message });
+    }, []);
+
+    const closeModal = () => {
+        setModal({ isOpen: false, title: "", message: "" });
+    };
+
+    const getWebSocketUrl = useCallback((endpoint: string) => {
+        const configuredUrl =
+            process.env.NEXT_PUBLIC_WS_URL ||
+            API_BASE ||
+            "wss://casino-axiom.ethiodeploy.app";
+
+        let backendUrl = configuredUrl.trim().replace(/\/+$/, "");
+
+        if (backendUrl.startsWith("https://")) {
+            backendUrl = "wss://" + backendUrl.slice(8);
+        } else if (backendUrl.startsWith("http://")) {
+            backendUrl = "ws://" + backendUrl.slice(7);
+        }
+
+        return `${backendUrl}${endpoint}`;
+    }, []);
+
+    const loadUserBalances = useCallback(async (currentSession?: any) => {
+        try {
+            let session = currentSession;
+            if (!session) {
+                const { data, error } = await supabase.auth.getSession();
+                if (error) {
+                    console.error("Error obteniendo sesión:", error);
+                    return;
+                }
+                session = data.session;
+            }
+
+            const currentUserId = session?.user?.id;
+            if (!currentUserId) {
+                setUserId(null);
+                setAccessToken("");
+                setPlayBalance(0);
+                setBonusBalance(0);
+                setPlayerName("");
+                setDocNumber("");
+                return;
+            }
+
+            const token = session.access_token || "";
+            setUserId(currentUserId);
+            setAccessToken(token);
+
+            const emailFallback =
+                session.user?.email?.split("@")[0] || "Jugador";
+
+            const { data: profile, error } = await supabase
+                .from("profiles")
+                .select("first_name, doc_number, balance, bonus_balance")
+                .eq("id", currentUserId)
+                .maybeSingle();
+
+            if (error) {
+                console.error("Error cargando perfil:", error);
+                setPlayerName((prev) => prev || emailFallback);
+                return;
+            }
+
+            if (profile) {
+                setPlayerName(getMainName(profile, emailFallback));
+                setDocNumber(
+                    profile.doc_number ? String(profile.doc_number) : ""
+                );
+                setPlayBalance(Number(profile.balance ?? 0));
+                setBonusBalance(Number(profile.bonus_balance ?? 0));
+            } else {
+                setPlayerName((prev) => prev || emailFallback);
+            }
+        } catch (error) {
+            console.error("Error cargando saldos:", error);
         }
     }, []);
 
-    const loadRooms = useCallback(async () => {
-        try {
-            const response = await fetch(`${API}/parchis/rooms`);
-            const data = await response.json();
-            setRooms(Array.isArray(data.rooms) ? data.rooms : []);
-        } catch { setError("No se pudo cargar la lista de salas."); }
-    }, []);
-
-    useEffect(() => { void refreshProfile(); void loadRooms(); }, [refreshProfile, loadRooms]);
     useEffect(() => {
-        const channel = supabase.auth.onAuthStateChange(() => { void refreshProfile(); });
-        return () => { channel.data.subscription.unsubscribe(); };
-    }, [refreshProfile]);
-    useEffect(() => () => { socket.current?.close(); }, []);
+        let mounted = true;
 
-    const connect = useCallback((target: string, roomPassword = "") => {
-        if (!uid || !token) { setError("Inicie sesión para entrar a Parchís."); return; }
-        socket.current?.close();
-        setBusy(true); setError(""); setRoomId(target); setState(null); setSelectedPiece(null);
-        const wsBase = (process.env.NEXT_PUBLIC_WS_URL || API).replace(/^https:/, "wss:").replace(/^http:/, "ws:").replace(/\/$/, "");
-        const query = new URLSearchParams({ user_id: uid, access_token: token, player_name: name, bet: String(bet), max_players: String(maxPlayers), wallet, password: roomPassword });
-        const ws = new WebSocket(`${wsBase}/ws/parchis/${encodeURIComponent(target)}?${query.toString()}`);
-        socket.current = ws;
-        ws.onopen = () => { setConnected(true); setBusy(false); };
-        ws.onmessage = event => {
-            let msg: any; try { msg = JSON.parse(event.data); } catch { return; }
-            if (msg.type === "PARCHIS_STATE") { setState(msg as GameState); setRoomId(msg.room_id); setError(""); }
-            else if (msg.type === "ERROR") { setError(msg.message || "Error en la partida."); setBusy(false); }
-            else if (msg.type === "PONG") return;
+        const initialize = async () => {
+            const { data, error } = await supabase.auth.getSession();
+            if (error) {
+                console.error("Error de autenticación:", error);
+            }
+            if (!mounted) return;
+            await loadUserBalances(data.session);
+            if (mounted) setIsAuthLoading(false);
         };
-        ws.onerror = () => { setError("No se pudo conectar con el servidor de Parchís."); setBusy(false); };
-        ws.onclose = () => { setConnected(false); setBusy(false); };
-    }, [uid, token, name, bet, maxPlayers, wallet]);
+
+        void initialize();
+
+        const {
+            data: { subscription },
+        } = supabase.auth.onAuthStateChange((_event, session) => {
+            if (!mounted) return;
+            if (session) {
+                void loadUserBalances(session);
+            } else {
+                setUserId(null);
+                setAccessToken("");
+                setPlayBalance(0);
+                setBonusBalance(0);
+                setPlayerName("");
+                setDocNumber("");
+            }
+        });
+
+        return () => {
+            mounted = false;
+            subscription.unsubscribe();
+        };
+    }, [loadUserBalances]);
+
+    const fetchPublicRooms = useCallback(async () => {
+        try {
+            const amount = PARCHIS_BETS[selectedBet];
+            const idParam = searchId.trim()
+                ? `&doc_number=${encodeURIComponent(searchId.trim())}&cedula=${encodeURIComponent(searchId.trim())}`
+                : "";
+            const res = await fetch(
+                `${API_BASE}/parchis/rooms?bet=${encodeURIComponent(
+                    String(amount)
+                )}${idParam}`
+            );
+            if (!res.ok) {
+                setRoomsUnavailable(true);
+                setPublicRooms([]);
+                return;
+            }
+            const data = await res.json();
+            setRoomsUnavailable(false);
+            setPublicRooms(Array.isArray(data.rooms) ? data.rooms : []);
+        } catch {
+            setRoomsUnavailable(true);
+            setPublicRooms([]);
+        }
+    }, [selectedBet, searchId]);
 
     useEffect(() => {
-        if (!connected || !socket.current) return;
-        const timer = window.setInterval(() => { if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify({ type: "PING" })); }, 20000);
-        return () => window.clearInterval(timer);
-    }, [connected]);
+        if (isInGame || !userId) return;
+        void fetchPublicRooms();
+        const timer = setInterval(() => {
+            void fetchPublicRooms();
+        }, 5000);
+        return () => clearInterval(timer);
+    }, [isInGame, userId, fetchPublicRooms]);
 
-    const joinPrivateRoom = async () => {
-        const code = joinCode.trim();
-        if (!code) return;
-        setBusy(true); setError("");
+    const resetSessionState = useCallback(() => {
+        clearAllTimers();
+        setIsConnecting(false);
+        setIsConnected(false);
+        setRollingDice(false);
+        setIsInGame(false);
+        setGameState(null);
+        gameStateRef.current = null;
+        setRoomId("");
+        setActiveSocket(null);
+        socketRef.current = null;
+    }, [clearAllTimers]);
+
+    const exitParchisGame = useCallback(async () => {
+        closingByUserRef.current = true;
+
+        const currentState = gameStateRef.current;
+        const activeRoomId = currentState?.room_id || roomId;
+        const mySeat = currentState?.players?.find(
+            (pl) => pl.user_id === userIdRef.current
+        );
+        const hostClosing =
+            currentState !== null &&
+            userIdRef.current !== null &&
+            (currentState.host_user_id === userIdRef.current ||
+                mySeat?.seat_index === 0);
+
+        const ws = socketRef.current;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            try {
+                ws.send(
+                    JSON.stringify({
+                        type: hostClosing ? "CLOSE_ROOM" : "LEAVE_ROOM",
+                        room_id: activeRoomId,
+                    })
+                );
+            } catch {}
+        }
+
+        if (hostClosing && activeRoomId && accessToken) {
+            try {
+                await fetch(
+                    `${API_BASE}/parchis/rooms/${encodeURIComponent(
+                        String(activeRoomId)
+                    )}/close`,
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            Authorization: `Bearer ${accessToken}`,
+                        },
+                    }
+                );
+            } catch {}
+        }
+
+        if (activeRoomId) {
+            setPublicRooms((prev) =>
+                prev.filter((r) => String(r.room_id) !== String(activeRoomId))
+            );
+        }
+
+        resetSessionState();
+
+        if (ws) {
+            ws.onclose = null;
+            ws.onerror = null;
+            ws.onmessage = null;
+            if (
+                ws.readyState === WebSocket.OPEN ||
+                ws.readyState === WebSocket.CONNECTING
+            ) {
+                ws.close(
+                    1000,
+                    hostClosing
+                        ? "Anfitrión cerró la sala"
+                        : "Jugador salió de la partida"
+                );
+            }
+        }
+
+        await loadUserBalances();
+        await fetchPublicRooms();
+    }, [
+        accessToken,
+        fetchPublicRooms,
+        loadUserBalances,
+        resetSessionState,
+        roomId,
+    ]);
+
+    const applyIncomingGameState = useCallback(
+        (nextState: ParchisState) => {
+            if (nextState.status === "closed_by_host") {
+                if (nextState.room_id) {
+                    setPublicRooms((prev) =>
+                        prev.filter(
+                            (r) =>
+                                String(r.room_id) !== String(nextState.room_id)
+                        )
+                    );
+                }
+                resetSessionState();
+                showAlert(
+                    "Sala cerrada",
+                    nextState.last_event ||
+                        "El anfitrión cerró la sala y se eliminó la partida."
+                );
+                return;
+            }
+
+            if (stepAnimTimerRef.current) {
+                clearTimeout(stepAnimTimerRef.current);
+                stepAnimTimerRef.current = null;
+            }
+            animatedPieceRef.current = null;
+            setPendingChoice(null);
+            setIsMovingPiece(false);
+
+            const prevState = gameStateRef.current;
+            const fingerprint = getTurnFingerprint(nextState);
+            const turnChanged =
+                prevState !== null &&
+                prevState.status === "playing" &&
+                nextState.status === "playing" &&
+                prevState.turn_seat !== nextState.turn_seat &&
+                fingerprint !== lastDelayedFingerprintRef.current;
+
+            const commitState = () => {
+                turnDelayTimerRef.current = null;
+                isTurnWaitingRef.current = false;
+                setIsTurnWaiting(false);
+                gameStateRef.current = nextState;
+                setGameState(nextState);
+                setRollingDice(false);
+
+                if (Array.isArray(nextState.dice_pair) && nextState.dice_pair.length >= 2) {
+                    setDisplayedDice([
+                        clampDieFace(nextState.dice_pair[0], 1),
+                        clampDieFace(nextState.dice_pair[1], 1),
+                    ]);
+                } else if (Array.isArray(nextState.dice_remaining) && nextState.dice_remaining.length >= 2) {
+                    setDisplayedDice([
+                        clampDieFace(nextState.dice_remaining[0], 1),
+                        clampDieFace(nextState.dice_remaining[1], 1),
+                    ]);
+                } else if (Array.isArray(nextState.dice_remaining) && nextState.dice_remaining.length === 1) {
+                    setDisplayedDice([clampDieFace(nextState.dice_remaining[0], 1), displayedDice[1] || 1]);
+                }
+                setTurnSeconds(
+                    typeof nextState.turn_seconds === "number"
+                        ? Math.max(0, Math.ceil(nextState.turn_seconds))
+                        : 10
+                );
+            };
+
+            if (turnChanged) {
+                lastDelayedFingerprintRef.current = fingerprint;
+                if (turnDelayTimerRef.current) {
+                    clearTimeout(turnDelayTimerRef.current);
+                }
+                isTurnWaitingRef.current = true;
+                setIsTurnWaiting(true);
+                setRollingDice(false);
+                turnDelayTimerRef.current = setTimeout(
+                    commitState,
+                    TURN_TRANSITION_DELAY_MS
+                );
+                return;
+            }
+
+            if (!isTurnWaitingRef.current) {
+                commitState();
+            }
+        },
+        [displayedDice, resetSessionState, showAlert]
+    );
+
+    const connectToRoom = useCallback(
+        (
+            targetRoomId: string,
+            pwd = "",
+            overrideBet?: number,
+            overridePlayers?: MaxPlayers
+        ) => {
+            if (isConnecting || socketRef.current) {
+                showAlert(
+                    "Partida activa",
+                    "Ya existe una conexión activa en Parchís."
+                );
+                return;
+            }
+
+            if (!userId || !accessToken) {
+                showAlert(
+                    "Error de sesión",
+                    "No se detectó una sesión válida. Vuelve a iniciar sesión."
+                );
+                return;
+            }
+
+            const betAmount = overrideBet ?? PARCHIS_BETS[selectedBet];
+            const playersCount = overridePlayers ?? maxPlayers;
+            const available =
+                selectedWallet === "play" ? playBalance : bonusBalance;
+
+            if (available < betAmount) {
+                showAlert(
+                    "Saldo insuficiente",
+                    `Necesitas al menos ${money(betAmount)} en la billetera seleccionada.`
+                );
+                return;
+            }
+
+            clearAllTimers();
+            closingByUserRef.current = false;
+            setIsConnecting(true);
+            setIsConnected(false);
+
+            setRoomId(targetRoomId);
+            setIsInGame(true);
+            setGameState(null);
+            gameStateRef.current = null;
+            setDisplayedDice([3, 4]);
+            setTurnSeconds(10);
+            setConnectionMessage("Conectando con el servidor...");
+
+            const cleanName = (playerName.trim() || "Jugador").split(/\s+/)[0];
+            const cleanId = docNumber.trim();
+
+            const wsUrl = getWebSocketUrl(
+                `/ws/parchis/${encodeURIComponent(targetRoomId)}` +
+                    `?user_id=${encodeURIComponent(userId)}` +
+                    `&access_token=${encodeURIComponent(accessToken)}` +
+                    `&player_name=${encodeURIComponent(cleanName)}` +
+                    `&doc_number=${encodeURIComponent(cleanId)}` +
+                    `&cedula=${encodeURIComponent(cleanId)}` +
+                    `&bet=${encodeURIComponent(String(betAmount))}` +
+                    `&max_players=${encodeURIComponent(String(playersCount))}` +
+                    `&wallet=${encodeURIComponent(selectedWallet)}` +
+                    `&password=${encodeURIComponent(pwd)}`
+            );
+
+            let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+            try {
+                const ws = new WebSocket(wsUrl);
+                socketRef.current = ws;
+                setActiveSocket(ws);
+
+                ws.onopen = () => {
+                    if (heartbeatTimer) clearInterval(heartbeatTimer);
+                    heartbeatTimer = setInterval(() => {
+                        if (ws.readyState === WebSocket.OPEN) {
+                            try {
+                                ws.send(JSON.stringify({ type: "PING" }));
+                            } catch {}
+                        }
+                    }, 20000);
+                    setConnectionMessage("Esperando estado de la partida...");
+                };
+
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+
+                        if (
+                            data.type === "HOST_LEFT" ||
+                            data.type === "ROOM_CLOSED" ||
+                            data.status === "closed_by_host"
+                        ) {
+                            if (heartbeatTimer) {
+                                clearInterval(heartbeatTimer);
+                                heartbeatTimer = null;
+                            }
+                            const closedId = String(
+                                data.room_id || targetRoomId
+                            );
+                            setPublicRooms((prev) =>
+                                prev.filter((r) => String(r.room_id) !== closedId)
+                            );
+                            resetSessionState();
+                            ws.onclose = null;
+                            ws.close(1000, "Sala cerrada por el anfitrión");
+                            void loadUserBalances();
+                            void fetchPublicRooms();
+                            showAlert(
+                                "Sala cerrada",
+                                data.message ||
+                                    "El anfitrión cerró la sala y esta fue eliminada."
+                            );
+                            return;
+                        }
+
+                        if (data.type === "PARCHIS_STATE") {
+                            applyIncomingGameState(data);
+                            if (data.room_id) {
+                                setRoomId(String(data.room_id));
+                            }
+                            setIsConnected(true);
+                            setConnectionMessage("Partida conectada");
+                            if (data.status === "finished") {
+                                void loadUserBalances();
+                            }
+                            return;
+                        }
+
+                        if (data.type === "ERROR") {
+                            setRollingDice(false);
+                            setIsConnecting(false);
+                            setIsMovingPiece(false);
+                            setPendingChoice(null);
+                            animatedPieceRef.current = null;
+                            showAlert(
+                                "Error del servidor",
+                                data.message ||
+                                    "No se pudo completar la acción."
+                            );
+                            if (!gameStateRef.current) {
+                                resetSessionState();
+                            }
+                        }
+                    } catch (error) {
+                        console.error(
+                            "Error procesando mensaje Parchís:",
+                            error
+                        );
+                    }
+                };
+
+                ws.onerror = () => {
+                    if (heartbeatTimer) {
+                        clearInterval(heartbeatTimer);
+                        heartbeatTimer = null;
+                    }
+                    setRollingDice(false);
+                    setIsMovingPiece(false);
+                    setConnectionMessage("Error de enlace con la sala...");
+                };
+
+                ws.onclose = (event) => {
+                    if (heartbeatTimer) {
+                        clearInterval(heartbeatTimer);
+                        heartbeatTimer = null;
+                    }
+
+                    const wasUserClose = closingByUserRef.current;
+                    closingByUserRef.current = false;
+                    resetSessionState();
+
+                    if (!wasUserClose) {
+                        void fetchPublicRooms();
+                        showAlert(
+                            "Sala cerrada",
+                            event.reason ||
+                                `Se cerró la sala (${event.code}).`
+                        );
+                    }
+
+                    void loadUserBalances();
+                };
+            } catch (error) {
+                if (heartbeatTimer) {
+                    clearInterval(heartbeatTimer);
+                    heartbeatTimer = null;
+                }
+                console.error("Error creando WebSocket Parchís:", error);
+                resetSessionState();
+                showAlert(
+                    "Error de conexión",
+                    "No se pudo conectar con el servidor de Parchís."
+                );
+            }
+        },
+        [
+            accessToken,
+            applyIncomingGameState,
+            bonusBalance,
+            clearAllTimers,
+            docNumber,
+            fetchPublicRooms,
+            getWebSocketUrl,
+            isConnecting,
+            loadUserBalances,
+            maxPlayers,
+            playBalance,
+            playerName,
+            resetSessionState,
+            selectedBet,
+            selectedWallet,
+            showAlert,
+            userId,
+        ]
+    );
+
+    const handleCreatePrivateOrCustomRoom = async () => {
+        if (!accessToken) {
+            showAlert("Sesión requerida", "Inicia sesión para crear una sala.");
+            return;
+        }
+        if (!docNumber.trim()) {
+            showAlert(
+                "ID requerido",
+                "Tu perfil no tiene ID registrado o está vacío."
+            );
+            return;
+        }
+
+        const betAmount = PARCHIS_BETS[selectedBet];
+        const available =
+            selectedWallet === "play" ? playBalance : bonusBalance;
+
+        if (available < betAmount) {
+            showAlert(
+                "Saldo insuficiente",
+                `Necesitas al menos ${money(betAmount)} en la billetera seleccionada.`
+            );
+            return;
+        }
+
+        setBusyAction(true);
         try {
-            const response = await fetch(`${API}/parchis/rooms/resolve`, {
+            const cleanName = (playerName.trim() || "Jugador").split(/\s+/)[0];
+            const res = await fetch(`${API_BASE}/parchis/rooms/create`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ room_code: code }),
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${accessToken}`,
+                },
+                body: JSON.stringify({
+                    bet: betAmount,
+                    max_players: maxPlayers,
+                    wallet: selectedWallet,
+                    is_private: isPrivate,
+                    password: isPrivate ? roomPassword.trim() : "",
+                    host_name: cleanName,
+                    host_doc_number: docNumber.trim(),
+                    host_cedula: docNumber.trim(),
+                }),
             });
-            const data = await response.json();
-            if (!response.ok || !data.room_id) throw new Error(data.detail || "Código de sala no válido.");
-            connect(data.room_id, code);
-        } catch (e) {
-            setError(e instanceof Error ? e.message : "No se pudo localizar la sala.");
-            setBusy(false);
+
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.room_id) {
+                showAlert(
+                    "No se pudo crear la sala",
+                    data.detail || "Revisa los datos e intenta nuevamente."
+                );
+                return;
+            }
+
+            connectToRoom(
+                String(data.room_id),
+                String(data.room_code || roomPassword.trim()),
+                betAmount,
+                maxPlayers
+            );
+        } catch {
+            showAlert("Error de red", "No se pudo contactar al servidor.");
+        } finally {
+            setBusyAction(false);
         }
     };
 
-    const createRoom = async () => {
-        if (!token) { setError("Inicie sesión para crear una sala."); return; }
-        if (availableBalance < bet) { setError(`Saldo insuficiente en la billetera ${wallet}.`); return; }
-        setBusy(true); setError("");
-        try {
-            const response = await fetch(`${API}/parchis/rooms/create`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ bet, max_players: maxPlayers, wallet, is_private: privateRoom, password: privateRoom ? password : "" }) });
-            const data = await response.json();
-            if (!response.ok || !data.room_id) throw new Error(data.detail || "No se pudo crear la sala.");
-            connect(data.room_id, data.room_code || password);
-        } catch (e) { setError(e instanceof Error ? e.message : "Error al crear sala."); setBusy(false); }
+    const sendRollDice = () => {
+        if (isTurnWaiting || isMovingPiece) return;
+        const ws = socketRef.current || activeSocket;
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        setPendingChoice(null);
+        setRollingDice(true);
+        ws.send(JSON.stringify({ type: "ROLL_DICE" }));
     };
 
-    const send = (type: string, extra: Record<string, unknown> = {}) => {
-        if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify({ type, ...extra }));
+    // Recorre estrictamente 0 (lugar de la ficha) seguido de 1..N para cualquier digito N
+    const sendMovePiece = useCallback(
+        (pieceId: number, option: MoveOption) => {
+            if (isTurnWaiting || isMovingPiece) return;
+            const ws = socketRef.current || activeSocket;
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+            setPendingChoice(null);
+
+            const curState = gameStateRef.current;
+            const me = curState?.players?.find(
+                (p) => p.user_id === userIdRef.current
+            );
+            const startPiece = me?.pieces?.find((pc) => pc.id === pieceId);
+            const seatIdx = me?.seat_index ?? 0;
+            const isExitingFromHome =
+                startPiece?.stage === -1 && Boolean(option.isExitFive);
+            const totalSteps = isExitingFromHome
+                ? 1
+                : getExactSteps(option.diceValue);
+            const stepSequence =
+                option.stepSequence && option.stepSequence.length > 0
+                    ? option.stepSequence
+                    : buildZeroToNSequence(totalSteps);
+            const sequenceString = stepSequence.join("");
+
+            if (stepAnimTimerRef.current) {
+                clearTimeout(stepAnimTimerRef.current);
+                stepAnimTimerRef.current = null;
+            }
+
+            const payload = JSON.stringify({
+                type: "MOVE_PIECE",
+                piece_id: pieceId,
+                dice_value: option.diceValue,
+                steps_moved: totalSteps,
+                step_sequence: stepSequence,
+                sequence_0_to_n: sequenceString,
+                used_dice_values: option.usedDiceValues,
+                exit_to_start: isExitingFromHome,
+            });
+
+            if (me && startPiece && totalSteps > 0) {
+                setIsMovingPiece(true);
+                let seqPos = 0;
+
+                animatedPieceRef.current = {
+                    userId: me.user_id,
+                    pieceId,
+                    piece: getPoseAtStep(
+                        startPiece,
+                        seatIdx,
+                        stepSequence[0] ?? 0,
+                        isExitingFromHome
+                    ),
+                    stepSequence,
+                    currentStepIndex: seqPos,
+                };
+
+                const scheduleNext = () => {
+                    stepAnimTimerRef.current = setTimeout(() => {
+                        if (seqPos + 1 < stepSequence.length) {
+                            seqPos += 1;
+                            const stepVal = stepSequence[seqPos] ?? 0;
+                            animatedPieceRef.current = {
+                                userId: me.user_id,
+                                pieceId,
+                                piece: getPoseAtStep(
+                                    startPiece,
+                                    seatIdx,
+                                    stepVal,
+                                    isExitingFromHome
+                                ),
+                                stepSequence,
+                                currentStepIndex: seqPos,
+                            };
+                            scheduleNext();
+                        } else {
+                            stepAnimTimerRef.current = null;
+                            if (ws.readyState === WebSocket.OPEN) {
+                                ws.send(payload);
+                            } else {
+                                animatedPieceRef.current = null;
+                                setIsMovingPiece(false);
+                            }
+                        }
+                    }, STEP_INTERVAL_MS);
+                };
+
+                scheduleNext();
+                return;
+            }
+
+            ws.send(payload);
+        },
+        [activeSocket, isMovingPiece, isTurnWaiting]
+    );
+
+    const renderBoard = useCallback(() => {
+        const canvas = boardCanvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const size = Math.max(
+            240,
+            Math.floor(Math.min(rect.width, rect.height || rect.width))
+        );
+
+        if (
+            canvas.width !== Math.floor(size * dpr) ||
+            canvas.height !== Math.floor(size * dpr)
+        ) {
+            canvas.width = Math.floor(size * dpr);
+            canvas.height = Math.floor(size * dpr);
+        }
+
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, size, size);
+
+        const woodGrad = ctx.createLinearGradient(0, 0, size, size);
+        woodGrad.addColorStop(0, "#784c2e");
+        woodGrad.addColorStop(0.5, "#54321c");
+        woodGrad.addColorStop(1, "#371f10");
+        ctx.fillStyle = woodGrad;
+        ctx.beginPath();
+        ctx.roundRect(0, 0, size, size, 20);
+        ctx.fill();
+
+        ctx.strokeStyle = "#a16a43";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(1.5, 1.5, size - 3, size - 3, 19);
+        ctx.stroke();
+
+        const pad = size * 0.036;
+        const inner = size - pad * 2;
+        const cell = inner / 15;
+
+        ctx.fillStyle = "#faf5e8";
+        ctx.fillRect(pad, pad, inner, inner);
+
+        for (let y = 1; y <= 6; y++) {
+            ctx.fillStyle = SEAT_PALETTE[0].main;
+            ctx.fillRect(pad + 7 * cell, pad + y * cell, cell, cell);
+        }
+        for (let x = 8; x <= 13; x++) {
+            ctx.fillStyle = SEAT_PALETTE[1].main;
+            ctx.fillRect(pad + x * cell, pad + 7 * cell, cell, cell);
+        }
+        for (let y = 8; y <= 13; y++) {
+            ctx.fillStyle = SEAT_PALETTE[2].main;
+            ctx.fillRect(pad + 7 * cell, pad + y * cell, cell, cell);
+        }
+        for (let x = 1; x <= 6; x++) {
+            ctx.fillStyle = SEAT_PALETTE[3].main;
+            ctx.fillRect(pad + x * cell, pad + 7 * cell, cell, cell);
+        }
+
+        ctx.strokeStyle = "rgba(24, 24, 27, 0.34)";
+        ctx.lineWidth = 1;
+        for (let r = 0; r < 15; r++) {
+            for (let c = 0; c < 15; c++) {
+                const inHome =
+                    (r < 6 && c < 6) ||
+                    (r < 6 && c > 8) ||
+                    (r > 8 && c > 8) ||
+                    (r > 8 && c < 6);
+                const inCenter = r >= 6 && r <= 8 && c >= 6 && c <= 8;
+                if (inHome || inCenter) continue;
+                ctx.strokeRect(pad + c * cell, pad + r * cell, cell, cell);
+            }
+        }
+
+        for (let i = 0; i < TRACK_LEN; i++) {
+            const g = TRACK_GRID[i];
+            const px = pad + (g.gx + 0.5) * cell;
+            const py = pad + (g.gy + 0.5) * cell;
+
+            if (GRAY_STAR_SPOTS.has(i) || SAFE_SPOTS.has(i)) {
+                ctx.fillStyle = "#cbd5e1";
+                ctx.fillRect(
+                    pad + g.gx * cell + 1.2,
+                    pad + g.gy * cell + 1.2,
+                    cell - 2.4,
+                    cell - 2.4
+                );
+                ctx.save();
+                ctx.beginPath();
+                const starR = Math.max(4.5, cell * 0.25);
+                for (let s = 0; s < 10; s++) {
+                    const r = s % 2 === 0 ? starR : starR * 0.45;
+                    const ang = (s * Math.PI) / 5 - Math.PI / 2;
+                    const sx = px + Math.cos(ang) * r;
+                    const sy = py + Math.sin(ang) * r;
+                    if (s === 0) ctx.moveTo(sx, sy);
+                    else ctx.lineTo(sx, sy);
+                }
+                ctx.closePath();
+                ctx.fillStyle = "#475569";
+                ctx.fill();
+                ctx.restore();
+            } else {
+                ctx.fillStyle = "rgba(24, 24, 27, 0.58)";
+                ctx.font = `700 ${Math.max(7, Math.floor(cell * 0.27))}px sans-serif`;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(String(i + 1), px, py);
+            }
+        }
+
+        const state = gameStateRef.current;
+        const players: ParchisPlayerState[] =
+            state && Array.isArray(state.players) ? state.players : [];
+        const currentUid = userIdRef.current;
+        const me = players.find(
+            (pl: ParchisPlayerState) => pl.user_id === currentUid
+        );
+
+        const activeSeats = new Set(players.map((pl) => pl.seat_index));
+
+        const homes = [
+            { seat: 0, gx: 0, gy: 0 },
+            { seat: 1, gx: 9, gy: 0 },
+            { seat: 2, gx: 9, gy: 9 },
+            { seat: 3, gx: 0, gy: 9 },
+        ];
+
+        for (const h of homes) {
+            const isActive = activeSeats.has(h.seat);
+            const pal = getSeatPalette(h.seat);
+            const hx0 = pad + h.gx * cell;
+            const hy0 = pad + h.gy * cell;
+            const hSize = cell * 6;
+
+            const hGrad = ctx.createLinearGradient(
+                hx0,
+                hy0,
+                hx0 + hSize,
+                hy0 + hSize
+            );
+            if (isActive) {
+                hGrad.addColorStop(0, pal.light);
+                hGrad.addColorStop(0.35, pal.main);
+                hGrad.addColorStop(1, pal.dark);
+            } else {
+                hGrad.addColorStop(0, "#52525b");
+                hGrad.addColorStop(1, "#27272a");
+            }
+
+            ctx.fillStyle = hGrad;
+            ctx.fillRect(hx0, hy0, hSize, hSize);
+            ctx.strokeStyle = "#18181b";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(hx0, hy0, hSize, hSize);
+
+            const inset = cell * 0.42;
+            ctx.strokeStyle = isActive
+                ? "rgba(255,255,255,0.5)"
+                : "rgba(255,255,255,0.12)";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.roundRect(
+                hx0 + inset,
+                hy0 + inset,
+                hSize - inset * 2,
+                hSize - inset * 2,
+                12
+            );
+            ctx.stroke();
+
+            const center = getSeatHomeCenter(h.seat);
+            for (let pid = 0; pid < 4; pid++) {
+                const slot = getHomeSlotOffset(pid, cell);
+                const sx = center.x * size + slot.dx;
+                const sy = center.y * size + slot.dy;
+
+                ctx.beginPath();
+                ctx.arc(sx, sy, cell * 0.44, 0, Math.PI * 2);
+                ctx.fillStyle = isActive ? pal.dark : "#18181b";
+                ctx.fill();
+                ctx.lineWidth = 1.8;
+                ctx.strokeStyle = isActive ? pal.ring : "#52525b";
+                ctx.stroke();
+            }
+        }
+
+        const cLeft = pad + 6 * cell;
+        const cTop = pad + 6 * cell;
+        const cSize = cell * 3;
+        const midX = cLeft + cSize / 2;
+        const midY = cTop + cSize / 2;
+
+        const triangles = [
+            {
+                pts: [
+                    [cLeft, cTop],
+                    [cLeft + cSize, cTop],
+                    [midX, midY],
+                ],
+                color: SEAT_PALETTE[0].main,
+            },
+            {
+                pts: [
+                    [cLeft + cSize, cTop],
+                    [cLeft + cSize, cTop + cSize],
+                    [midX, midY],
+                ],
+                color: SEAT_PALETTE[1].main,
+            },
+            {
+                pts: [
+                    [cLeft, cTop + cSize],
+                    [cLeft + cSize, cTop + cSize],
+                    [midX, midY],
+                ],
+                color: SEAT_PALETTE[2].main,
+            },
+            {
+                pts: [
+                    [cLeft, cTop],
+                    [cLeft, cTop + cSize],
+                    [midX, midY],
+                ],
+                color: SEAT_PALETTE[3].main,
+            },
+        ];
+
+        for (const tri of triangles) {
+            ctx.beginPath();
+            ctx.moveTo(tri.pts[0][0], tri.pts[0][1]);
+            ctx.lineTo(tri.pts[1][0], tri.pts[1][1]);
+            ctx.lineTo(tri.pts[2][0], tri.pts[2][1]);
+            ctx.closePath();
+            ctx.fillStyle = tri.color;
+            ctx.fill();
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = "#18181b";
+            ctx.stroke();
+        }
+
+        if (!state || players.length === 0) return;
+
+        const isMyTurnNow =
+            state.status === "playing" &&
+            me &&
+            state.turn_seat === me.seat_index &&
+            state.must_move &&
+            (state.dice_remaining?.length || 0) > 0;
+
+        for (const p of players) {
+            const pal = getSeatPalette(p.seat_index);
+
+            for (const piece of p.pieces || []) {
+                const animOverride =
+                    animatedPieceRef.current &&
+                    animatedPieceRef.current.userId === p.user_id &&
+                    animatedPieceRef.current.pieceId === piece.id
+                        ? animatedPieceRef.current.piece
+                        : piece;
+
+                const pt = getPieceBoardPoint(animOverride, p.seat_index, size);
+                const movable =
+                    isMyTurnNow &&
+                    p.user_id === currentUid &&
+                    getPieceMoveOptions(piece, state.dice_remaining).length > 0;
+
+                const radius = Math.max(9, cell * 0.39);
+
+                if (movable) {
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.arc(pt.x, pt.y, radius + 5, 0, Math.PI * 2);
+                    ctx.strokeStyle = "#34d399";
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+                    ctx.restore();
+                }
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(pt.x + 1.5, pt.y + 2.5, radius, 0, Math.PI * 2);
+                ctx.fillStyle = "rgba(0,0,0,0.52)";
+                ctx.fill();
+
+                const pieceGrad = ctx.createRadialGradient(
+                    pt.x - radius * 0.35,
+                    pt.y - radius * 0.35,
+                    radius * 0.12,
+                    pt.x,
+                    pt.y,
+                    radius
+                );
+                pieceGrad.addColorStop(0, pal.light);
+                pieceGrad.addColorStop(0.6, pal.main);
+                pieceGrad.addColorStop(1, pal.dark);
+
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+                ctx.fillStyle = pieceGrad;
+                ctx.fill();
+                ctx.lineWidth = movable ? 2.6 : 1.8;
+                ctx.strokeStyle = movable ? "#ffffff" : "#09090b";
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, radius * 0.56, 0, Math.PI * 2);
+                ctx.fillStyle = "rgba(255,255,255,0.92)";
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, radius * 0.28, 0, Math.PI * 2);
+                ctx.fillStyle = pal.dark;
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!isInGame) return;
+        let running = true;
+        let rafId = 0;
+        const loop = () => {
+            if (!running) return;
+            renderBoard();
+            rafId = requestAnimationFrame(loop);
+        };
+        rafId = requestAnimationFrame(loop);
+        return () => {
+            running = false;
+            cancelAnimationFrame(rafId);
+        };
+    }, [isInGame, renderBoard]);
+
+    const handleBoardPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
+        if (isTurnWaiting || isMovingPiece) return;
+        const state = gameStateRef.current;
+        const currentUid = userIdRef.current;
+        const ws = socketRef.current || activeSocket;
+        if (!state || !currentUid || state.status !== "playing") return;
+
+        const players: ParchisPlayerState[] = Array.isArray(state.players)
+            ? state.players
+            : [];
+        const me = players.find(
+            (pl: ParchisPlayerState) => pl.user_id === currentUid
+        );
+        if (!me || state.turn_seat !== me.seat_index) return;
+
+        const canvas = boardCanvasRef.current;
+        if (!canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        const size = Math.max(
+            240,
+            Math.floor(Math.min(rect.width, rect.height || rect.width))
+        );
+        const clickX = e.clientX - rect.left;
+        const clickY = e.clientY - rect.top;
+
+        if (state.penalty_pending) {
+            let chosen = -1;
+            let closest = 34;
+            for (const piece of me.pieces || []) {
+                if (piece.stage === -1) continue;
+                const pt = getPieceBoardPoint(piece, me.seat_index, size);
+                const dist = Math.hypot(clickX - pt.x, clickY - pt.y);
+                if (dist < closest) {
+                    closest = dist;
+                    chosen = piece.id;
+                }
+            }
+            if (chosen >= 0 && ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(
+                    JSON.stringify({
+                        type: "SELECT_PENALTY_PIECE",
+                        piece_id: chosen,
+                    })
+                );
+            }
+            return;
+        }
+
+        if (!state.must_move || !state.dice_remaining?.length) return;
+
+        let closestId = -1;
+        let minDist = 34;
+
+        for (const piece of me.pieces || []) {
+            const opts = getPieceMoveOptions(piece, state.dice_remaining);
+            if (opts.length === 0) continue;
+            const pt = getPieceBoardPoint(piece, me.seat_index, size);
+            const dist = Math.hypot(clickX - pt.x, clickY - pt.y);
+            if (dist < minDist) {
+                minDist = dist;
+                closestId = piece.id;
+            }
+        }
+
+        if (closestId >= 0) {
+            const selectedPiece = me.pieces.find(
+                (piece) => piece.id === closestId
+            );
+            if (selectedPiece) {
+                const opts = getPieceMoveOptions(
+                    selectedPiece,
+                    state.dice_remaining
+                );
+                if (opts.length === 1) {
+                    sendMovePiece(closestId, opts[0]);
+                } else if (opts.length > 1) {
+                    setPendingChoice({
+                        pieceId: closestId,
+                        options: opts,
+                    });
+                }
+            }
+        } else {
+            setPendingChoice(null);
+        }
     };
-    const move = (piece: Piece, die: number) => { send("MOVE_PIECE", { piece_id: piece.id, dice_value: die }); setSelectedPiece(null); };
-    const canMoveWithDie = (piece: Piece, die: number) => piece.stage === -1 ? die === 5 || (state?.dice_remaining?.length === 2 && state.dice_remaining.reduce((a, b) => a + b, 0) === 5) : true;
 
-    const piecePositions = useMemo(() => {
-        if (!state) return [] as { player: Player; piece: Piece; x: number; y: number; stack: number; total: number }[];
-        const entries: { player: Player; piece: Piece; x: number; y: number; stack: number; total: number }[] = [];
-        state.players.forEach(player => player.pieces.forEach(piece => {
-            const cell = pieceCell(piece, player.seat_index); if (!cell) return;
-            const same = entries.filter(e => e.x === cell[0] && e.y === cell[1]);
-            entries.push({ player, piece, x: cell[0], y: cell[1], stack: same.length, total: same.length + 1 });
-        }));
-        return entries;
-    }, [state]);
+    useEffect(() => {
+        if (!gameState || gameState.status !== "playing") return;
+        const timer = setInterval(() => {
+            setTurnSeconds((current) => Math.max(0, current - 1));
+        }, 1000);
+        return () => clearInterval(timer);
+    }, [gameState?.turn_seat, gameState?.status, gameState?.turn_seconds]);
 
-    const leave = () => { socket.current?.close(1000, "Salida voluntaria"); socket.current = null; setState(null); setRoomId(""); setConnected(false); setSelectedPiece(null); void refreshProfile(); void loadRooms(); };
+    if (isAuthLoading) {
+        return (
+            <div className="min-h-screen bg-black text-white flex flex-col">
+                <Header />
+                <main className="flex-1 flex items-center justify-center p-4">
+                    <p className="text-xs uppercase tracking-widest text-emerald-400 font-bold">
+                        Cargando AXIOM Arena
+                    </p>
+                </main>
+            </div>
+        );
+    }
 
-    return <div className="min-h-screen bg-black text-white flex flex-col select-none font-sans overflow-x-hidden"><Header />
-        <main className="flex-1 w-full max-w-7xl mx-auto px-4 py-6 sm:py-8">
-            <div className="mb-5 flex flex-wrap items-center justify-between gap-3"><div><p className="text-[10px] font-black tracking-[.35em] text-emerald-400 uppercase">AXIOM · MULTIPLAYER</p><h1 className="mt-1 text-2xl sm:text-3xl font-black tracking-wider uppercase text-emerald-400">Parchís Arena</h1></div><div className="flex gap-2 text-[10px] sm:text-xs font-black uppercase"><span className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-emerald-400">Jugar {money(playBalance)}</span><span className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-yellow-300">Bono {money(bonusBalance)}</span></div></div>
-            {error && <div className="mb-4 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div>}
-            {!state ? <div className="mx-auto flex w-full max-w-md flex-col gap-5">
-                <section className="rounded-3xl border border-zinc-800 bg-zinc-950 p-6 sm:p-8 shadow-2xl"><h2 className="text-lg font-extrabold">Crear partida</h2>
-                    <label className="mt-5 block text-xs font-bold uppercase tracking-wider text-slate-400">Billetera</label><div className="mt-2 grid grid-cols-2 gap-2">{(["play", "bonus"] as Wallet[]).map(w => <button key={w} onClick={() => setWallet(w)} className={`rounded-xl border px-3 py-3 text-sm font-bold ${wallet === w ? "border-emerald-400 bg-emerald-400/15 text-emerald-200" : "border-zinc-800 bg-black text-slate-400"}`}>{w === "play" ? "Saldo para jugar" : "Saldo bono"}</button>)}</div>
-                    <label className="mt-5 block text-xs font-bold uppercase tracking-wider text-slate-400">Apuesta</label><div className="mt-2 grid grid-cols-3 gap-2">{BETS.map(v => <button key={v} onClick={() => setBet(v)} className={`rounded-xl border py-3 font-black ${bet === v ? "border-emerald-400 bg-emerald-400/15 text-emerald-200" : "border-zinc-800 bg-black text-slate-300"}`}>{money(v)}</button>)}</div>
-                    <label className="mt-5 block text-xs font-bold uppercase tracking-wider text-slate-400">Jugadores</label><div className="mt-2 grid grid-cols-3 gap-2">{([2, 3, 4] as const).map(n => <button key={n} onClick={() => setMaxPlayers(n)} className={`rounded-xl border py-3 font-bold ${maxPlayers === n ? "border-emerald-400 bg-emerald-400/15 text-emerald-200" : "border-zinc-800 bg-black text-slate-300"}`}>{n}</button>)}</div>
-                    <label className="mt-5 flex items-center gap-3 text-sm text-slate-300"><input type="checkbox" checked={privateRoom} onChange={e => setPrivateRoom(e.target.checked)} className="accent-emerald-400" /> Sala privada</label>
-                    {privateRoom && <input value={password} onChange={e => setPassword(e.target.value)} placeholder="Contraseña (opcional)" className="mt-3 w-full rounded-xl border border-zinc-800 bg-black px-4 py-3 outline-none focus:border-emerald-500" />}
-                    <button disabled={busy} onClick={() => void createRoom()} className="mt-5 w-full rounded-xl bg-emerald-500 px-4 py-3.5 font-black text-[#04130d] transition hover:bg-emerald-400 disabled:opacity-50">{busy ? "Conectando…" : "CREAR SALA"}</button>
-                    <div className="mt-6 border-t border-white/10 pt-5"><h3 className="font-bold">Entrar con código</h3><div className="mt-2 flex gap-2"><input value={joinCode} onChange={e => setJoinCode(e.target.value)} placeholder="Código o contraseña de sala" className="min-w-0 flex-1 rounded-xl border border-zinc-800 bg-black px-3 py-3 outline-none focus:border-emerald-500" /><button onClick={() => void joinPrivateRoom()} disabled={!joinCode.trim() || busy} className="rounded-xl border border-white/10 px-4 font-bold hover:bg-white/10 disabled:opacity-40">ENTRAR</button></div></div>
-                </section>
-                <section className="rounded-3xl border border-zinc-800 bg-zinc-950 p-5"><div className="flex items-center justify-between"><h2 className="text-lg font-extrabold">Salas públicas</h2><button onClick={() => void loadRooms()} className="text-sm font-bold text-emerald-300">Actualizar</button></div><div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{rooms.map(room => <div key={room.room_id} className="rounded-2xl border border-zinc-800 bg-black p-4"><div className="flex items-center justify-between"><b>{money(room.bet)} por jugador</b><span className="text-xs text-slate-400">{room.players_count}/{room.max_players}</span></div><p className="mt-1 text-xs text-slate-500">{room.team_mode === "2v2" ? "Equipos 2 contra 2" : "Todos contra todos"}</p><button onClick={() => { setBet(room.bet); setMaxPlayers(room.max_players as 2 | 3 | 4); connect(room.room_id); }} className="mt-4 w-full rounded-xl border border-emerald-500/40 bg-emerald-500/10 py-2.5 text-sm font-bold text-emerald-200 hover:bg-emerald-500/20">UNIRSE</button></div>)}{rooms.length === 0 && <p className="rounded-xl border border-dashed border-white/10 p-8 text-center text-sm text-slate-500 sm:col-span-2 xl:col-span-3">No hay salas públicas disponibles.</p>}</div></section>
-            </div> : <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-                <section className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 p-2 shadow-2xl sm:p-4"><div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-2"><div><p className="text-[10px] font-bold tracking-[.3em] text-emerald-300">SALA {roomId}{state.is_private && state.room_code ? ` · CÓDIGO ${state.room_code}` : ""}</p><h2 className="text-lg font-black">Tablero de Parchís</h2></div><button onClick={leave} className="rounded-lg border border-white/10 px-3 py-2 text-xs font-bold text-slate-300 hover:bg-white/10">SALIR</button></div>
-                    <div className="mx-auto w-full max-w-[900px] rounded-[24px] border-[8px] border-[#4b3020] bg-[#d9c49d] p-1 shadow-[inset_0_0_0_3px_#a88b65,0_18px_55px_#000b]"><svg viewBox="-0.5 -0.5 19 19" className="block h-auto w-full rounded-[18px]" role="img" aria-label="Tablero de Parchís visto desde arriba"><defs><pattern id="wood" width=".5" height=".5" patternUnits="userSpaceOnUse"><path d="M0 .25H.5" stroke="#b7a487" strokeWidth=".025" opacity=".4" /></pattern><filter id="shadow"><feDropShadow dx="0.03" dy="0.06" stdDeviation=".05" floodOpacity=".35" /></filter></defs><rect x="0" y="0" width="18" height="18" fill="#e9e0cb" /><rect x="0" y="0" width="18" height="18" fill="url(#wood)" />
-                        {[{ x: 0, y: 0, c: SEATS[0] }, { x: 12, y: 0, c: SEATS[1] }, { x: 12, y: 12, c: SEATS[2] }, { x: 0, y: 12, c: SEATS[3] }].map((b, i) => <g key={i}><rect x={b.x} y={b.y} width="6" height="6" rx=".35" fill={b.c.color} /><rect x={b.x + .55} y={b.y + .55} width="4.9" height="4.9" rx=".55" fill="#f3ead8" stroke={b.c.dark} strokeWidth=".12" /><rect x={b.x + .85} y={b.y + .85} width="4.3" height="4.3" rx=".4" fill={b.c.light} opacity=".25" />{[[1.7, 1.7], [4.3, 1.7], [1.7, 4.3], [4.3, 4.3]].map(([cx, cy], j) => <g key={j}><circle cx={b.x + cx} cy={b.y + cy} r=".62" fill={b.c.dark} opacity=".35" /><circle cx={b.x + cx} cy={b.y + cy - .04} r=".48" fill={b.c.color} stroke={b.c.dark} strokeWidth=".07" /><circle cx={b.x + cx - .12} cy={b.y + cy - .17} r=".11" fill="#fff" opacity=".45" /></g>)}</g>)}
-                        {TRACK.map(([x, y], i) => <g key={i}><rect x={x - .48} y={y - .48} width=".96" height=".96" fill={SAFE.has(i) ? "#f8edc9" : "#f4eee1"} stroke="#a99a7e" strokeWidth=".035" /><rect x={x - .4} y={y - .4} width=".8" height=".8" fill={SAFE.has(i) ? "#fff6d9" : "#fffaf0"} opacity=".8" /><text x={x} y={y + .12} textAnchor="middle" fontSize=".2" fill="#7c705e">{SAFE.has(i) ? "◆" : ""}</text></g>)}
-                        {STARTS.map((pos, seat) => { const [x, y] = TRACK[pos]; return <g key={seat}><rect x={x - .48} y={y - .48} width=".96" height=".96" fill={SEATS[seat].color} stroke="#fff" strokeWidth=".09" /><path d={`M${x - .25} ${y}h.5 M${x} ${y - .25}v.5`} stroke="#fff" strokeWidth=".07" /></g>; })}
-                        {Array.from({ length: 8 }, (_, i) => <g key={i}>{[[9, i + 1], [17 - i, 9], [9, 17 - i], [i + 1, 9]].map(([x, y], s) => <rect key={s} x={x - .46} y={y - .46} width=".92" height=".92" fill={SEATS[s].light} stroke={SEATS[s].dark} strokeWidth=".035" />)}</g>)}
-                        <path d="M6 6L12 6L9 9Z" fill="#18a66a" stroke="#ffffff" strokeWidth=".07" /><path d="M12 6L12 12L9 9Z" fill="#e34455" stroke="#ffffff" strokeWidth=".07" /><path d="M12 12L6 12L9 9Z" fill="#3478df" stroke="#ffffff" strokeWidth=".07" /><path d="M6 12L6 6L9 9Z" fill="#e9b52d" stroke="#ffffff" strokeWidth=".07" /><circle cx="9" cy="9" r=".22" fill="#f8f0dc" stroke="#8d7a5e" strokeWidth=".05" />
-                        {piecePositions.map(({ player, piece, x, y, stack, total }) => { const c = SEATS[player.seat_index]; const dx = total > 1 ? (stack % 2 ? -.16 : .16) : 0; const dy = total > 1 ? (stack > 1 ? .16 : -.16) : 0; const mine = player.user_id === uid; const selectable = mine && myTurn && (state.must_move || state.penalty_pending); return <g key={`${player.user_id}-${piece.id}`} onClick={() => { if (!selectable) return; if (state.penalty_pending) { send("SELECT_PENALTY_PIECE", { piece_id: piece.id }); setSelectedPiece(null); } else { setSelectedPiece(piece.id); } }} className={selectable ? "cursor-pointer" : ""}><circle cx={x + dx} cy={y + dy} r=".32" fill={c.dark} opacity=".25" /><circle cx={x + dx} cy={y + dy - .035} r=".27" fill={c.color} stroke={selectedPiece === piece.id ? "#fff" : c.dark} strokeWidth={selectedPiece === piece.id ? ".13" : ".07"} filter="url(#shadow)" /><circle cx={x + dx - .07} cy={y + dy - .12} r=".07" fill="#fff" opacity=".65" /><text x={x + dx} y={y + dy + .08} textAnchor="middle" fontSize=".18" fontWeight="bold" fill="#fff">{piece.id + 1}</text></g>; })}
-                    </svg></div><div className="mt-3 flex flex-wrap justify-center gap-3">{SEATS.map((s, i) => <span key={i} className="flex items-center gap-2 text-xs text-slate-400"><i className="h-2.5 w-2.5 rounded-full" style={{ background: s.color }} />{s.label}</span>)}</div></section>
-                <aside className="space-y-4"><section className="rounded-3xl border border-zinc-800 bg-zinc-950 p-5"><div className="flex items-center justify-between"><span className="text-xs font-bold uppercase tracking-widest text-slate-400">Bote</span><span className="text-xs text-slate-500">Comisión 6%</span></div><p className="mt-1 text-3xl font-black text-emerald-300">{money(state.net_pot || 0)}</p><p className="text-xs text-slate-500">Total apostado {money(state.pot_total)} · Comisión {money(state.commission_total)}</p><div className="my-4 h-px bg-white/10" /><div className="flex items-center justify-between"><span className="text-sm text-slate-400">Estado</span><b className="text-sm">{state.status === "waiting" ? "Esperando jugadores" : state.status === "finished" ? "Finalizada" : "En juego"}</b></div><div className="mt-3 flex items-center justify-between"><span className="text-sm text-slate-400">Turno</span><b className="text-sm" style={{ color: SEATS[state.turn_seat]?.color }}>{state.players.find(p => p.seat_index === state.turn_seat)?.player_name || `Jugador ${state.turn_seat + 1}`}</b></div><div className="mt-2 flex items-center justify-between"><span className="text-sm text-slate-400">Tiempo</span><b className="text-xl tabular-nums">{state.turn_seconds}s</b></div></section>
-                    <section className="rounded-3xl border border-zinc-800 bg-zinc-950 p-5"><h3 className="font-extrabold">Jugadores</h3><div className="mt-3 space-y-2">{state.players.map(p => <div key={p.user_id} className={`flex items-center justify-between rounded-xl border px-3 py-2 ${p.seat_index === state.turn_seat ? "border-emerald-400/50 bg-emerald-400/5" : "border-white/5 bg-black/20"}`}><div className="flex items-center gap-2"><i className="h-3 w-3 rounded-full" style={{ background: SEATS[p.seat_index].color }} /><span className="text-sm font-semibold">{p.player_name || `Jugador ${p.seat_index + 1}`}{p.user_id === uid ? " (tú)" : ""}</span></div><span className={`text-[10px] font-bold ${p.connected ? "text-emerald-300" : "text-slate-500"}`}>{p.connected ? "EN LÍNEA" : "DESCONECTADO"}</span></div>)}</div></section>
-                    <section className="rounded-3xl border border-zinc-800 bg-zinc-950 p-5"><h3 className="font-extrabold">Dados</h3>{myTurn ? <><div className="my-4 flex justify-center gap-3">{(state.dice_pair || []).map((d, i) => <div key={i} className="grid h-16 w-16 place-items-center rounded-2xl border border-white/20 bg-[#f6f0e3] text-3xl font-black text-[#18202a] shadow-lg">{d}</div>)}{!state.dice_pair && <div className="grid h-16 w-36 place-items-center rounded-2xl border border-dashed border-white/20 text-xs text-slate-500">Lanza los dados</div>}</div><button disabled={state.must_move || state.penalty_pending} onClick={() => send("ROLL_DICE")} className="w-full rounded-xl bg-emerald-500 py-3 font-black text-[#04130d] disabled:opacity-40">LANZAR DADOS</button>{state.must_move && <p className="mt-3 text-center text-xs text-emerald-200">Seleccione una ficha en el tablero.</p>}{state.penalty_pending && <p className="mt-3 text-center text-xs text-rose-300">Seleccione una ficha para devolverla a casa.</p>}{selectedPiece !== null && <div className="mt-3 rounded-xl border border-emerald-400/30 bg-emerald-400/5 p-3"><p className="mb-2 text-xs text-emerald-200">Elija el dado para la ficha {selectedPiece + 1}</p><div className="flex gap-2">{(state.dice_remaining || []).map((d, i) => <button key={`${d}-${i}`} onClick={() => { const pc = myPlayer?.pieces.find(p => p.id === selectedPiece); if (pc) move(pc, d); }} disabled={!myPlayer?.pieces.some(p => p.id === selectedPiece && canMoveWithDie(p, d))} className="flex-1 rounded-lg border border-white/15 bg-white/5 py-2 font-black disabled:opacity-30">{d}</button>)}{myPlayer?.pieces.find(p => p.id === selectedPiece)?.stage === -1 && state.dice_remaining?.length === 2 && state.dice_remaining.reduce((a, b) => a + b, 0) === 5 && !state.dice_remaining.includes(5) && <button onClick={() => move(myPlayer.pieces.find(p => p.id === selectedPiece)!, 5)} className="flex-1 rounded-lg bg-amber-400 py-2 font-black text-black">SUMA 5</button>}</div></div>}</> : <div className="my-5 rounded-xl bg-black/20 p-4 text-center text-sm text-slate-500">Los dados se muestran únicamente durante su turno.</div>}</section>
-                    <p className="rounded-xl border border-white/5 bg-black/20 p-3 text-xs leading-relaxed text-slate-400">{state.last_event || (connected ? "Conectado al servidor." : "Conectando…")}</p>
-                    {state.status === "finished" && <button onClick={leave} className="w-full rounded-xl bg-emerald-500 py-3 font-black text-black">VOLVER A SALAS</button>}
-                </aside>
-            </div>}
-            {!connected && state && <p className="mt-3 text-center text-xs text-amber-300">Reconectando con la sala…</p>}
-        </main></div>;
+    if (!userId) {
+        return (
+            <div className="min-h-screen bg-black text-white flex flex-col">
+                <Header />
+                <main className="flex-1 flex items-center justify-center p-4">
+                    <div className="max-w-md w-full bg-zinc-950 border border-zinc-800 rounded-3xl p-6 sm:p-8 text-center space-y-6 shadow-2xl">
+                        <h2 className="text-xl font-black uppercase">
+                            Acceso restringido
+                        </h2>
+                        <p className="text-xs text-zinc-400 leading-relaxed">
+                            Inicia sesión para entrar a las arenas.
+                        </p>
+                        <Link
+                            href="/"
+                            className="block w-full py-3.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase rounded-2xl transition-all"
+                        >
+                            Iniciar sesión
+                        </Link>
+                    </div>
+                </main>
+            </div>
+        );
+    }
+
+    const activePlayers: ParchisPlayerState[] = gameState?.players || [];
+    const myPlayer: ParchisPlayerState | null =
+        activePlayers.find((pl: ParchisPlayerState) => pl.user_id === userId) ||
+        null;
+
+    const isMyTurn =
+        gameState !== null &&
+        gameState.status === "playing" &&
+        myPlayer !== null &&
+        gameState.turn_seat === myPlayer.seat_index &&
+        !isTurnWaiting &&
+        !isMovingPiece;
+    const isHost =
+        gameState !== null &&
+        (gameState.host_user_id === userId || myPlayer?.seat_index === 0);
+    const mainName = (playerName.trim() || "Jugador").split(/\s+/)[0];
+    const dice = displayedDice;
+
+    const bottomPlayer = myPlayer || activePlayers[0] || null;
+    const topPlayer =
+        activePlayers.find((p) => p.user_id !== bottomPlayer?.user_id) ||
+        null;
+
+    const extraPlayers = activePlayers.filter(
+        (p) =>
+            p.user_id !== bottomPlayer?.user_id &&
+            p.user_id !== topPlayer?.user_id
+    );
+
+    const topPalette = topPlayer
+        ? getSeatPalette(topPlayer.seat_index)
+        : SEAT_PALETTE[2];
+    const bottomPalette = bottomPlayer
+        ? getSeatPalette(bottomPlayer.seat_index)
+        : SEAT_PALETTE[0];
+
+    const topIsTurn =
+        gameState !== null &&
+        gameState.status === "playing" &&
+        topPlayer !== null &&
+        gameState.turn_seat === topPlayer.seat_index;
+    const bottomIsTurn =
+        gameState !== null &&
+        gameState.status === "playing" &&
+        bottomPlayer !== null &&
+        gameState.turn_seat === bottomPlayer.seat_index;
+
+    const bottomName =
+        bottomPlayer?.user_id === userId
+            ? getCleanPlayerLabel(bottomPlayer, mainName)
+            : getCleanPlayerLabel(bottomPlayer, "Jugador");
+    const topName = topPlayer
+        ? getCleanPlayerLabel(topPlayer, "Rival")
+        : "Esperando rival...";
+
+    return (
+        <div className="min-h-screen bg-black text-white flex flex-col select-none font-sans overflow-x-hidden">
+            {modal.isOpen && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+                    <div className="bg-zinc-950 border border-zinc-800 w-full max-w-sm rounded-3xl p-6 text-center space-y-4 shadow-2xl">
+                        <h3 className="text-lg font-black uppercase text-emerald-400">
+                            {modal.title}
+                        </h3>
+                        <p className="text-xs text-zinc-300 leading-relaxed">
+                            {modal.message}
+                        </p>
+                        <button
+                            type="button"
+                            onClick={closeModal}
+                            className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase rounded-2xl transition-all"
+                        >
+                            Entendido
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            <Header />
+
+            <main
+                className={`flex-1 w-full mx-auto flex flex-col ${
+                    isInGame
+                        ? "max-w-xl px-2.5 sm:px-6 py-2 sm:py-4 items-center justify-center"
+                        : "max-w-3xl px-2 sm:px-4 py-3 sm:py-5 items-center justify-center"
+                }`}
+            >
+                {!isInGame ? (
+                    <div className="w-full max-w-md mx-auto rounded-2xl border border-zinc-800 bg-zinc-950 p-3 sm:p-4 space-y-3">
+                        <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                            <Link
+                                href="/"
+                                className="rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1.5 text-[11px] font-bold text-zinc-300"
+                            >
+                                &lsaquo; Volver
+                            </Link>
+                            <h2 className="text-sm font-black uppercase tracking-wide text-emerald-400">
+                                Parchís P2P
+                            </h2>
+                            <span className="w-14" />
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="block text-[10px] font-bold uppercase text-zinc-500">
+                                Billetera
+                            </label>
+                            <div className="grid grid-cols-2 gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedWallet("play")}
+                                    className={`rounded-lg border px-2 py-2 text-xs font-bold ${
+                                        selectedWallet === "play"
+                                            ? "border-emerald-400 bg-emerald-500 text-black"
+                                            : "border-zinc-800 bg-black text-zinc-400"
+                                    }`}
+                                >
+                                    Jugar · {money(playBalance)}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedWallet("bonus")}
+                                    className={`rounded-lg border px-2 py-2 text-xs font-bold ${
+                                        selectedWallet === "bonus"
+                                            ? "border-yellow-300 bg-yellow-400 text-black"
+                                            : "border-zinc-800 bg-black text-zinc-400"
+                                    }`}
+                                >
+                                    Bono · {money(bonusBalance)}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-2">
+                                <label className="block text-[10px] font-bold uppercase text-zinc-500">
+                                    Apuesta
+                                </label>
+                                <div className="grid grid-cols-3 gap-1.5">
+                                    {(
+                                        ["0.25", "1.00", "10.00"] as ParchisBet[]
+                                    ).map((amt) => (
+                                        <button
+                                            key={amt}
+                                            type="button"
+                                            onClick={() => setSelectedBet(amt)}
+                                            className={`rounded-lg border py-2 text-[11px] font-bold ${
+                                                selectedBet === amt
+                                                    ? "border-emerald-400 bg-emerald-500 text-black"
+                                                    : "border-zinc-800 bg-black text-zinc-400"
+                                            }`}
+                                        >
+                                            ${amt}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            <div className="space-y-2">
+                                <label className="block text-[10px] font-bold uppercase text-zinc-500">
+                                    Jugadores
+                                </label>
+                                <div className="grid grid-cols-3 gap-1.5">
+                                    {([2, 3, 4] as MaxPlayers[]).map((cnt) => (
+                                        <button
+                                            key={cnt}
+                                            type="button"
+                                            onClick={() => setMaxPlayers(cnt)}
+                                            className={`rounded-lg border py-2 text-[11px] font-bold ${
+                                                maxPlayers === cnt
+                                                    ? "border-emerald-400 bg-emerald-500 text-black"
+                                                    : "border-zinc-800 bg-black text-zinc-400"
+                                            }`}
+                                        >
+                                            {cnt}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                            <input
+                                id="parchis-private"
+                                type="checkbox"
+                                checked={isPrivate}
+                                onChange={(e) => setIsPrivate(e.target.checked)}
+                                className="h-4 w-4 accent-emerald-500"
+                            />
+                            <label
+                                htmlFor="parchis-private"
+                                className="text-xs text-zinc-300"
+                            >
+                                Sala privada
+                            </label>
+                            {isPrivate && (
+                                <input
+                                    type="text"
+                                    value={roomPassword}
+                                    onChange={(e) =>
+                                        setRoomPassword(e.target.value)
+                                    }
+                                    placeholder="Contraseña"
+                                    className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-black px-2.5 py-2 text-xs text-white outline-none focus:border-emerald-500"
+                                />
+                            )}
+                        </div>
+
+                        <button
+                            type="button"
+                            disabled={isConnecting || busyAction}
+                            onClick={handleCreatePrivateOrCustomRoom}
+                            className="w-full rounded-xl bg-emerald-500 py-3 text-xs font-black uppercase text-black hover:bg-emerald-400 disabled:opacity-50"
+                        >
+                            {busyAction || isConnecting
+                                ? "Preparando..."
+                                : "Crear sala"}
+                        </button>
+
+                        <div className="border-t border-zinc-800 pt-3 space-y-2">
+                            <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-white">
+                                    Salas disponibles
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={() => void fetchPublicRooms()}
+                                    className="text-[10px] font-bold text-emerald-400"
+                                >
+                                    Actualizar
+                                </button>
+                            </div>
+                            <input
+                                type="text"
+                                value={searchId}
+                                onChange={(e) => setSearchId(e.target.value)}
+                                placeholder="Buscar por ID de jugador"
+                                className="w-full rounded-lg border border-zinc-800 bg-black px-3 py-2 text-xs text-white outline-none focus:border-emerald-500"
+                            />
+                            {publicRooms.length === 0 ? (
+                                <p className="py-3 text-center text-[11px] text-zinc-500">
+                                    {roomsUnavailable
+                                        ? "Salas no disponibles"
+                                        : "No hay salas públicas"}
+                                </p>
+                            ) : (
+                                <div className="max-h-40 space-y-1.5 overflow-y-auto">
+                                    {publicRooms
+                                        .filter((item) => {
+                                            const hostId = String(
+                                                item.host_doc_number ||
+                                                    item.host_cedula ||
+                                                    ""
+                                            );
+                                            return (
+                                                !searchId.trim() ||
+                                                hostId
+                                                    .toLowerCase()
+                                                    .includes(
+                                                        searchId
+                                                            .trim()
+                                                            .toLowerCase()
+                                                    )
+                                            );
+                                        })
+                                        .map((item) => {
+                                            const itemId =
+                                                item.host_doc_number ||
+                                                item.host_cedula;
+                                            const itemName = (
+                                                item.host_name || "Jugador"
+                                            ).split(/\s+/)[0];
+                                            return (
+                                                <div
+                                                    key={item.room_id}
+                                                    className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-black px-2.5 py-2"
+                                                >
+                                                    <div className="min-w-0">
+                                                        <p className="truncate text-[11px] font-bold text-white">
+                                                            {itemName}
+                                                        </p>
+                                                        <p className="text-[10px] text-zinc-500">
+                                                            {itemId
+                                                                ? `${itemId} · `
+                                                                : ""}
+                                                            {item.players_count}/
+                                                            {item.max_players} · $
+                                                            {item.bet.toFixed(2)}
+                                                        </p>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                            connectToRoom(
+                                                                item.room_id,
+                                                                "",
+                                                                item.bet,
+                                                                item.max_players as MaxPlayers
+                                                            )
+                                                        }
+                                                        className="rounded-md bg-emerald-500 px-3 py-1.5 text-[10px] font-black uppercase text-black"
+                                                    >
+                                                        Entrar
+                                                    </button>
+                                                </div>
+                                            );
+                                        })}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="flex gap-2 border-t border-zinc-800 pt-3">
+                            <input
+                                type="text"
+                                value={joinRoomId}
+                                onChange={(e) => setJoinRoomId(e.target.value)}
+                                placeholder="ID de sala"
+                                className="min-w-0 w-full rounded-lg border border-zinc-800 bg-black px-2.5 py-2 text-xs text-white outline-none focus:border-emerald-500"
+                            />
+                            <input
+                                type="text"
+                                value={joinPassword}
+                                onChange={(e) =>
+                                    setJoinPassword(e.target.value)
+                                }
+                                placeholder="Clave"
+                                className="min-w-0 w-full rounded-lg border border-zinc-800 bg-black px-2.5 py-2 text-xs text-white outline-none focus:border-emerald-500"
+                            />
+                            <button
+                                type="button"
+                                disabled={!joinRoomId.trim() || isConnecting}
+                                onClick={() =>
+                                    connectToRoom(
+                                        joinRoomId.trim(),
+                                        joinPassword.trim()
+                                    )
+                                }
+                                className="rounded-lg bg-zinc-800 px-3 py-2 text-[10px] font-bold text-white disabled:opacity-40"
+                            >
+                                Unirse
+                            </button>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="w-full max-w-[min(100%,42rem)] bg-[#090d0b] border border-white/10 rounded-3xl p-2.5 sm:p-4 flex flex-col gap-2.5 shadow-2xl overflow-hidden">
+                        <div className="flex items-center justify-between gap-2 border-b border-zinc-900 pb-2">
+                            <button
+                                type="button"
+                                onClick={() => void exitParchisGame()}
+                                className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-red-400 text-[11px] font-bold uppercase rounded-xl border border-zinc-800"
+                            >
+                                &lsaquo; {isHost ? "Cerrar Sala" : "Salir"}
+                            </button>
+
+                            <div className="text-center">
+                                <span className="text-xs font-black text-emerald-400 block">
+                                    Pozo: {money(getNetPotDisplay(gameState))}
+                                </span>
+                                {gameState?.room_id && (
+                                    <span className="text-[10px] text-zinc-400 font-bold block">
+                                        Sala #{gameState.room_id}
+                                    </span>
+                                )}
+                                {gameState?.status === "playing" && (
+                                    <span className={`text-[10px] font-black ${turnSeconds <= 3 ? "text-red-400" : "text-amber-300"}`}>
+                                        Tiempo de turno: {turnSeconds}s
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+
+                        {!isConnected || !gameState ? (
+                            <div className="py-20 text-center text-xs text-yellow-400 uppercase font-bold tracking-wider">
+                                {connectionMessage}
+                            </div>
+                        ) : (
+                            <>
+                                {extraPlayers.length > 0 && (
+                                    <div className="flex flex-wrap items-center justify-between gap-1.5 px-1">
+                                        {extraPlayers.map((ep) => {
+                                            const pal = getSeatPalette(
+                                                ep.seat_index
+                                            );
+                                            const extraIsTurn =
+                                                gameState.status === "playing" &&
+                                                gameState.turn_seat === ep.seat_index;
+                                            return (
+                                                <PlayerTurnRow
+                                                    key={ep.user_id}
+                                                    playerName={getCleanPlayerLabel(ep, "Jugador")}
+                                                    colorName={pal.name}
+                                                    accentColor={pal.main}
+                                                    dice={dice}
+                                                    rolling={rollingDice && extraIsTurn}
+                                                    isActiveTurn={extraIsTurn}
+                                                    canRoll={ep.user_id === userId && isMyTurn && !gameState.must_move}
+                                                    waitingTurn={isTurnWaiting || isMovingPiece}
+                                                    onRoll={sendRollDice}
+                                                    position="bottom"
+                                                />
+                                            );
+                                        })}
+                                    </div>
+                                )}
+
+                                <PlayerTurnRow
+                                    playerName={topName}
+                                    colorName={topPalette.name}
+                                    accentColor={topPalette.main}
+                                    dice={dice}
+                                    rolling={rollingDice && topIsTurn}
+                                    isActiveTurn={topIsTurn}
+                                    canRoll={
+                                        topPlayer !== null &&
+                                        topPlayer.user_id === userId &&
+                                        isMyTurn &&
+                                        !gameState.must_move
+                                    }
+                                    waitingTurn={isTurnWaiting || isMovingPiece}
+                                    onRoll={sendRollDice}
+                                    position="top"
+                                />
+
+                                {pendingChoice && isMyTurn && (
+                                    <div className="flex items-center justify-center gap-2 py-1">
+                                        {pendingChoice.options.map((opt) => (
+                                            <button
+                                                key={opt.diceValue}
+                                                type="button"
+                                                onClick={() =>
+                                                    sendMovePiece(
+                                                        pendingChoice.pieceId,
+                                                        opt
+                                                    )
+                                                }
+                                                className="px-4 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs shadow-lg active:scale-95 transition-all"
+                                            >
+                                                {opt.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+
+                                <div className="w-full min-w-0 flex items-center justify-center overflow-hidden">
+                                    <canvas
+                                        ref={boardCanvasRef}
+                                        onPointerDown={handleBoardPointerDown}
+                                        className="block w-full aspect-square max-h-[min(92vw,68vh)] rounded-2xl border border-emerald-500/20 bg-[#090d0b] shadow-2xl cursor-pointer touch-none"
+                                        style={{
+                                            touchAction: "none",
+                                            maxWidth: "min(100%, 68vh)",
+                                        }}
+                                    />
+                                </div>
+
+                                <PlayerTurnRow
+                                    playerName={bottomName}
+                                    colorName={bottomPalette.name}
+                                    accentColor={bottomPalette.main}
+                                    dice={dice}
+                                    rolling={rollingDice && bottomIsTurn}
+                                    isActiveTurn={bottomIsTurn}
+                                    canRoll={
+                                        bottomPlayer !== null &&
+                                        bottomPlayer.user_id === userId &&
+                                        isMyTurn &&
+                                        !gameState.must_move
+                                    }
+                                    waitingTurn={isTurnWaiting || isMovingPiece}
+                                    onRoll={sendRollDice}
+                                    position="bottom"
+                                />
+
+                                {gameState.status === "finished" && (
+                                    <div className="bg-zinc-900/70 border border-emerald-400 rounded-2xl p-3.5 text-center space-y-2">
+                                        <h3 className="text-sm font-black uppercase text-emerald-400">
+                                            Partida Finalizada
+                                        </h3>
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                void exitParchisGame()
+                                            }
+                                            className="px-5 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase rounded-xl"
+                                        >
+                                            Volver
+                                        </button>
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </div>
+                )}
+            </main>
+
+            <footer className="py-4 text-center text-[10px] text-zinc-600 font-bold uppercase tracking-widest">
+                AXIOM PARCHIS ARENA
+            </footer>
+        </div>
+    );
 }
