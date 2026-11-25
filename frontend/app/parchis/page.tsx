@@ -1907,7 +1907,7 @@ export default function ParchisGamePage() {
         : [];
 
     return (
-        <div className="min-h-screen bg-[#261822] text-white flex flex-col select-none font-sans overflow-x-hidden">
+        <div className="min-h-screen bg-black text-white flex flex-col select-none font-sans overflow-x-hidden">
             {modal.isOpen && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-4">
                     <div className="bg-zinc-950 border border-zinc-800 w-full max-w-sm rounded-3xl p-6 text-center space-y-4 shadow-2xl">
@@ -2186,7 +2186,7 @@ export default function ParchisGamePage() {
                         </div>
                     </div>
                 ) : (
-                    <div className="w-full max-w-[min(100%,30rem)] bg-gradient-to-b from-[#331f2e] via-[#261822] to-[#1a1018] border border-white/10 rounded-3xl p-2.5 sm:p-4 flex flex-col gap-2 shadow-2xl overflow-hidden">
+                    <div className="w-full max-w-[min(100%,30rem)] bg-black border border-zinc-800 rounded-3xl p-2.5 sm:p-4 flex flex-col gap-2 shadow-2xl overflow-hidden">
                         <div className="flex items-center justify-between gap-2 pb-1">
                             <button
                                 type="button"
