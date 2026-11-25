@@ -2737,6 +2737,7 @@ async def _parchis_broadcast(room: dict):
     payload = {
         "type": "PARCHIS_STATE",
         "room_id": room["room_id"],
+        "server_ts": time.time(),
         "host_user_id": room.get("creator_id"),
         "host_name": room.get("host_name", "Jugador"),
         "bet": room["bet"],
@@ -2967,7 +2968,7 @@ async def _parchis_settle_winners(room: dict, winner_uids: list[str]):
 
         for uid in winner_uids:
             p = room["players"].get(uid)
-            wallet = p["wallet"] if p else "play"
+            entry_wallet = p["wallet"] if p else "play"
 
             referrer_id = None
             try:
@@ -2997,7 +2998,8 @@ async def _parchis_settle_winners(room: dict, winner_uids: list[str]):
 
             winners_payload.append({
                 "user_id": uid,
-                "wallet": wallet,
+                "wallet": "withdraw",
+                "entry_wallet": entry_wallet,
                 "gross_pot": float(per_winner_gross),
                 "amount": float(share),
                 "commission": float(per_winner_total_comm),
@@ -3512,15 +3514,14 @@ async def parchis_ws_endpoint(
                         room["dice_remaining"] = dice_remaining
                         room["bonus_steps"] = new_bonus
 
-                    try:
-                        supabase.table("parchis_players").update({
-                            "pieces_json": actor["pieces"],
-                        }).eq("match_id", room["room_id"]).eq("user_id", user_id).execute()
-                    except Exception:
-                        pass
+                    pieces_snapshot = json.loads(json.dumps(actor["pieces"]))
+                    match_id_snap = room["room_id"]
+                    uid_snap = user_id
 
                     if status_code == "WIN":
+                        await _parchis_broadcast(room)
                         await _parchis_settle_winners(room, room["winners"])
+                        await _parchis_broadcast(room)
                     else:
                         rem_dice = list(room.get("dice_remaining") or [])
                         rem_bonus = int(room.get("bonus_steps") or 0)
@@ -3538,7 +3539,17 @@ async def parchis_ws_endpoint(
                             room["dice"] = None
                             _parchis_next_turn(room, actor["seat_index"])
 
-                    await _parchis_broadcast(room)
+                        await _parchis_broadcast(room)
+
+                    async def _persist_parchis_pieces():
+                        try:
+                            supabase.table("parchis_players").update({
+                                "pieces_json": pieces_snapshot,
+                            }).eq("match_id", match_id_snap).eq("user_id", uid_snap).execute()
+                        except Exception:
+                            pass
+
+                    asyncio.create_task(_persist_parchis_pieces())
 
     except WebSocketDisconnect:
         async with lock:
