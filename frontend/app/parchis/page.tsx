@@ -80,11 +80,23 @@ interface ProfileRow {
     bonus_balance: number | null;
 }
 
+interface ActivePieceAnim {
+    key: string;
+    userId: string;
+    seatIndex: number;
+    pieceId: number;
+    startPiece: ParchisPiece;
+    currentPiece: ParchisPiece;
+    step: number;
+    totalSteps: number;
+    exitingHome: boolean;
+}
+
 const API_BASE =
     process.env.NEXT_PUBLIC_API_URL || "https://casino-axiom.ethiodeploy.app";
 
-const STEP_ANIM_MS = 110;
-const DICE_VIEW_HOLD_MS = 1100;
+const STEP_ANIM_MS = 50;
+const DICE_VIEW_HOLD_MS = 950;
 
 const PARCHIS_BETS: Record<ParchisBet, number> = {
     "0.25": 0.25,
@@ -325,22 +337,85 @@ function canPieceExitWithPairSum(diceValues: number[] | null | undefined): boole
     );
 }
 
-function canPieceMoveWithStep(piece: ParchisPiece, steps: number): boolean {
+// Verifica reglas de tablero: máximo 2 fichas del mismo color por espacio y bloqueo de 2 fichas en estrellas
+function canPieceMoveWithStep(
+    piece: ParchisPiece,
+    steps: number,
+    seatIndex: number,
+    allPlayers: ParchisPlayerState[]
+): boolean {
     if (!Number.isFinite(steps) || steps < 1) return false;
-    if (piece.stage === -1) return steps === 5;
-    if (piece.stage === 0) return piece.steps_walked + steps <= 70;
-    if (piece.stage === 100) return piece.pos + steps <= 7;
+
+    const spotOccupants = new Map<number, ParchisPlayerState[]>();
+    for (const pl of allPlayers) {
+        for (const pc of pl.pieces || []) {
+            if (pc.stage === 0) {
+                const s = ((pc.pos % TRACK_LEN) + TRACK_LEN) % TRACK_LEN;
+                const list = spotOccupants.get(s) || [];
+                list.push(pl);
+                spotOccupants.set(s, list);
+            }
+        }
+    }
+
+    if (piece.stage === -1) {
+        if (steps !== 5) return false;
+        const startSpot = SEAT_START_SPOTS[seatIndex] ?? 5;
+        const occ = spotOccupants.get(startSpot) || [];
+        const myColorCount = occ.filter((o) => o.seat_index === seatIndex).length;
+        // No pueden haber 3 del mismo color en el mismo espacio
+        if (myColorCount >= 2) return false;
+        // Si hay 2 fichas bloqueando esa estrella, nadie entra/pasa
+        if (STAR_SPOTS.has(startSpot) && occ.length >= 2) return false;
+        return true;
+    }
+
+    if (piece.stage === 0) {
+        if (piece.steps_walked + steps > 70) return false;
+
+        // Revisa cada casilla intermedia y final en la pista principal
+        const startSpot = SEAT_START_SPOTS[seatIndex] ?? 5;
+        for (let s = 1; s <= steps; s++) {
+            const nextWalked = piece.steps_walked + s;
+            if (nextWalked >= 63) break; // Entró a recta final propia
+            const checkSpot = (startSpot + nextWalked) % TRACK_LEN;
+            const occ = spotOccupants.get(checkSpot) || [];
+
+            // Si hay 2 fichas en una estrella, nadie puede pasar ni caer ahí
+            if (STAR_SPOTS.has(checkSpot) && occ.length >= 2) {
+                return false;
+            }
+
+            // En la casilla destino: máximo 2 fichas del mismo color
+            if (s === steps) {
+                const myColorCount = occ.filter(
+                    (o) => o.seat_index === seatIndex
+                ).length;
+                if (myColorCount >= 2) return false;
+            }
+        }
+        return true;
+    }
+
+    if (piece.stage === 100) {
+        return piece.pos + steps <= 7;
+    }
+
     return false;
 }
 
 function getMovableOptionsForPiece(
     piece: ParchisPiece,
     diceRemaining: number[] | null | undefined,
-    bonusSteps: number
+    bonusSteps: number,
+    seatIndex: number,
+    allPlayers: ParchisPlayerState[]
 ): number[] {
     if (bonusSteps > 0) {
         if (piece.stage === -1) return [];
-        return canPieceMoveWithStep(piece, bonusSteps) ? [bonusSteps] : [];
+        return canPieceMoveWithStep(piece, bonusSteps, seatIndex, allPlayers)
+            ? [bonusSteps]
+            : [];
     }
 
     const rem = Array.isArray(diceRemaining) ? diceRemaining : [];
@@ -348,13 +423,17 @@ function getMovableOptionsForPiece(
 
     if (piece.stage === -1) {
         if (rem.includes(5) || canPieceExitWithPairSum(rem)) {
-            return [5];
+            return canPieceMoveWithStep(piece, 5, seatIndex, allPlayers)
+                ? [5]
+                : [];
         }
         return [];
     }
 
     const unique = Array.from(new Set(rem));
-    return unique.filter((d) => canPieceMoveWithStep(piece, d));
+    return unique.filter((d) =>
+        canPieceMoveWithStep(piece, d, seatIndex, allPlayers)
+    );
 }
 
 function getStepPose(
@@ -749,13 +828,9 @@ export default function ParchisGamePage() {
     const selectedDieValueRef = useRef<number | null>(null);
     const socketRef = useRef<WebSocket | null>(null);
     const closingByUserRef = useRef(false);
-    const stepAnimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const animTickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const turnHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const animatedPieceRef = useRef<{
-        userId: string;
-        pieceId: number;
-        piece: ParchisPiece;
-    } | null>(null);
+    const activeAnimsRef = useRef<Record<string, ActivePieceAnim>>({});
 
     useEffect(() => {
         userIdRef.current = userId;
@@ -766,19 +841,113 @@ export default function ParchisGamePage() {
     }, [selectedDieValue]);
 
     const clearAllTimers = useCallback(() => {
-        if (stepAnimTimerRef.current) {
-            clearTimeout(stepAnimTimerRef.current);
-            stepAnimTimerRef.current = null;
+        if (animTickTimerRef.current) {
+            clearTimeout(animTickTimerRef.current);
+            animTickTimerRef.current = null;
         }
         if (turnHoldTimerRef.current) {
             clearTimeout(turnHoldTimerRef.current);
             turnHoldTimerRef.current = null;
         }
-        animatedPieceRef.current = null;
+        activeAnimsRef.current = {};
         setIsMovingPiece(false);
         setPendingChoice(null);
         setSelectedDieValue(null);
     }, []);
+
+    const scheduleAnimLoop = useCallback(() => {
+        if (animTickTimerRef.current) return;
+
+        const tick = () => {
+            const entries = Object.values(activeAnimsRef.current);
+            if (entries.length === 0) {
+                animTickTimerRef.current = null;
+                setIsMovingPiece(false);
+                return;
+            }
+
+            let stillRunning = false;
+            for (const anim of entries) {
+                if (anim.step < anim.totalSteps) {
+                    anim.step += 1;
+                    anim.currentPiece = getStepPose(
+                        anim.startPiece,
+                        anim.seatIndex,
+                        anim.step,
+                        anim.exitingHome
+                    );
+                    stillRunning = true;
+                } else {
+                    delete activeAnimsRef.current[anim.key];
+                }
+            }
+
+            if (stillRunning || Object.keys(activeAnimsRef.current).length > 0) {
+                animTickTimerRef.current = setTimeout(tick, STEP_ANIM_MS);
+            } else {
+                animTickTimerRef.current = null;
+                setIsMovingPiece(false);
+            }
+        };
+
+        animTickTimerRef.current = setTimeout(tick, STEP_ANIM_MS);
+    }, []);
+
+    const queuePieceStepAnimation = useCallback(
+        (
+            targetUserId: string,
+            seatIndex: number,
+            fromPiece: ParchisPiece,
+            toPiece: ParchisPiece,
+            explicitSteps?: number
+        ) => {
+            const exitingHome = fromPiece.stage === -1 && toPiece.stage === 0;
+            let totalSteps = explicitSteps ?? 1;
+
+            if (!explicitSteps) {
+                if (exitingHome) {
+                    totalSteps = 1;
+                } else {
+                    const walkedDiff =
+                        (toPiece.steps_walked || 0) -
+                        (fromPiece.steps_walked || 0);
+                    totalSteps =
+                        walkedDiff > 0
+                            ? walkedDiff
+                            : Math.max(
+                                  1,
+                                  Math.abs(
+                                      (toPiece.pos || 0) - (fromPiece.pos || 0)
+                                  )
+                              );
+                }
+            }
+
+            totalSteps = Math.min(Math.max(1, totalSteps), 25);
+            const key = `${targetUserId}:${fromPiece.id}`;
+
+            activeAnimsRef.current[key] = {
+                key,
+                userId: targetUserId,
+                seatIndex,
+                pieceId: fromPiece.id,
+                startPiece: { ...fromPiece },
+                currentPiece: getStepPose(
+                    fromPiece,
+                    seatIndex,
+                    1,
+                    exitingHome
+                ),
+                step: 1,
+                totalSteps,
+                exitingHome,
+            };
+
+            setIsMovingPiece(true);
+            scheduleAnimLoop();
+        },
+        [scheduleAnimLoop]
+    );
 
     const showAlert = useCallback((title: string, message: string) => {
         setModal({ isOpen: true, title, message });
@@ -1034,6 +1203,45 @@ export default function ParchisGamePage() {
             );
 
             const prevState = gameStateRef.current;
+
+            // Anima en tiempo real cualquier movimiento (tuyo o de los enemigos)
+            if (prevState && Array.isArray(nextState.players)) {
+                for (const nextP of nextState.players) {
+                    const prevP = prevState.players?.find(
+                        (x) => x.user_id === nextP.user_id
+                    );
+                    if (!prevP) continue;
+
+                    for (const nextPiece of nextP.pieces || []) {
+                        const prevPiece = prevP.pieces?.find(
+                            (x) => x.id === nextPiece.id
+                        );
+                        if (!prevPiece) continue;
+
+                        const key = `${nextP.user_id}:${nextPiece.id}`;
+                        if (activeAnimsRef.current[key]) continue;
+
+                        const moved =
+                            prevPiece.stage !== nextPiece.stage ||
+                            prevPiece.pos !== nextPiece.pos ||
+                            prevPiece.steps_walked !== nextPiece.steps_walked;
+
+                        // Si fue comida y regresó a casa (-1), regresa directo sin caminar hacia atrás
+                        const sentHome =
+                            nextPiece.stage === -1 && prevPiece.stage !== -1;
+
+                        if (moved && !sentHome) {
+                            queuePieceStepAnimation(
+                                nextP.user_id,
+                                nextP.seat_index,
+                                prevPiece,
+                                nextPiece
+                            );
+                        }
+                    }
+                }
+            }
+
             const hasPair =
                 Array.isArray(nextState.dice_pair) &&
                 nextState.dice_pair.length >= 2;
@@ -1063,7 +1271,6 @@ export default function ParchisGamePage() {
                 hasPair;
 
             if (turnPassedRightAfterRoll) {
-                // Mantiene visible el tiro y el turno anterior ~1.1s antes de pasar de turno
                 setDisplayedState({
                     ...nextState,
                     turn_seat: prevState.turn_seat,
@@ -1079,7 +1286,7 @@ export default function ParchisGamePage() {
                 setDisplayedState(nextState);
             }
         },
-        [resetSessionState, showAlert]
+        [queuePieceStepAnimation, resetSessionState, showAlert]
     );
 
     const connectToRoom = useCallback(
@@ -1181,14 +1388,9 @@ export default function ParchisGamePage() {
                         }
 
                         if (data.type === "ERROR") {
-                            if (stepAnimTimerRef.current) {
-                                clearTimeout(stepAnimTimerRef.current);
-                                stepAnimTimerRef.current = null;
-                            }
+                            clearAllTimers();
                             setRollingDice(false);
                             setIsConnecting(false);
-                            setIsMovingPiece(false);
-                            animatedPieceRef.current = null;
                             showAlert(
                                 "Aviso",
                                 data.message ||
@@ -1351,15 +1553,8 @@ export default function ParchisGamePage() {
             );
             const startPiece = me?.pieces?.find((pc) => pc.id === pieceId);
             const seatIdx = me?.seat_index ?? 0;
-            const exitingHome = startPiece?.stage === -1;
-            const animSteps = exitingHome ? 1 : chosenSteps;
 
             setPendingChoice(null);
-
-            if (stepAnimTimerRef.current) {
-                clearTimeout(stepAnimTimerRef.current);
-                stepAnimTimerRef.current = null;
-            }
 
             ws.send(
                 JSON.stringify({
@@ -1369,42 +1564,19 @@ export default function ParchisGamePage() {
                 })
             );
 
-            if (me && startPiece && animSteps > 0) {
-                setIsMovingPiece(true);
-                let step = 1;
-                animatedPieceRef.current = {
-                    userId: me.user_id,
-                    pieceId,
-                    piece: getStepPose(startPiece, seatIdx, step, exitingHome),
-                };
-
-                const nextStep = () => {
-                    stepAnimTimerRef.current = setTimeout(() => {
-                        if (step < animSteps) {
-                            step += 1;
-                            animatedPieceRef.current = {
-                                userId: me.user_id,
-                                pieceId,
-                                piece: getStepPose(
-                                    startPiece,
-                                    seatIdx,
-                                    step,
-                                    exitingHome
-                                ),
-                            };
-                            nextStep();
-                        } else {
-                            stepAnimTimerRef.current = null;
-                            animatedPieceRef.current = null;
-                            setIsMovingPiece(false);
-                        }
-                    }, STEP_ANIM_MS);
-                };
-
-                nextStep();
+            if (me && startPiece) {
+                const exitingHome = startPiece.stage === -1;
+                const animSteps = exitingHome ? 1 : chosenSteps;
+                queuePieceStepAnimation(
+                    me.user_id,
+                    seatIdx,
+                    startPiece,
+                    startPiece,
+                    animSteps
+                );
             }
         },
-        [activeSocket, isMovingPiece]
+        [activeSocket, isMovingPiece, queuePieceStepAnimation]
     );
 
     const renderBoard = useCallback(() => {
@@ -1658,18 +1830,18 @@ export default function ParchisGamePage() {
             activePiece: ParchisPiece;
             pt: { x: number; y: number };
             movable: boolean;
+            remainingAnimSteps: number;
         }> = [];
 
         for (const p of players) {
             const pal = getSeatPalette(p.seat_index);
 
             for (const piece of p.pieces || []) {
-                const animOverride =
-                    animatedPieceRef.current &&
-                    animatedPieceRef.current.userId === p.user_id &&
-                    animatedPieceRef.current.pieceId === piece.id
-                        ? animatedPieceRef.current.piece
-                        : piece;
+                const animKey = `${p.user_id}:${piece.id}`;
+                const activeAnim = activeAnimsRef.current[animKey];
+                const animOverride = activeAnim
+                    ? activeAnim.currentPiece
+                    : piece;
 
                 const pt = getPieceBoardPoint(animOverride, p.seat_index, size);
                 const options =
@@ -1677,7 +1849,9 @@ export default function ParchisGamePage() {
                         ? getMovableOptionsForPiece(
                               piece,
                               state.dice_remaining,
-                              state.bonus_steps || 0
+                              state.bonus_steps || 0,
+                              p.seat_index,
+                              players
                           )
                         : [];
 
@@ -1688,6 +1862,9 @@ export default function ParchisGamePage() {
                     activePiece: animOverride,
                     pt,
                     movable: options.length > 0,
+                    remainingAnimSteps: activeAnim
+                        ? Math.max(0, activeAnim.totalSteps - activeAnim.step)
+                        : 0,
                 });
             }
         }
@@ -1697,7 +1874,7 @@ export default function ParchisGamePage() {
         for (let i = 0; i < drawablePieces.length; i++) {
             const item = drawablePieces[i];
 
-            // Agrupa fichas que comparten la misma casilla (excluyendo casa -1)
+            // Agrupa máximo 2 fichas en el mismo espacio (excluyendo casa -1)
             const sameSpotIndices =
                 item.activePiece.stage === -1
                     ? [i]
@@ -1714,24 +1891,17 @@ export default function ParchisGamePage() {
                           )
                           .map(({ idx }) => idx);
 
-            const countInSpot = sameSpotIndices.length;
-            const indexInSpot = sameSpotIndices.indexOf(i);
+            const countInSpot = Math.min(2, sameSpotIndices.length);
+            const indexInSpot = Math.min(1, sameSpotIndices.indexOf(i));
 
             let radius = baseRadius;
             let drawX = item.pt.x;
-            let drawY = item.pt.y;
+            const drawY = item.pt.y;
 
             if (countInSpot === 2) {
                 radius = baseRadius * 0.68;
                 const shift = radius * 0.66;
                 drawX += indexInSpot === 0 ? -shift : shift;
-            } else if (countInSpot >= 3) {
-                radius = baseRadius * 0.56;
-                const shift = radius * 0.68;
-                const col = indexInSpot % 2 === 0 ? -1 : 1;
-                const row = indexInSpot < 2 ? -1 : 1;
-                drawX += col * shift;
-                drawY += row * shift;
             }
 
             if (item.movable) {
@@ -1774,6 +1944,33 @@ export default function ParchisGamePage() {
             ctx.arc(drawX, drawY, radius * 0.25, 0, Math.PI * 2);
             ctx.fillStyle = "#ffffff";
             ctx.fill();
+
+            // Contador flotante sobre la ficha mientras recorre pasos largos (ej. +20 / +10)
+            if (item.remainingAnimSteps > 0) {
+                const badgeW = 22;
+                const badgeH = 14;
+                const bx = drawX - badgeW / 2;
+                const by = drawY - radius - badgeH - 3;
+
+                ctx.fillStyle = "#09090b";
+                ctx.beginPath();
+                ctx.roundRect(bx, by, badgeW, badgeH, 5);
+                ctx.fill();
+                ctx.strokeStyle = "#fbbf24";
+                ctx.lineWidth = 1.2;
+                ctx.stroke();
+
+                ctx.fillStyle = "#fde047";
+                ctx.font = "800 9px sans-serif";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(
+                    String(item.remainingAnimSteps),
+                    drawX,
+                    by + badgeH / 2
+                );
+            }
+
             ctx.restore();
         }
     }, []);
@@ -1852,7 +2049,9 @@ export default function ParchisGamePage() {
             const opts = getMovableOptionsForPiece(
                 piece,
                 state.dice_remaining,
-                state.bonus_steps || 0
+                state.bonus_steps || 0,
+                me.seat_index,
+                players
             );
             if (opts.length === 0) continue;
             const pt = getPieceBoardPoint(piece, me.seat_index, size);
@@ -1869,7 +2068,9 @@ export default function ParchisGamePage() {
         const options = getMovableOptionsForPiece(
             closestPiece,
             state.dice_remaining,
-            state.bonus_steps || 0
+            state.bonus_steps || 0,
+            me.seat_index,
+            players
         );
 
         const pickedDie = selectedDieValueRef.current;
@@ -1999,9 +2200,13 @@ export default function ParchisGamePage() {
         ? getMovableOptionsForPiece(
               pendingPiece,
               activeDiceRemaining,
-              viewState?.bonus_steps || 0
+              viewState?.bonus_steps || 0,
+              myPlayer?.seat_index ?? 0,
+              activePlayers
           )
         : [];
+
+    const bonusStepsValue = Number(viewState?.bonus_steps || 0);
 
     return (
         <div className="min-h-screen bg-black text-white flex flex-col select-none font-sans overflow-x-hidden">
@@ -2357,18 +2562,19 @@ export default function ParchisGamePage() {
                                     position="top"
                                 />
 
-                                {(viewState.bonus_steps || 0) > 0 && isMyTurn && (
-                                    <div className="text-center text-[11px] font-black text-amber-300 bg-black/50 rounded-lg py-1">
-                                        ¡Bono de +{viewState.bonus_steps} casillas! Toca una ficha
-                                    </div>
-                                )}
-
-                                {/* Tablero central + selector flotante arriba de la ficha elegida */}
+                                {/* Tablero central + contador de pasos +20/+10 + selector flotante */}
                                 <div className="w-full min-w-0 flex items-center justify-center overflow-hidden">
                                     <div
                                         className="relative w-full aspect-square max-h-[min(92vw,64vh)]"
                                         style={{ maxWidth: "min(100%, 64vh)" }}
                                     >
+                                        {bonusStepsValue > 0 && (
+                                            <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20 px-3 py-1 rounded-full bg-zinc-950/95 border border-amber-400 text-amber-300 text-[11px] font-black shadow-lg whitespace-nowrap">
+                                                +{bonusStepsValue} pasos
+                                                {isMyTurn ? " · Elige ficha" : ""}
+                                            </div>
+                                        )}
+
                                         <canvas
                                             ref={boardCanvasRef}
                                             onPointerDown={handleBoardPointerDown}
