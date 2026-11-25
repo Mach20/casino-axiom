@@ -2728,7 +2728,8 @@ def _parchis_public_rooms() -> list[dict]:
 
 
 async def _parchis_broadcast(room: dict):
-    gross_pot = (Decimal(str(room["bet"])) * Decimal(str(len(room["players"])))).quantize(Decimal("0.01"))
+    pot_players = max(int(room.get("pot_players_count") or 0), len(room["players"]))
+    gross_pot = (Decimal(str(room["bet"])) * Decimal(str(pot_players))).quantize(Decimal("0.01"))   
     commission_total = (gross_pot * PARCHIS_COMMISSION_RATE).quantize(Decimal("0.01"))
     net_pot = max(Decimal("0.00"), gross_pot - commission_total).quantize(Decimal("0.01"))
 
@@ -2950,7 +2951,8 @@ async def _parchis_settle_winners(room: dict, winner_uids: list[str]):
         return
     room["settled"] = True
 
-    gross_pot = (Decimal(str(room["bet"])) * Decimal(str(len(room["players"])))).quantize(Decimal("0.01"))
+    pot_players = max(int(room.get("pot_players_count") or 0), len(room["players"]))
+    gross_pot = (Decimal(str(room["bet"])) * Decimal(str(pot_players))).quantize(Decimal("0.01"))  
     total_commission = (gross_pot * PARCHIS_COMMISSION_RATE).quantize(Decimal("0.01"))
     net_pot = max(Decimal("0.00"), gross_pot - total_commission).quantize(Decimal("0.01"))
 
@@ -3030,7 +3032,118 @@ async def _parchis_settle_winners(room: dict, winner_uids: list[str]):
         }).eq("id", room["room_id"]).execute()
     except Exception as exc:
         print(f"ERROR update parchis_matches finished {room['room_id']}: {exc!r}")
+def _parchis_active_winners_by_last_standing(room: dict) -> list[str]:
+    """Si solo queda 1 jugador (o 1 solo equipo en 2v2), devuelve los UIDs ganadores."""
+    players = list(room.get("players", {}).values())
+    if len(players) == 1:
+        return [players[0]["user_id"]]
 
+    if room.get("team_mode") == "2v2":
+        teams_present = {p.get("team") for p in players if p.get("team")}
+        if len(teams_present) == 1:
+            only_team = next(iter(teams_present))
+            return [p["user_id"] for p in players if p.get("team") == only_team]
+
+    return []
+
+
+async def _parchis_handle_player_leave(room: dict, leaving_uid: str, reason: str = "leave"):
+    """Retira al jugador que salió/se desconectó, ajusta turnos y declara ganador si queda 1."""
+    uid_str = str(leaving_uid)
+    leaving_player = room.get("players", {}).get(uid_str)
+    if not leaving_player:
+        return
+
+    leaving_name = leaving_player.get("player_name", "Jugador")
+    leaving_seat = leaving_player.get("seat_index")
+    was_turn = (room.get("turn_seat") == leaving_seat)
+
+    # Marcar desconectado en BD en segundo plano sin bloquear el tiempo real
+    async def _mark_db_left():
+        try:
+            supabase.table("parchis_players").update({
+                "is_connected": False,
+            }).eq("match_id", room["room_id"]).eq("user_id", uid_str).execute()
+        except Exception:
+            pass
+
+    asyncio.create_task(_mark_db_left())
+
+    # Si estaba esperando (waiting)
+    if room.get("status") == "waiting":
+        if str(room.get("creator_id")) == uid_str:
+            room["status"] = "closed_by_host"
+            room["last_event"] = "El anfitrión cerró la sala."
+            await _parchis_broadcast(room)
+            parchis_rooms.pop(room["room_id"], None)
+            parchis_locks.pop(room["room_id"], None)
+            return
+
+        room["players"].pop(uid_str, None)
+        room["last_event"] = f"{leaving_name} salió de la sala."
+        await _parchis_broadcast(room)
+        return
+
+    # Si estaba jugando (playing)
+    if room.get("status") == "playing":
+        room["players"].pop(uid_str, None)
+
+        if not room["players"]:
+            room["status"] = "finished"
+            room["last_event"] = "Todos los jugadores abandonaron la partida."
+            await _parchis_broadcast(room)
+            parchis_rooms.pop(room["room_id"], None)
+            parchis_locks.pop(room["room_id"], None)
+            return
+
+        # Verificar si por abandono ya solo queda 1 jugador (o 1 equipo en 2v2)
+        standing_winners = _parchis_active_winners_by_last_standing(room)
+        if standing_winners:
+            winner_names = ", ".join(
+                room["players"][w].get("player_name", "Jugador")
+                for w in standing_winners
+                if w in room["players"]
+            )
+            pot_players = max(int(room.get("pot_players_count") or 0), len(room["players"]) + 1)
+            gross_pot = (Decimal(str(room["bet"])) * Decimal(str(pot_players))).quantize(Decimal("0.01"))
+            net_pot = (gross_pot * (Decimal("1.00") - PARCHIS_COMMISSION_RATE)).quantize(Decimal("0.01"))
+            per_winner_net = (net_pot / Decimal(str(len(standing_winners)))).quantize(Decimal("0.01"))
+
+            room["status"] = "finished"
+            room["winners"] = standing_winners
+            room["must_move"] = False
+            room["dice_remaining"] = []
+            room["bonus_steps"] = 0
+            room["penalty_pending"] = False
+            room["dice"] = None
+            room["last_event"] = (
+                f"{leaving_name} abandonó. ¡{winner_names or 'Último jugador'} gana la partida! "
+                f"(Premio neto: ${per_winner_net:.2f})"
+            )
+            await _parchis_broadcast(room)
+            await _parchis_settle_winners(room, standing_winners)
+            await _parchis_broadcast(room)
+            return
+
+        # Aún quedan 2 o más jugadores/rivales: la partida continúa normal
+        room["must_move"] = False
+        room["dice_remaining"] = []
+        room["bonus_steps"] = 0
+        room["penalty_pending"] = False
+        room["dice"] = None
+        room["double_count"] = 0
+        room["extra_turn"] = False
+        room["last_event"] = f"{leaving_name} abandonó la partida. ¡Sigue el juego!"
+
+        if was_turn and leaving_seat is not None:
+            seats_sorted = sorted(p["seat_index"] for p in room["players"].values())
+            after_seats = [s for s in seats_sorted if s > leaving_seat]
+            room["turn_seat"] = after_seats[0] if after_seats else seats_sorted[0]
+        elif room.get("turn_seat") not in {p["seat_index"] for p in room["players"].values()}:
+            seats_sorted = sorted(p["seat_index"] for p in room["players"].values())
+            room["turn_seat"] = seats_sorted[0]
+
+        await _parchis_broadcast(room)
 
 @app.get("/parchis/rooms")
 async def list_parchis_rooms(bet: float | None = None):
@@ -3313,6 +3426,7 @@ async def parchis_ws_endpoint(
 
             if len(room["players"]) == room["max_players"]:
                 room["status"] = "playing"
+                room["pot_players_count"] = len(room["players"])
                 room["turn_seat"] = min(p["seat_index"] for p in room["players"].values())
                 room["last_event"] = "¡Sala completa! Lanza los dados."
                 try:
@@ -3337,13 +3451,19 @@ async def parchis_ws_endpoint(
                 await websocket.send_json({"type": "PONG"})
                 continue
 
+            if msg_type in ("LEAVE", "ABANDON"):
+                async with lock:
+                    current_p = room.get("players", {}).get(user_id)
+                    if current_p and current_p.get("websocket") is websocket:
+                        current_p["websocket"] = None
+                        current_p["connected"] = False
+                        await _parchis_handle_player_leave(room, user_id, reason="leave")
+                break
+
             async with lock:
                 if msg_type == "CLOSE_ROOM" and str(room.get("creator_id")) == str(user_id):
                     if room["status"] == "waiting":
-                        room["status"] = "closed_by_host"
-                        room["last_event"] = "El anfitrión cerró la sala."
-                        await _parchis_broadcast(room)
-                        parchis_rooms.pop(room["room_id"], None)
+                        await _parchis_handle_player_leave(room, user_id, reason="close_room")
                     break
 
                 if room["status"] != "playing":
@@ -3488,7 +3608,6 @@ async def parchis_ws_endpoint(
                             await send_error(websocket, "Necesitas un 5 o suma de 5 para sacar ficha.")
                             continue
 
-                    # Caso 3: Ficha ya en juego -> usa un dado independiente a la vez
                     # Caso 3: Ficha ya en juego -> usa exactamente el dado seleccionado o el único disponible
                     else:
                         if raw_die in dice_remaining:
@@ -3553,25 +3672,19 @@ async def parchis_ws_endpoint(
 
     except WebSocketDisconnect:
         async with lock:
-            p = room["players"].get(user_id)
-            if p:
+            p = room.get("players", {}).get(user_id)
+            if p and p.get("websocket") is websocket:
                 p["connected"] = False
                 p["websocket"] = None
-                try:
-                    supabase.table("parchis_players").update({
-                        "is_connected": False,
-                    }).eq("match_id", room["room_id"]).eq("user_id", user_id).execute()
-                except Exception:
-                    pass
-            await _parchis_broadcast(room)
+                await _parchis_handle_player_leave(room, user_id, reason="disconnect")
     except Exception as exc:
         print(f"ERROR WS parchis {room['room_id']} user {user_id}: {exc!r}")
         async with lock:
-            p = room["players"].get(user_id)
-            if p:
+            p = room.get("players", {}).get(user_id)
+            if p and p.get("websocket") is websocket:
                 p["connected"] = False
                 p["websocket"] = None
-            await _parchis_broadcast(room)
+                await _parchis_handle_player_leave(room, user_id, reason="error")
 
 # ============================================================
 # ADMINISTRADOR AXIOM - NUEVO PANEL
