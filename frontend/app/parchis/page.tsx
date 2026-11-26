@@ -14,6 +14,7 @@ import Header from "../components/Header";
 type Wallet = "play" | "bonus";
 type ParchisBet = "0.25" | "1.00" | "10.00";
 type MaxPlayers = 2 | 3 | 4;
+type MatchMode = "solo" | "duo";
 
 interface ParchisPiece {
     id: number;
@@ -37,6 +38,7 @@ interface ParchisPlayerState {
 interface ParchisState {
     type: string;
     room_id: string;
+    server_ts?: number;
     host_user_id?: string;
     host_name?: string;
     bet: number;
@@ -59,18 +61,6 @@ interface ParchisState {
     winners: string[];
     last_event: string;
     players: ParchisPlayerState[];
-}
-
-interface PublicRoomItem {
-    room_id: string;
-    host_name?: string;
-    host_doc_number?: string;
-    host_cedula?: string;
-    bet: number;
-    max_players: number;
-    players_count: number;
-    team_mode: string;
-    is_private: boolean;
 }
 
 interface ProfileRow {
@@ -97,6 +87,7 @@ const API_BASE =
 
 const STEP_ANIM_MS = 50;
 const DICE_VIEW_HOLD_MS = 950;
+const TURN_SECONDS = 10;
 
 const PARCHIS_BETS: Record<ParchisBet, number> = {
     "0.25": 0.25,
@@ -363,9 +354,7 @@ function canPieceMoveWithStep(
         const startSpot = SEAT_START_SPOTS[seatIndex] ?? 5;
         const occ = spotOccupants.get(startSpot) || [];
         const myColorCount = occ.filter((o) => o.seat_index === seatIndex).length;
-        // No pueden haber 3 del mismo color en el mismo espacio
         if (myColorCount >= 2) return false;
-        // Si hay 2 fichas bloqueando esa estrella, nadie entra/pasa
         if (STAR_SPOTS.has(startSpot) && occ.length >= 2) return false;
         return true;
     }
@@ -373,20 +362,17 @@ function canPieceMoveWithStep(
     if (piece.stage === 0) {
         if (piece.steps_walked + steps > 70) return false;
 
-        // Revisa cada casilla intermedia y final en la pista principal
         const startSpot = SEAT_START_SPOTS[seatIndex] ?? 5;
         for (let s = 1; s <= steps; s++) {
             const nextWalked = piece.steps_walked + s;
-            if (nextWalked >= 63) break; // Entró a recta final propia
+            if (nextWalked >= 63) break;
             const checkSpot = (startSpot + nextWalked) % TRACK_LEN;
             const occ = spotOccupants.get(checkSpot) || [];
 
-            // Si hay 2 fichas en una estrella, nadie puede pasar ni caer ahí
             if (STAR_SPOTS.has(checkSpot) && occ.length >= 2) {
                 return false;
             }
 
-            // En la casilla destino: máximo 2 fichas del mismo color
             if (s === steps) {
                 const myColorCount = occ.filter(
                     (o) => o.seat_index === seatIndex
@@ -411,14 +397,29 @@ function getMovableOptionsForPiece(
     seatIndex: number,
     allPlayers: ParchisPlayerState[]
 ): number[] {
+    const rem = Array.isArray(diceRemaining) ? diceRemaining : [];
+
+    // Si hay bono (+20 o +10) pero ninguna ficha puede moverse esos pasos exactos,
+    // se omite el bono y se evalúan directamente los dados restantes
     if (bonusSteps > 0) {
-        if (piece.stage === -1) return [];
-        return canPieceMoveWithStep(piece, bonusSteps, seatIndex, allPlayers)
-            ? [bonusSteps]
-            : [];
+        const canUseBonusAny =
+            piece.stage !== -1 &&
+            canPieceMoveWithStep(piece, bonusSteps, seatIndex, allPlayers);
+        const anyPlayerCanBonus = allPlayers.some(
+            (pl) =>
+                pl.seat_index === seatIndex &&
+                (pl.pieces || []).some(
+                    (pc) =>
+                        pc.stage !== -1 &&
+                        canPieceMoveWithStep(pc, bonusSteps, seatIndex, allPlayers)
+                )
+        );
+
+        if (anyPlayerCanBonus) {
+            return canUseBonusAny ? [bonusSteps] : [];
+        }
     }
 
-    const rem = Array.isArray(diceRemaining) ? diceRemaining : [];
     if (rem.length === 0) return [];
 
     if (piece.stage === -1) {
@@ -503,6 +504,15 @@ function clampDieFace(val: unknown, fallback = 4): number {
 function randomDieFace(exclude?: number): number {
     const pool = [1, 2, 3, 4, 5, 6].filter((n) => n !== exclude);
     return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function makePartyCode(): string {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let code = "";
+    for (let i = 0; i < 6; i++) {
+        code += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return code;
 }
 
 const PIP_COORDS: Record<number, Array<[number, number]>> = {
@@ -623,9 +633,10 @@ function StarStyleDie({
     );
 }
 
-// Bandeja estilo Parchís STAR: Círculo de color + 2 dados al lado (sin ícono de perfil)
+// Bandeja estilo Parchís STAR: Círculo de color + 2 dados al lado + contador de 10s
 function StarPlayerHud({
     playerName,
+    teamLabel,
     palette,
     dicePair,
     diceRemaining,
@@ -633,12 +644,14 @@ function StarPlayerHud({
     onSelectDie,
     rolling,
     isActiveTurn,
+    secondsLeft,
     canRoll,
     isMovingPiece,
     onRoll,
     position,
 }: {
     playerName: string;
+    teamLabel?: string | null;
     palette: (typeof SEAT_PALETTE)[number];
     dicePair: [number, number];
     diceRemaining: number[];
@@ -646,6 +659,7 @@ function StarPlayerHud({
     onSelectDie?: (dieVal: number) => void;
     rolling: boolean;
     isActiveTurn: boolean;
+    secondsLeft: number;
     canRoll: boolean;
     isMovingPiece: boolean;
     onRoll: () => void;
@@ -704,6 +718,18 @@ function StarPlayerHud({
         </div>
     );
 
+    const turnBadge = isActiveTurn ? (
+        <span
+            className={`px-2 py-0.5 rounded-full text-[10px] font-black tabular-nums border ${
+                secondsLeft <= 3
+                    ? "bg-red-500/20 border-red-400 text-red-300 animate-pulse"
+                    : "bg-zinc-900/90 border-amber-400/70 text-amber-300"
+            }`}
+        >
+            {Math.max(0, secondsLeft)}s
+        </span>
+    ) : null;
+
     const diceTray = (
         <div
             style={{
@@ -743,12 +769,20 @@ function StarPlayerHud({
         return (
             <div className="w-full flex flex-col items-end pr-1">
                 <div className="flex items-center gap-2">
+                    {turnBadge}
                     {diceTray}
                     {colorBadge}
                 </div>
-                <span className="text-[11px] sm:text-xs font-bold text-zinc-200 mt-1 pr-1 drop-shadow">
-                    {playerName}
-                </span>
+                <div className="flex items-center gap-1.5 mt-1 pr-1">
+                    {teamLabel && (
+                        <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-zinc-800 text-amber-300 border border-amber-400/40">
+                            {teamLabel}
+                        </span>
+                    )}
+                    <span className="text-[11px] sm:text-xs font-bold text-zinc-200 drop-shadow">
+                        {playerName}
+                    </span>
+                </div>
             </div>
         );
     }
@@ -759,6 +793,12 @@ function StarPlayerHud({
                 <span className="text-[11px] sm:text-xs font-bold text-zinc-200 drop-shadow">
                     {playerName}
                 </span>
+                {teamLabel && (
+                    <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-zinc-800 text-emerald-300 border border-emerald-400/40">
+                        {teamLabel}
+                    </span>
+                )}
+                {turnBadge}
                 {canRollNow && !rolling && (
                     <span className="text-[10px] font-black uppercase bg-emerald-500 text-black px-2 py-0.5 rounded-full animate-pulse">
                         Toca un dado
@@ -780,21 +820,24 @@ export default function ParchisGamePage() {
 
     const [playerName, setPlayerName] = useState("");
     const [docNumber, setDocNumber] = useState("");
-    const [searchId, setSearchId] = useState("");
 
     const [playBalance, setPlayBalance] = useState(0);
     const [bonusBalance, setBonusBalance] = useState(0);
     const [selectedWallet, setSelectedWallet] = useState<Wallet>("play");
 
     const [selectedBet, setSelectedBet] = useState<ParchisBet>("0.25");
-    const [maxPlayers, setMaxPlayers] = useState<MaxPlayers>(2);
+    const [maxPlayers, setMaxPlayers] = useState<MaxPlayers>(4);
+    const [matchMode, setMatchMode] = useState<MatchMode>("solo");
+    const [partyCode, setPartyCode] = useState("");
+    const [joinPartyCode, setJoinPartyCode] = useState("");
+    const [teammateName, setTeammateName] = useState<string | null>(null);
+    const [isSearchingMatch, setIsSearchingMatch] = useState(false);
+
     const [isPrivate, setIsPrivate] = useState(false);
     const [roomPassword, setRoomPassword] = useState("");
     const [joinRoomId, setJoinRoomId] = useState("");
     const [joinPassword, setJoinPassword] = useState("");
 
-    const [publicRooms, setPublicRooms] = useState<PublicRoomItem[]>([]);
-    const [roomsUnavailable, setRoomsUnavailable] = useState(false);
     const [isInGame, setIsInGame] = useState(false);
     const [roomId, setRoomId] = useState("");
     const [isConnected, setIsConnected] = useState(false);
@@ -805,6 +848,7 @@ export default function ParchisGamePage() {
     const [displayedState, setDisplayedState] = useState<ParchisState | null>(null);
     const [lastPairShown, setLastPairShown] = useState<[number, number]>([4, 6]);
     const [selectedDieValue, setSelectedDieValue] = useState<number | null>(null);
+    const [turnSecondsLeft, setTurnSecondsLeft] = useState<number>(TURN_SECONDS);
     const [pendingChoice, setPendingChoice] = useState<{
         pieceId: number;
         xPct: number;
@@ -827,6 +871,10 @@ export default function ParchisGamePage() {
     const userIdRef = useRef<string | null>(null);
     const selectedDieValueRef = useRef<number | null>(null);
     const socketRef = useRef<WebSocket | null>(null);
+    const partySocketRef = useRef<WebSocket | null>(null);
+    const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const turnDeadlineRef = useRef<number>(0);
+    const turnTimeoutSentKeyRef = useRef<string>("");
     const closingByUserRef = useRef(false);
     const animTickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const turnHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -840,7 +888,21 @@ export default function ParchisGamePage() {
         selectedDieValueRef.current = selectedDieValue;
     }, [selectedDieValue]);
 
+    useEffect(() => {
+        if (matchMode === "duo" && maxPlayers !== 4) {
+            setMaxPlayers(4);
+        }
+    }, [matchMode, maxPlayers]);
+
+    const clearHeartbeat = useCallback(() => {
+        if (heartbeatTimerRef.current) {
+            clearInterval(heartbeatTimerRef.current);
+            heartbeatTimerRef.current = null;
+        }
+    }, []);
+
     const clearAllTimers = useCallback(() => {
+        clearHeartbeat();
         if (animTickTimerRef.current) {
             clearTimeout(animTickTimerRef.current);
             animTickTimerRef.current = null;
@@ -850,10 +912,13 @@ export default function ParchisGamePage() {
             turnHoldTimerRef.current = null;
         }
         activeAnimsRef.current = {};
+        turnDeadlineRef.current = 0;
+        turnTimeoutSentKeyRef.current = "";
+        setTurnSecondsLeft(TURN_SECONDS);
         setIsMovingPiece(false);
         setPendingChoice(null);
         setSelectedDieValue(null);
-    }, []);
+    }, [clearHeartbeat]);
 
     const scheduleAnimLoop = useCallback(() => {
         if (animTickTimerRef.current) return;
@@ -1059,42 +1124,35 @@ export default function ParchisGamePage() {
         };
     }, [loadUserBalances]);
 
-    const fetchPublicRooms = useCallback(async () => {
-        try {
-            const amount = PARCHIS_BETS[selectedBet];
-            const idParam = searchId.trim()
-                ? `&doc_number=${encodeURIComponent(searchId.trim())}`
-                : "";
-            const res = await fetch(
-                `${API_BASE}/parchis/rooms?bet=${encodeURIComponent(
-                    String(amount)
-                )}${idParam}`
-            );
-            if (!res.ok) {
-                setRoomsUnavailable(true);
-                setPublicRooms([]);
-                return;
-            }
-            const data = await res.json();
-            setRoomsUnavailable(false);
-            setPublicRooms(Array.isArray(data.rooms) ? data.rooms : []);
-        } catch {
-            setRoomsUnavailable(true);
-            setPublicRooms([]);
-        }
-    }, [selectedBet, searchId]);
-
     useEffect(() => {
-        if (isInGame || !userId) return;
-        void fetchPublicRooms();
-        const timer = setInterval(() => {
-            void fetchPublicRooms();
-        }, 5000);
-        return () => clearInterval(timer);
-    }, [isInGame, userId, fetchPublicRooms]);
+        return () => {
+            clearAllTimers();
+            if (partySocketRef.current) {
+                try {
+                    partySocketRef.current.close(1000, "Desmontado");
+                } catch {}
+                partySocketRef.current = null;
+            }
+            const ws = socketRef.current;
+            if (ws) {
+                ws.onclose = null;
+                ws.onerror = null;
+                ws.onmessage = null;
+                if (
+                    ws.readyState === WebSocket.OPEN ||
+                    ws.readyState === WebSocket.CONNECTING
+                ) {
+                    try {
+                        ws.close(1000, "Componente desmontado");
+                    } catch {}
+                }
+            }
+        };
+    }, [clearAllTimers]);
 
     const resetSessionState = useCallback(() => {
         clearAllTimers();
+        setIsSearchingMatch(false);
         setIsConnecting(false);
         setIsConnected(false);
         setRollingDice(false);
@@ -1109,6 +1167,14 @@ export default function ParchisGamePage() {
 
     const exitParchisGame = useCallback(async () => {
         closingByUserRef.current = true;
+        clearHeartbeat();
+
+        if (partySocketRef.current) {
+            try {
+                partySocketRef.current.close(1000, "Saliendo de búsqueda");
+            } catch {}
+            partySocketRef.current = null;
+        }
 
         const currentState = gameStateRef.current;
         const activeRoomId = currentState?.room_id || roomId;
@@ -1126,7 +1192,7 @@ export default function ParchisGamePage() {
             try {
                 ws.send(
                     JSON.stringify({
-                        type: hostClosing ? "CLOSE_ROOM" : "LEAVE_ROOM",
+                        type: hostClosing ? "CLOSE_ROOM" : "LEAVE",
                         room_id: activeRoomId,
                     })
                 );
@@ -1150,12 +1216,6 @@ export default function ParchisGamePage() {
             } catch {}
         }
 
-        if (activeRoomId) {
-            setPublicRooms((prev) =>
-                prev.filter((r) => String(r.room_id) !== String(activeRoomId))
-            );
-        }
-
         resetSessionState();
 
         if (ws) {
@@ -1171,14 +1231,66 @@ export default function ParchisGamePage() {
         }
 
         await loadUserBalances();
-        await fetchPublicRooms();
     }, [
         accessToken,
-        fetchPublicRooms,
+        clearHeartbeat,
         loadUserBalances,
         resetSessionState,
         roomId,
     ]);
+
+    const passTurnByTimeout = useCallback(() => {
+        const curState = gameStateRef.current;
+        const currentUid = userIdRef.current;
+        if (!curState || !currentUid || curState.status !== "playing") return;
+
+        const me = curState.players?.find((p) => p.user_id === currentUid);
+        if (!me || curState.turn_seat !== me.seat_index) return;
+
+        const remKey = JSON.stringify(curState.dice_remaining || []);
+        const turnKey = `${curState.turn_seat}:${curState.must_move ? 1 : 0}:${curState.bonus_steps || 0}:${remKey}`;
+        if (turnTimeoutSentKeyRef.current === turnKey) return;
+        turnTimeoutSentKeyRef.current = turnKey;
+
+        setRollingDice(false);
+        setPendingChoice(null);
+        setSelectedDieValue(null);
+
+        const ws = socketRef.current || activeSocket;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            try {
+                ws.send(
+                    JSON.stringify({
+                        type: "PASS_TURN",
+                        reason: "timeout",
+                    })
+                );
+            } catch {}
+        }
+
+        const players = curState.players || [];
+        const seatsSorted = players
+            .map((p) => p.seat_index)
+            .sort((a, b) => a - b);
+        const curIdx = seatsSorted.indexOf(me.seat_index);
+        const nextSeat =
+            seatsSorted.length > 0
+                ? seatsSorted[(curIdx + 1) % seatsSorted.length]
+                : me.seat_index;
+
+        const fallbackState: ParchisState = {
+            ...curState,
+            turn_seat: nextSeat,
+            must_move: false,
+            dice_remaining: [],
+            bonus_steps: 0,
+            penalty_pending: false,
+            last_event: `${getCleanPlayerLabel(me, "Jugador")} perdió el turno por tiempo (10s).`,
+        };
+        gameStateRef.current = fallbackState;
+        setGameState(fallbackState);
+        setDisplayedState(fallbackState);
+    }, [activeSocket]);
 
     const applyIncomingGameState = useCallback(
         (nextState: ParchisState) => {
@@ -1204,7 +1316,6 @@ export default function ParchisGamePage() {
 
             const prevState = gameStateRef.current;
 
-            // Anima en tiempo real cualquier movimiento (tuyo o de los enemigos)
             if (prevState && Array.isArray(nextState.players)) {
                 for (const nextP of nextState.players) {
                     const prevP = prevState.players?.find(
@@ -1218,15 +1329,11 @@ export default function ParchisGamePage() {
                         );
                         if (!prevPiece) continue;
 
-                        const key = `${nextP.user_id}:${nextPiece.id}`;
-                        if (activeAnimsRef.current[key]) continue;
-
                         const moved =
                             prevPiece.stage !== nextPiece.stage ||
                             prevPiece.pos !== nextPiece.pos ||
                             prevPiece.steps_walked !== nextPiece.steps_walked;
 
-                        // Si fue comida y regresó a casa (-1), regresa directo sin caminar hacia atrás
                         const sentHome =
                             nextPiece.stage === -1 && prevPiece.stage !== -1;
 
@@ -1251,6 +1358,20 @@ export default function ParchisGamePage() {
                     clampDieFace(nextState.dice_pair[0], 4),
                     clampDieFace(nextState.dice_pair[1], 6),
                 ]);
+            }
+
+            const turnChanged =
+                !prevState ||
+                prevState.turn_seat !== nextState.turn_seat ||
+                prevState.status !== nextState.status;
+
+            if (turnChanged && nextState.status === "playing") {
+                turnDeadlineRef.current = Date.now() + TURN_SECONDS * 1000;
+                turnTimeoutSentKeyRef.current = "";
+                setTurnSecondsLeft(TURN_SECONDS);
+            } else if (nextState.status !== "playing") {
+                turnDeadlineRef.current = 0;
+                setTurnSecondsLeft(TURN_SECONDS);
             }
 
             gameStateRef.current = nextState;
@@ -1289,12 +1410,38 @@ export default function ParchisGamePage() {
         [queuePieceStepAnimation, resetSessionState, showAlert]
     );
 
+    const activeStateForTimer = displayedState || gameState;
+    const timerStatus = activeStateForTimer?.status || "";
+    const timerTurnSeat = activeStateForTimer?.turn_seat ?? -1;
+
+    useEffect(() => {
+        if (!isInGame || timerStatus !== "playing") return;
+
+        if (!turnDeadlineRef.current) {
+            turnDeadlineRef.current = Date.now() + TURN_SECONDS * 1000;
+        }
+
+        const interval = setInterval(() => {
+            const remainingMs = turnDeadlineRef.current - Date.now();
+            const secs = Math.max(0, Math.ceil(remainingMs / 1000));
+            setTurnSecondsLeft(secs);
+
+            if (remainingMs <= 0) {
+                passTurnByTimeout();
+            }
+        }, 250);
+
+        return () => clearInterval(interval);
+    }, [isInGame, timerStatus, timerTurnSeat, passTurnByTimeout]);
+
     const connectToRoom = useCallback(
         (
             targetRoomId: string,
             pwd = "",
             overrideBet?: number,
-            overridePlayers?: MaxPlayers
+            overridePlayers?: MaxPlayers,
+            overrideTeamMode?: "ffa" | "2v2",
+            overridePartyCode?: string
         ) => {
             if (isConnecting || socketRef.current) {
                 showAlert(
@@ -1313,7 +1460,10 @@ export default function ParchisGamePage() {
             }
 
             const betAmount = overrideBet ?? PARCHIS_BETS[selectedBet];
-            const playersCount = overridePlayers ?? maxPlayers;
+            const playersCount =
+                overrideTeamMode === "2v2" ? 4 : (overridePlayers ?? maxPlayers);
+            const teamModeValue =
+                overrideTeamMode ?? (matchMode === "duo" ? "2v2" : "ffa");
             const available =
                 selectedWallet === "play" ? playBalance : bonusBalance;
 
@@ -1325,8 +1475,16 @@ export default function ParchisGamePage() {
                 return;
             }
 
+            if (partySocketRef.current) {
+                try {
+                    partySocketRef.current.close(1000, "Entrando a partida");
+                } catch {}
+                partySocketRef.current = null;
+            }
+
             clearAllTimers();
             closingByUserRef.current = false;
+            setIsSearchingMatch(false);
             setIsConnecting(true);
             setIsConnected(false);
 
@@ -1339,6 +1497,9 @@ export default function ParchisGamePage() {
             setConnectionMessage("Conectando con el servidor...");
 
             const cleanName = (playerName.trim() || "Jugador").split(/\s+/)[0];
+            const partyParam = overridePartyCode
+                ? `&party_code=${encodeURIComponent(overridePartyCode)}`
+                : "";
 
             const wsUrl = getWebSocketUrl(
                 `/ws/parchis/${encodeURIComponent(targetRoomId)}` +
@@ -1347,11 +1508,10 @@ export default function ParchisGamePage() {
                     `&player_name=${encodeURIComponent(cleanName)}` +
                     `&bet=${encodeURIComponent(String(betAmount))}` +
                     `&max_players=${encodeURIComponent(String(playersCount))}` +
+                    `&team_mode=${encodeURIComponent(teamModeValue)}` +
                     `&wallet=${encodeURIComponent(selectedWallet)}` +
-                    `&password=${encodeURIComponent(pwd)}`
+                    `&password=${encodeURIComponent(pwd)}${partyParam}`
             );
-
-            let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
             try {
                 const ws = new WebSocket(wsUrl);
@@ -1359,8 +1519,8 @@ export default function ParchisGamePage() {
                 setActiveSocket(ws);
 
                 ws.onopen = () => {
-                    if (heartbeatTimer) clearInterval(heartbeatTimer);
-                    heartbeatTimer = setInterval(() => {
+                    clearHeartbeat();
+                    heartbeatTimerRef.current = setInterval(() => {
                         if (ws.readyState === WebSocket.OPEN) {
                             try {
                                 ws.send(JSON.stringify({ type: "PING" }));
@@ -1409,27 +1569,20 @@ export default function ParchisGamePage() {
                 };
 
                 ws.onerror = () => {
-                    if (heartbeatTimer) {
-                        clearInterval(heartbeatTimer);
-                        heartbeatTimer = null;
-                    }
+                    clearHeartbeat();
                     setRollingDice(false);
                     setIsMovingPiece(false);
                     setConnectionMessage("Error de enlace con la sala...");
                 };
 
                 ws.onclose = (event) => {
-                    if (heartbeatTimer) {
-                        clearInterval(heartbeatTimer);
-                        heartbeatTimer = null;
-                    }
+                    clearHeartbeat();
 
                     const wasUserClose = closingByUserRef.current;
                     closingByUserRef.current = false;
                     resetSessionState();
 
                     if (!wasUserClose) {
-                        void fetchPublicRooms();
                         showAlert(
                             "Sala cerrada",
                             event.reason ||
@@ -1439,11 +1592,8 @@ export default function ParchisGamePage() {
 
                     void loadUserBalances();
                 };
-            } catch (error) {
-                if (heartbeatTimer) {
-                    clearInterval(heartbeatTimer);
-                    heartbeatTimer = null;
-                }
+            } catch {
+                clearHeartbeat();
                 resetSessionState();
                 showAlert(
                     "Error de conexión",
@@ -1456,10 +1606,11 @@ export default function ParchisGamePage() {
             applyIncomingGameState,
             bonusBalance,
             clearAllTimers,
-            fetchPublicRooms,
+            clearHeartbeat,
             getWebSocketUrl,
             isConnecting,
             loadUserBalances,
+            matchMode,
             maxPlayers,
             playBalance,
             playerName,
@@ -1471,13 +1622,16 @@ export default function ParchisGamePage() {
         ]
     );
 
-    const handleCreatePrivateOrCustomRoom = async () => {
-        if (!accessToken) {
-            showAlert("Sesión requerida", "Inicia sesión para crear una sala.");
+    const handleFindPublicMatch = async () => {
+        if (!userId || !accessToken) {
+            showAlert("Sesión requerida", "Inicia sesión para buscar partida.");
             return;
         }
 
+        const isDuo = matchMode === "duo";
         const betAmount = PARCHIS_BETS[selectedBet];
+        const playersCount: MaxPlayers = isDuo ? 4 : maxPlayers;
+        const teamModeValue: "ffa" | "2v2" = isDuo ? "2v2" : "ffa";
         const available =
             selectedWallet === "play" ? playBalance : bonusBalance;
 
@@ -1488,6 +1642,107 @@ export default function ParchisGamePage() {
             );
             return;
         }
+
+        const activeCode = isDuo
+            ? (partyCode || joinPartyCode || makePartyCode()).trim().toUpperCase()
+            : "";
+        if (isDuo && !partyCode) {
+            setPartyCode(activeCode);
+        }
+
+        setBusyAction(true);
+        setIsSearchingMatch(true);
+
+        try {
+            const query = new URLSearchParams({
+                bet: String(betAmount),
+                max_players: String(playersCount),
+                team_mode: teamModeValue,
+            });
+            if (activeCode) {
+                query.set("party_code", activeCode);
+            }
+
+            const res = await fetch(
+                `${API_BASE}/parchis/matchmaking/find?${query.toString()}`,
+                {
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                    },
+                }
+            );
+
+            if (res.ok) {
+                const data = await res.json().catch(() => ({}));
+                if (data.room_id) {
+                    connectToRoom(
+                        String(data.room_id),
+                        "",
+                        betAmount,
+                        playersCount,
+                        teamModeValue,
+                        activeCode
+                    );
+                    return;
+                }
+            }
+
+            const fallbackRoomId =
+                isDuo && activeCode
+                    ? `auto-2v2-${betAmount}-${activeCode}`
+                    : `auto-${teamModeValue}-${playersCount}-${betAmount}`;
+
+            connectToRoom(
+                fallbackRoomId,
+                "",
+                betAmount,
+                playersCount,
+                teamModeValue,
+                activeCode
+            );
+        } catch {
+            const fallbackRoomId =
+                isDuo && activeCode
+                    ? `auto-2v2-${betAmount}-${activeCode}`
+                    : `auto-${teamModeValue}-${playersCount}-${betAmount}`;
+
+            connectToRoom(
+                fallbackRoomId,
+                "",
+                betAmount,
+                playersCount,
+                teamModeValue,
+                activeCode
+            );
+        } finally {
+            setBusyAction(false);
+        }
+    };
+
+    const handleCreatePrivateOrCustomRoom = async () => {
+        if (!accessToken) {
+            showAlert("Sesión requerida", "Inicia sesión para crear una sala.");
+            return;
+        }
+
+        const isDuo = matchMode === "duo";
+        const betAmount = PARCHIS_BETS[selectedBet];
+        const playersCount: MaxPlayers = isDuo ? 4 : maxPlayers;
+        const teamModeValue: "ffa" | "2v2" = isDuo ? "2v2" : "ffa";
+        const available =
+            selectedWallet === "play" ? playBalance : bonusBalance;
+
+        if (available < betAmount) {
+            showAlert(
+                "Saldo insuficiente",
+                `Necesitas al menos ${money(betAmount)} en la billetera seleccionada.`
+            );
+            return;
+        }
+
+        const activeCode = isDuo
+            ? (partyCode || joinPartyCode || makePartyCode()).trim().toUpperCase()
+            : "";
 
         setBusyAction(true);
         try {
@@ -1500,7 +1755,9 @@ export default function ParchisGamePage() {
                 },
                 body: JSON.stringify({
                     bet: betAmount,
-                    max_players: maxPlayers,
+                    max_players: playersCount,
+                    team_mode: teamModeValue,
+                    party_code: activeCode || null,
                     wallet: selectedWallet,
                     is_private: isPrivate,
                     password: isPrivate ? roomPassword.trim() : "",
@@ -1522,13 +1779,35 @@ export default function ParchisGamePage() {
                 String(data.room_id),
                 String(data.room_code || roomPassword.trim()),
                 betAmount,
-                maxPlayers
+                playersCount,
+                teamModeValue,
+                activeCode
             );
         } catch {
             showAlert("Error de red", "No se pudo contactar al servidor.");
         } finally {
             setBusyAction(false);
         }
+    };
+
+    const handleJoinDuoParty = () => {
+        const cleanCode = joinPartyCode.trim().toUpperCase();
+        if (!cleanCode) {
+            showAlert("Código de equipo", "Ingresa el código de equipo de tu amigo.");
+            return;
+        }
+        setMatchMode("duo");
+        setMaxPlayers(4);
+        setPartyCode(cleanCode);
+        setTeammateName("Amigo vinculado");
+    };
+
+    const handleCreateDuoPartyCode = () => {
+        const nextCode = makePartyCode();
+        setMatchMode("duo");
+        setMaxPlayers(4);
+        setPartyCode(nextCode);
+        setTeammateName(null);
     };
 
     const sendRollDice = () => {
@@ -1874,7 +2153,6 @@ export default function ParchisGamePage() {
         for (let i = 0; i < drawablePieces.length; i++) {
             const item = drawablePieces[i];
 
-            // Agrupa máximo 2 fichas en el mismo espacio (excluyendo casa -1)
             const sameSpotIndices =
                 item.activePiece.stage === -1
                     ? [i]
@@ -1898,9 +2176,10 @@ export default function ParchisGamePage() {
             let drawX = item.pt.x;
             const drawY = item.pt.y;
 
+            // Cuando hay 2 fichas en el mismo espacio, se muestran un poco más amplias y armónicas
             if (countInSpot === 2) {
-                radius = baseRadius * 0.68;
-                const shift = radius * 0.66;
+                radius = baseRadius * 0.82;
+                const shift = radius * 0.72;
                 drawX += indexInSpot === 0 ? -shift : shift;
             }
 
@@ -1937,7 +2216,7 @@ export default function ParchisGamePage() {
             ctx.beginPath();
             ctx.arc(drawX, drawY, radius * 0.56, 0, Math.PI * 2);
             ctx.strokeStyle = "#ffffff";
-            ctx.lineWidth = countInSpot >= 2 ? 1.6 : 2.2;
+            ctx.lineWidth = countInSpot >= 2 ? 1.85 : 2.2;
             ctx.stroke();
 
             ctx.beginPath();
@@ -1945,7 +2224,7 @@ export default function ParchisGamePage() {
             ctx.fillStyle = "#ffffff";
             ctx.fill();
 
-            // Contador flotante sobre la ficha mientras recorre pasos largos (ej. +20 / +10)
+            // Contador flotante solo con el número de pasos restantes
             if (item.remainingAnimSteps > 0) {
                 const badgeW = 22;
                 const badgeH = 14;
@@ -2040,6 +2319,22 @@ export default function ParchisGamePage() {
         }
 
         if (!state.must_move) return;
+
+        const hasAnyValidMove = (me.pieces || []).some(
+            (pc) =>
+                getMovableOptionsForPiece(
+                    pc,
+                    state.dice_remaining,
+                    state.bonus_steps || 0,
+                    me.seat_index,
+                    players
+                ).length > 0
+        );
+
+        if (!hasAnyValidMove) {
+            passTurnByTimeout();
+            return;
+        }
 
         let closestPiece: ParchisPiece | null = null;
         let closestPt: { x: number; y: number } | null = null;
@@ -2187,6 +2482,12 @@ export default function ParchisGamePage() {
         ? getCleanPlayerLabel(topPlayer, "Rival")
         : "Esperando rival...";
 
+    const formatTeamBadge = (p: ParchisPlayerState | null) => {
+        if (!p || viewState?.team_mode !== "2v2") return null;
+        if (p.team) return `Eq ${p.team.toUpperCase()}`;
+        return p.seat_index % 2 === 0 ? "Eq A" : "Eq B";
+    };
+
     const activeDiceRemaining = Array.isArray(viewState?.dice_remaining)
         ? viewState.dice_remaining
         : [];
@@ -2207,6 +2508,13 @@ export default function ParchisGamePage() {
         : [];
 
     const bonusStepsValue = Number(viewState?.bonus_steps || 0);
+    const iWonGame =
+        Boolean(viewState?.status === "finished") &&
+        Array.isArray(viewState?.winners) &&
+        viewState.winners.includes(userId);
+
+    const effectivePlayersCount: MaxPlayers =
+        matchMode === "duo" ? 4 : maxPlayers;
 
     return (
         <div className="min-h-screen bg-black text-white flex flex-col select-none font-sans overflow-x-hidden">
@@ -2254,7 +2562,7 @@ export default function ParchisGamePage() {
                             <span className="w-14" />
                         </div>
 
-                        <div className="space-y-2">
+                        <div className="space-y-1.5">
                             <label className="block text-[10px] font-bold uppercase text-zinc-500">
                                 Billetera
                             </label>
@@ -2284,8 +2592,95 @@ export default function ParchisGamePage() {
                             </div>
                         </div>
 
+                        <div className="space-y-1.5">
+                            <label className="block text-[10px] font-bold uppercase text-zinc-500">
+                                Modo de juego
+                            </label>
+                            <div className="grid grid-cols-2 gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setMatchMode("solo")}
+                                    className={`rounded-lg border px-2 py-2 text-xs font-bold ${
+                                        matchMode === "solo"
+                                            ? "border-emerald-400 bg-emerald-500 text-black"
+                                            : "border-zinc-800 bg-black text-zinc-400"
+                                    }`}
+                                >
+                                    Individual
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setMatchMode("duo");
+                                        setMaxPlayers(4);
+                                        if (!partyCode) {
+                                            setPartyCode(makePartyCode());
+                                        }
+                                    }}
+                                    className={`rounded-lg border px-2 py-2 text-xs font-bold ${
+                                        matchMode === "duo"
+                                            ? "border-amber-300 bg-amber-400 text-black"
+                                            : "border-zinc-800 bg-black text-zinc-400"
+                                    }`}
+                                >
+                                    Equipo 2v2
+                                </button>
+                            </div>
+                        </div>
+
+                        {matchMode === "duo" && (
+                            <div className="rounded-xl border border-amber-400/40 bg-zinc-900/70 p-2.5 space-y-2">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-[11px] font-bold text-amber-300">
+                                        Escuadrón con tu amigo (Sala de 4)
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={handleCreateDuoPartyCode}
+                                        className="text-[10px] font-bold text-emerald-400 hover:underline"
+                                    >
+                                        Nuevo código
+                                    </button>
+                                </div>
+
+                                <div className="flex items-center justify-between gap-2 rounded-lg bg-black border border-zinc-800 px-2.5 py-1.5">
+                                    <span className="text-[10px] text-zinc-400">
+                                        Tu código de equipo:
+                                    </span>
+                                    <span className="text-xs font-black tracking-widest text-emerald-400">
+                                        {partyCode || "------"}
+                                    </span>
+                                </div>
+
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        value={joinPartyCode}
+                                        onChange={(e) =>
+                                            setJoinPartyCode(e.target.value)
+                                        }
+                                        placeholder="Código de tu amigo"
+                                        className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-black px-2.5 py-1.5 text-xs text-white uppercase outline-none focus:border-amber-400"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={handleJoinDuoParty}
+                                        className="rounded-lg bg-amber-400 px-3 py-1.5 text-[10px] font-black uppercase text-black hover:bg-amber-300"
+                                    >
+                                        Unir equipo
+                                    </button>
+                                </div>
+
+                                {teammateName && (
+                                    <p className="text-[10px] font-bold text-emerald-400">
+                                        {teammateName} · Buscaremos sala 2v2 juntos
+                                    </p>
+                                )}
+                            </div>
+                        )}
+
                         <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-2">
+                            <div className="space-y-1.5">
                                 <label className="block text-[10px] font-bold uppercase text-zinc-500">
                                     Apuesta
                                 </label>
@@ -2308,183 +2703,127 @@ export default function ParchisGamePage() {
                                     ))}
                                 </div>
                             </div>
-                            <div className="space-y-2">
+                            <div className="space-y-1.5">
                                 <label className="block text-[10px] font-bold uppercase text-zinc-500">
                                     Jugadores
                                 </label>
                                 <div className="grid grid-cols-3 gap-1.5">
-                                    {([2, 3, 4] as MaxPlayers[]).map((cnt) => (
-                                        <button
-                                            key={cnt}
-                                            type="button"
-                                            onClick={() => setMaxPlayers(cnt)}
-                                            className={`rounded-lg border py-2 text-[11px] font-bold ${
-                                                maxPlayers === cnt
-                                                    ? "border-emerald-400 bg-emerald-500 text-black"
-                                                    : "border-zinc-800 bg-black text-zinc-400"
-                                            }`}
-                                        >
-                                            {cnt}
-                                        </button>
-                                    ))}
+                                    {([2, 3, 4] as MaxPlayers[]).map((cnt) => {
+                                        const disabledCnt =
+                                            matchMode === "duo" && cnt !== 4;
+                                        const isActive =
+                                            effectivePlayersCount === cnt;
+                                        return (
+                                            <button
+                                                key={cnt}
+                                                type="button"
+                                                disabled={disabledCnt}
+                                                onClick={() => setMaxPlayers(cnt)}
+                                                className={`rounded-lg border py-2 text-[11px] font-bold ${
+                                                    isActive
+                                                        ? "border-emerald-400 bg-emerald-500 text-black"
+                                                        : "border-zinc-800 bg-black text-zinc-400"
+                                                } disabled:opacity-35`}
+                                            >
+                                                {cnt}
+                                            </button>
+                                        );
+                                    })}
                                 </div>
                             </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                            <input
-                                id="parchis-private"
-                                type="checkbox"
-                                checked={isPrivate}
-                                onChange={(e) => setIsPrivate(e.target.checked)}
-                                className="h-4 w-4 accent-emerald-500"
-                            />
-                            <label
-                                htmlFor="parchis-private"
-                                className="text-xs text-zinc-300"
-                            >
-                                Sala privada
-                            </label>
-                            {isPrivate && (
-                                <input
-                                    type="text"
-                                    value={roomPassword}
-                                    onChange={(e) =>
-                                        setRoomPassword(e.target.value)
-                                    }
-                                    placeholder="Contraseña"
-                                    className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-black px-2.5 py-2 text-xs text-white outline-none focus:border-emerald-500"
-                                />
-                            )}
                         </div>
 
                         <button
                             type="button"
-                            disabled={isConnecting || busyAction}
-                            onClick={handleCreatePrivateOrCustomRoom}
+                            disabled={isConnecting || busyAction || isSearchingMatch}
+                            onClick={() => void handleFindPublicMatch()}
                             className="w-full rounded-xl bg-emerald-500 py-3 text-xs font-black uppercase text-black hover:bg-emerald-400 disabled:opacity-50"
                         >
-                            {busyAction || isConnecting
-                                ? "Preparando..."
-                                : "Crear sala"}
+                            {busyAction || isConnecting || isSearchingMatch
+                                ? matchMode === "duo"
+                                    ? "Buscando sala 2v2 en equipo..."
+                                    : "Buscando sala pública..."
+                                : matchMode === "duo"
+                                  ? "Buscar sala en equipo (2v2)"
+                                  : "Buscar partida pública"}
                         </button>
 
                         <div className="border-t border-zinc-800 pt-3 space-y-2">
-                            <div className="flex items-center justify-between">
-                                <span className="text-xs font-bold text-white">
-                                    Salas disponibles
-                                </span>
+                            <p className="text-[10px] font-bold uppercase text-zinc-500">
+                                Sala privada o código directo
+                            </p>
+                            <div className="flex items-center gap-2">
+                                <input
+                                    id="parchis-private"
+                                    type="checkbox"
+                                    checked={isPrivate}
+                                    onChange={(e) =>
+                                        setIsPrivate(e.target.checked)
+                                    }
+                                    className="h-4 w-4 accent-emerald-500"
+                                />
+                                <label
+                                    htmlFor="parchis-private"
+                                    className="text-xs text-zinc-300"
+                                >
+                                    Sala privada
+                                </label>
+                                {isPrivate && (
+                                    <input
+                                        type="text"
+                                        value={roomPassword}
+                                        onChange={(e) =>
+                                            setRoomPassword(e.target.value)
+                                        }
+                                        placeholder="Contraseña"
+                                        className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-black px-2.5 py-1.5 text-xs text-white outline-none focus:border-emerald-500"
+                                    />
+                                )}
                                 <button
                                     type="button"
-                                    onClick={() => void fetchPublicRooms()}
-                                    className="text-[10px] font-bold text-emerald-400"
+                                    disabled={isConnecting || busyAction}
+                                    onClick={() =>
+                                        void handleCreatePrivateOrCustomRoom()
+                                    }
+                                    className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 text-[10px] font-bold uppercase text-white disabled:opacity-40"
                                 >
-                                    Actualizar
+                                    Crear
                                 </button>
                             </div>
-                            <input
-                                type="text"
-                                value={searchId}
-                                onChange={(e) => setSearchId(e.target.value)}
-                                placeholder="Buscar por ID de jugador"
-                                className="w-full rounded-lg border border-zinc-800 bg-black px-3 py-2 text-xs text-white outline-none focus:border-emerald-500"
-                            />
-                            {publicRooms.length === 0 ? (
-                                <p className="py-3 text-center text-[11px] text-zinc-500">
-                                    {roomsUnavailable
-                                        ? "Salas no disponibles"
-                                        : "No hay salas públicas"}
-                                </p>
-                            ) : (
-                                <div className="max-h-40 space-y-1.5 overflow-y-auto">
-                                    {publicRooms
-                                        .filter((item) => {
-                                            const hostId = String(
-                                                item.host_doc_number ||
-                                                    item.host_cedula ||
-                                                    ""
-                                            );
-                                            return (
-                                                !searchId.trim() ||
-                                                hostId
-                                                    .toLowerCase()
-                                                    .includes(
-                                                        searchId
-                                                            .trim()
-                                                            .toLowerCase()
-                                                    )
-                                            );
-                                        })
-                                        .map((item) => {
-                                            const itemName = (
-                                                item.host_name || "Jugador"
-                                            ).split(/\s+/)[0];
-                                            return (
-                                                <div
-                                                    key={item.room_id}
-                                                    className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-black px-2.5 py-2"
-                                                >
-                                                    <div className="min-w-0">
-                                                        <p className="truncate text-[11px] font-bold text-white">
-                                                            {itemName}
-                                                        </p>
-                                                        <p className="text-[10px] text-zinc-500">
-                                                            {item.players_count}/
-                                                            {item.max_players} · $
-                                                            {item.bet.toFixed(2)}
-                                                        </p>
-                                                    </div>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() =>
-                                                            connectToRoom(
-                                                                item.room_id,
-                                                                "",
-                                                                item.bet,
-                                                                item.max_players as MaxPlayers
-                                                            )
-                                                        }
-                                                        className="rounded-md bg-emerald-500 px-3 py-1.5 text-[10px] font-black uppercase text-black"
-                                                    >
-                                                        Entrar
-                                                    </button>
-                                                </div>
-                                            );
-                                        })}
-                                </div>
-                            )}
-                        </div>
 
-                        <div className="flex gap-2 border-t border-zinc-800 pt-3">
-                            <input
-                                type="text"
-                                value={joinRoomId}
-                                onChange={(e) => setJoinRoomId(e.target.value)}
-                                placeholder="ID de sala"
-                                className="min-w-0 w-full rounded-lg border border-zinc-800 bg-black px-2.5 py-2 text-xs text-white outline-none focus:border-emerald-500"
-                            />
-                            <input
-                                type="text"
-                                value={joinPassword}
-                                onChange={(e) =>
-                                    setJoinPassword(e.target.value)
-                                }
-                                placeholder="Clave"
-                                className="min-w-0 w-full rounded-lg border border-zinc-800 bg-black px-2.5 py-2 text-xs text-white outline-none focus:border-emerald-500"
-                            />
-                            <button
-                                type="button"
-                                disabled={!joinRoomId.trim() || isConnecting}
-                                onClick={() =>
-                                    connectToRoom(
-                                        joinRoomId.trim(),
-                                        joinPassword.trim()
-                                    )
-                                }
-                                className="rounded-lg bg-zinc-800 px-3 py-2 text-[10px] font-bold text-white disabled:opacity-40"
-                            >
-                                Unirse
-                            </button>
+                            <div className="flex gap-2 pt-1">
+                                <input
+                                    type="text"
+                                    value={joinRoomId}
+                                    onChange={(e) =>
+                                        setJoinRoomId(e.target.value)
+                                    }
+                                    placeholder="ID de sala"
+                                    className="min-w-0 w-full rounded-lg border border-zinc-800 bg-black px-2.5 py-2 text-xs text-white outline-none focus:border-emerald-500"
+                                />
+                                <input
+                                    type="text"
+                                    value={joinPassword}
+                                    onChange={(e) =>
+                                        setJoinPassword(e.target.value)
+                                    }
+                                    placeholder="Clave"
+                                    className="min-w-0 w-full rounded-lg border border-zinc-800 bg-black px-2.5 py-2 text-xs text-white outline-none focus:border-emerald-500"
+                                />
+                                <button
+                                    type="button"
+                                    disabled={!joinRoomId.trim() || isConnecting}
+                                    onClick={() =>
+                                        connectToRoom(
+                                            joinRoomId.trim(),
+                                            joinPassword.trim()
+                                        )
+                                    }
+                                    className="rounded-lg bg-zinc-800 px-3 py-2 text-[10px] font-bold text-white disabled:opacity-40"
+                                >
+                                    Unirse
+                                </button>
+                            </div>
                         </div>
                     </div>
                 ) : (
@@ -2522,10 +2861,19 @@ export default function ParchisGamePage() {
                                             const pal = getSeatPalette(
                                                 ep.seat_index
                                             );
+                                            const isExtraTurn =
+                                                viewState.status === "playing" &&
+                                                viewState.turn_seat ===
+                                                    ep.seat_index;
+                                            const epTeam = formatTeamBadge(ep);
                                             return (
                                                 <div
                                                     key={ep.user_id}
-                                                    className="flex items-center gap-1.5 bg-black/40 border border-white/10 rounded-full px-2.5 py-1"
+                                                    className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 border ${
+                                                        isExtraTurn
+                                                            ? "bg-zinc-900 border-amber-400"
+                                                            : "bg-black/40 border-white/10"
+                                                    }`}
                                                 >
                                                     <span
                                                         className="w-2.5 h-2.5 rounded-full"
@@ -2540,6 +2888,16 @@ export default function ParchisGamePage() {
                                                             "Jugador"
                                                         )}
                                                     </span>
+                                                    {epTeam && (
+                                                        <span className="text-[9px] font-black text-amber-300">
+                                                            {epTeam}
+                                                        </span>
+                                                    )}
+                                                    {isExtraTurn && (
+                                                        <span className="text-[10px] font-black text-amber-300 tabular-nums">
+                                                            {turnSecondsLeft}s
+                                                        </span>
+                                                    )}
                                                 </div>
                                             );
                                         })}
@@ -2548,6 +2906,7 @@ export default function ParchisGamePage() {
 
                                 <StarPlayerHud
                                     playerName={topName}
+                                    teamLabel={formatTeamBadge(topPlayer)}
                                     palette={topPalette}
                                     dicePair={lastPairShown}
                                     diceRemaining={
@@ -2556,13 +2915,13 @@ export default function ParchisGamePage() {
                                     selectedDieValue={null}
                                     rolling={rollingDice && topIsTurn}
                                     isActiveTurn={topIsTurn}
+                                    secondsLeft={turnSecondsLeft}
                                     canRoll={false}
                                     isMovingPiece={isMovingPiece}
                                     onRoll={sendRollDice}
                                     position="top"
                                 />
 
-                                {/* Tablero central + contador de pasos +20/+10 + selector flotante */}
                                 <div className="w-full min-w-0 flex items-center justify-center overflow-hidden">
                                     <div
                                         className="relative w-full aspect-square max-h-[min(92vw,64vh)]"
@@ -2570,7 +2929,7 @@ export default function ParchisGamePage() {
                                     >
                                         {bonusStepsValue > 0 && (
                                             <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20 px-3 py-1 rounded-full bg-zinc-950/95 border border-amber-400 text-amber-300 text-[11px] font-black shadow-lg whitespace-nowrap">
-                                                +{bonusStepsValue} pasos
+                                                {bonusStepsValue} pasos
                                                 {isMyTurn ? " · Elige ficha" : ""}
                                             </div>
                                         )}
@@ -2603,7 +2962,7 @@ export default function ParchisGamePage() {
                                                         }
                                                         className="px-2.5 py-1 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs rounded-lg active:scale-95"
                                                     >
-                                                        +{opt}
+                                                        {opt}
                                                     </button>
                                                 ))}
                                             </div>
@@ -2613,6 +2972,7 @@ export default function ParchisGamePage() {
 
                                 <StarPlayerHud
                                     playerName={bottomName}
+                                    teamLabel={formatTeamBadge(bottomPlayer)}
                                     palette={bottomPalette}
                                     dicePair={lastPairShown}
                                     diceRemaining={
@@ -2626,6 +2986,7 @@ export default function ParchisGamePage() {
                                     }
                                     rolling={rollingDice && bottomIsTurn}
                                     isActiveTurn={bottomIsTurn}
+                                    secondsLeft={turnSecondsLeft}
                                     canRoll={
                                         bottomPlayer !== null &&
                                         bottomPlayer.user_id === userId &&
@@ -2644,8 +3005,15 @@ export default function ParchisGamePage() {
                                 {viewState.status === "finished" && (
                                     <div className="bg-black/75 border border-emerald-400 rounded-2xl p-3.5 text-center space-y-2">
                                         <h3 className="text-sm font-black uppercase text-emerald-400">
-                                            Partida Finalizada
+                                            {iWonGame
+                                                ? "¡Ganaste la partida!"
+                                                : "Partida Finalizada"}
                                         </h3>
+                                        {viewState.last_event && (
+                                            <p className="text-xs text-zinc-200">
+                                                {viewState.last_event}
+                                            </p>
+                                        )}
                                         <button
                                             type="button"
                                             onClick={() =>
