@@ -63,6 +63,17 @@ interface ParchisState {
     players: ParchisPlayerState[];
 }
 
+interface RoomListing {
+    room_id: string;
+    host_name?: string;
+    bet: number;
+    max_players: number;
+    current_players: number;
+    team_mode?: "ffa" | "2v2";
+    is_private?: boolean;
+    status?: string;
+}
+
 interface ProfileRow {
     first_name: string | null;
     doc_number: string | null;
@@ -821,6 +832,8 @@ export default function ParchisGamePage() {
     const [joinRoomId, setJoinRoomId] = useState("");
     const [joinPassword, setJoinPassword] = useState("");
     const [copiedRoomInvite, setCopiedRoomInvite] = useState(false);
+    const [rooms, setRooms] = useState<RoomListing[]>([]);
+    const [loadingRooms, setLoadingRooms] = useState(false);
 
     const [isInGame, setIsInGame] = useState(false);
     const [roomId, setRoomId] = useState("");
@@ -1085,6 +1098,39 @@ export default function ParchisGamePage() {
         }
     }, []);
 
+    const fetchRooms = useCallback(async () => {
+        if (!accessToken) return;
+        setLoadingRooms(true);
+        try {
+            const res = await fetch(`${API_BASE}/parchis/rooms`, {
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                },
+            });
+            if (!res.ok) return;
+            const data = await res.json().catch(() => ({}));
+            const list: RoomListing[] = Array.isArray(data)
+                ? data
+                : Array.isArray(data?.rooms)
+                  ? data.rooms
+                  : [];
+            setRooms(list);
+        } catch (err) {
+            console.error("Error cargando salas de Parchís:", err);
+        } finally {
+            setLoadingRooms(false);
+        }
+    }, [accessToken]);
+
+    useEffect(() => {
+        if (!userId || !accessToken || isInGame) return;
+        void fetchRooms();
+        const interval = setInterval(() => {
+            void fetchRooms();
+        }, 5000);
+        return () => clearInterval(interval);
+    }, [userId, accessToken, isInGame, fetchRooms]);
+
     useEffect(() => {
         let mounted = true;
         const initialize = async () => {
@@ -1224,9 +1270,11 @@ export default function ParchisGamePage() {
         }
 
         await loadUserBalances();
+        void fetchRooms();
     }, [
         accessToken,
         clearHeartbeat,
+        fetchRooms,
         loadUserBalances,
         resetSessionState,
         roomId,
@@ -2828,25 +2876,7 @@ export default function ParchisGamePage() {
                             </div>
                         </div>
 
-                        <button
-                            type="button"
-                            disabled={isConnecting || busyAction || isSearchingMatch}
-                            onClick={() => void handleFindPublicMatch()}
-                            className="w-full rounded-xl bg-emerald-500 py-3 text-xs font-black uppercase text-black hover:bg-emerald-400 disabled:opacity-50"
-                        >
-                            {busyAction || isConnecting || isSearchingMatch
-                                ? matchMode === "duo"
-                                    ? "Buscando sala 2v2 en equipo..."
-                                    : "Buscando sala pública..."
-                                : matchMode === "duo"
-                                  ? "Buscar sala en equipo (2v2)"
-                                  : "Buscar partida pública"}
-                        </button>
-
-                        <div className="border-t border-zinc-800 pt-3 space-y-2">
-                            <p className="text-[10px] font-bold uppercase text-zinc-500">
-                                Sala privada o código directo
-                            </p>
+                        <div className="space-y-2 pt-1">
                             <div className="flex items-center gap-2">
                                 <input
                                     id="parchis-private"
@@ -2861,7 +2891,7 @@ export default function ParchisGamePage() {
                                     htmlFor="parchis-private"
                                     className="text-xs text-zinc-300"
                                 >
-                                    Sala privada
+                                    Sala privada con clave
                                 </label>
                                 {isPrivate && (
                                     <input
@@ -2870,21 +2900,132 @@ export default function ParchisGamePage() {
                                         onChange={(e) =>
                                             setRoomPassword(e.target.value)
                                         }
-                                        placeholder="Contraseña"
+                                        placeholder="Clave opcional"
                                         className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-black px-2.5 py-1.5 text-xs text-white outline-none focus:border-emerald-500"
                                     />
                                 )}
+                            </div>
+
+                            <button
+                                type="button"
+                                disabled={isConnecting || busyAction}
+                                onClick={() =>
+                                    void handleCreatePrivateOrCustomRoom()
+                                }
+                                className="w-full rounded-xl bg-emerald-500 py-3 text-xs font-black uppercase text-black hover:bg-emerald-400 disabled:opacity-50"
+                            >
+                                {busyAction || isConnecting
+                                    ? "Creando sala..."
+                                    : isPrivate
+                                      ? "Crear sala privada"
+                                      : "Crear sala pública"}
+                            </button>
+                        </div>
+
+                        <div className="border-t border-zinc-800 pt-3 space-y-2">
+                            <div className="flex items-center justify-between">
+                                <p className="text-[10px] font-bold uppercase text-zinc-400">
+                                    Salas disponibles ({rooms.length})
+                                </p>
                                 <button
                                     type="button"
-                                    disabled={isConnecting || busyAction}
-                                    onClick={() =>
-                                        void handleCreatePrivateOrCustomRoom()
-                                    }
-                                    className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 text-[10px] font-bold uppercase text-white disabled:opacity-40"
+                                    disabled={loadingRooms}
+                                    onClick={() => void fetchRooms()}
+                                    className="text-[10px] font-bold uppercase text-emerald-400 hover:underline disabled:opacity-50"
                                 >
-                                    Crear
+                                    {loadingRooms ? "Actualizando..." : "Actualizar"}
                                 </button>
                             </div>
+
+                            {rooms.length === 0 ? (
+                                <div className="rounded-xl border border-zinc-800/80 bg-black/60 px-3 py-4 text-center text-[11px] text-zinc-500">
+                                    No hay salas abiertas ahora. Crea una arriba para que otros jugadores entren.
+                                </div>
+                            ) : (
+                                <div className="max-h-52 overflow-y-auto space-y-2 pr-0.5">
+                                    {rooms.map((rm) => {
+                                        const isFull =
+                                            (rm.current_players || 0) >=
+                                            (rm.max_players || 4);
+                                        const activeCode =
+                                            matchMode === "duo"
+                                                ? (partyCode || joinPartyCode)
+                                                      .trim()
+                                                      .toUpperCase()
+                                                : "";
+                                        return (
+                                            <div
+                                                key={rm.room_id}
+                                                className="flex items-center justify-between gap-2 rounded-xl border border-zinc-800 bg-black/80 px-3 py-2"
+                                            >
+                                                <div className="min-w-0">
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span className="text-xs font-black text-white truncate">
+                                                            {rm.host_name ||
+                                                                `Sala #${rm.room_id.slice(0, 6)}`}
+                                                        </span>
+                                                        {rm.team_mode === "2v2" && (
+                                                            <span className="rounded bg-amber-400/20 border border-amber-400/40 px-1.5 py-0.5 text-[9px] font-black text-amber-300">
+                                                                2v2
+                                                            </span>
+                                                        )}
+                                                        {rm.is_private && (
+                                                            <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] font-bold text-zinc-300">
+                                                                Privada
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                                                        Apuesta:{" "}
+                                                        <span className="font-bold text-emerald-400">
+                                                            {money(rm.bet)}
+                                                        </span>{" "}
+                                                        · Cupos:{" "}
+                                                        <span className="font-bold text-zinc-200">
+                                                            {rm.current_players || 1}/
+                                                            {rm.max_players}
+                                                        </span>
+                                                    </p>
+                                                </div>
+
+                                                <button
+                                                    type="button"
+                                                    disabled={
+                                                        isFull || isConnecting
+                                                    }
+                                                    onClick={() => {
+                                                        if (rm.is_private) {
+                                                            setJoinRoomId(
+                                                                rm.room_id
+                                                            );
+                                                            showAlert(
+                                                                "Sala privada",
+                                                                "Esta sala requiere contraseña. Escribe la clave abajo y pulsa Unirse."
+                                                            );
+                                                            return;
+                                                        }
+                                                        connectToRoom(
+                                                            rm.room_id,
+                                                            "",
+                                                            Number(rm.bet),
+                                                            (rm.max_players ||
+                                                                4) as MaxPlayers,
+                                                            rm.team_mode ===
+                                                                "2v2"
+                                                                ? "2v2"
+                                                                : "ffa",
+                                                            activeCode
+                                                        );
+                                                    }}
+                                                    className="shrink-0 rounded-lg bg-emerald-500 hover:bg-emerald-400 px-3 py-1.5 text-[10px] font-black uppercase text-black disabled:opacity-40"
+                                                >
+                                                    {isFull ? "Llena" : "Entrar"}
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
 
                             <div className="flex gap-2 pt-1">
                                 <input
