@@ -2655,6 +2655,7 @@ async def snake_game_endpoint(
 PARCHIS_BETS = (0.25, 1.00, 10.00)
 PARCHIS_TRACK_LEN = 68
 PARCHIS_HOME_STRETCH_LEN = 8
+# Casillas seguras y salidas oficiales del tablero de 68 casillas
 PARCHIS_SAFE_SPOTS = {0, 5, 12, 17, 22, 29, 34, 39, 46, 51, 56, 63}
 PARCHIS_START_SPOTS = {0: 5, 1: 22, 2: 39, 3: 56}
 PARCHIS_COMMISSION_RATE = Decimal("0.06")
