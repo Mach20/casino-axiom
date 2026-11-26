@@ -837,6 +837,15 @@ export default function ParchisGamePage() {
     const [roomPassword, setRoomPassword] = useState("");
     const [joinRoomId, setJoinRoomId] = useState("");
     const [joinPassword, setJoinPassword] = useState("");
+    const [createdRoomInfo, setCreatedRoomInfo] = useState<{
+        roomId: string;
+        password: string;
+        bet: number;
+        maxPlayers: MaxPlayers;
+        teamMode: "ffa" | "2v2";
+        partyCode: string;
+    } | null>(null);
+    const [copiedRoomInvite, setCopiedRoomInvite] = useState(false);
 
     const [isInGame, setIsInGame] = useState(false);
     const [roomId, setRoomId] = useState("");
@@ -1775,9 +1784,25 @@ export default function ParchisGamePage() {
                 return;
             }
 
+            const createdId = String(data.room_id);
+            const createdPwd = String(data.room_code || roomPassword.trim());
+
+            if (isPrivate) {
+                setCopiedRoomInvite(false);
+                setCreatedRoomInfo({
+                    roomId: createdId,
+                    password: createdPwd,
+                    bet: betAmount,
+                    maxPlayers: playersCount,
+                    teamMode: teamModeValue,
+                    partyCode: activeCode,
+                });
+                return;
+            }
+
             connectToRoom(
-                String(data.room_id),
-                String(data.room_code || roomPassword.trim()),
+                createdId,
+                createdPwd,
                 betAmount,
                 playersCount,
                 teamModeValue,
@@ -2748,6 +2773,83 @@ export default function ParchisGamePage() {
                                   : "Buscar partida pública"}
                         </button>
 
+                        {createdRoomInfo && (
+                            <div className="rounded-xl border border-emerald-500/50 bg-emerald-950/25 p-3 space-y-2">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-[11px] font-black uppercase text-emerald-400">
+                                        Sala privada creada · Comparte estos datos
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setCreatedRoomInfo(null)}
+                                        className="text-[10px] font-bold text-zinc-400 hover:text-white"
+                                    >
+                                        Ocultar
+                                    </button>
+                                </div>
+
+                                <div className="space-y-1.5 rounded-lg bg-black/80 border border-zinc-800 p-2.5 text-xs">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className="text-zinc-400 text-[11px]">
+                                            ID de sala:
+                                        </span>
+                                        <span className="font-mono font-bold text-white select-all break-all text-right">
+                                            {createdRoomInfo.roomId}
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className="text-zinc-400 text-[11px]">
+                                            Contraseña:
+                                        </span>
+                                        <span className="font-mono font-bold text-amber-300 select-all text-right">
+                                            {createdRoomInfo.password || "(Sin clave)"}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <div className="flex gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={async () => {
+                                            const textToCopy = `ID de sala: ${createdRoomInfo.roomId}\nContraseña: ${createdRoomInfo.password}`;
+                                            try {
+                                                await navigator.clipboard.writeText(textToCopy);
+                                                setCopiedRoomInvite(true);
+                                                setTimeout(
+                                                    () => setCopiedRoomInvite(false),
+                                                    2000
+                                                );
+                                            } catch {
+                                                showAlert("Copiar manualmente", textToCopy);
+                                            }
+                                        }}
+                                        className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 py-2 text-[11px] font-bold uppercase text-white"
+                                    >
+                                        {copiedRoomInvite ? "¡Copiado!" : "Copiar ID y clave"}
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const info = createdRoomInfo;
+                                            setCreatedRoomInfo(null);
+                                            connectToRoom(
+                                                info.roomId,
+                                                info.password,
+                                                info.bet,
+                                                info.maxPlayers,
+                                                info.teamMode,
+                                                info.partyCode
+                                            );
+                                        }}
+                                        className="flex-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 py-2 text-[11px] font-black uppercase text-black"
+                                    >
+                                        Entrar a la sala
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
                         <div className="border-t border-zinc-800 pt-3 space-y-2">
                             <p className="text-[10px] font-bold uppercase text-zinc-500">
                                 Sala privada o código directo
@@ -2841,8 +2943,13 @@ export default function ParchisGamePage() {
                                 <span className="text-xs font-black text-emerald-400 block">
                                     Pozo: {money(getNetPotDisplay(viewState))}
                                 </span>
+                                {(viewState?.room_id || roomId) && (
+                                    <span className="text-[10px] text-zinc-400 font-bold block">
+                                        ID: {viewState?.room_id || roomId}
+                                    </span>
+                                )}
                                 {viewState?.room_code && (
-                                    <span className="text-[10px] text-zinc-400 font-bold">
+                                    <span className="text-[10px] text-amber-300 font-bold block">
                                         Clave: {viewState.room_code}
                                     </span>
                                 )}
