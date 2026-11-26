@@ -859,6 +859,15 @@ export default function ParchisGamePage() {
     const closingByUserRef = useRef(false);
     const animTickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const turnHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const matchSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const matchSearchDeadlineRef = useRef<number>(0);
+    const matchSearchParamsRef = useRef<{
+        betAmount: number;
+        playersCount: MaxPlayers;
+        teamModeValue: "ffa" | "2v2";
+        activeCode: string;
+        pwd: string;
+    } | null>(null);
     const activeAnimsRef = useRef<Record<string, ActivePieceAnim>>({});
 
     useEffect(() => {
@@ -892,6 +901,12 @@ export default function ParchisGamePage() {
             clearTimeout(turnHoldTimerRef.current);
             turnHoldTimerRef.current = null;
         }
+        if (matchSearchTimerRef.current) {
+            clearTimeout(matchSearchTimerRef.current);
+            matchSearchTimerRef.current = null;
+        }
+        matchSearchDeadlineRef.current = 0;
+        matchSearchParamsRef.current = null;
         activeAnimsRef.current = {};
         setIsMovingPiece(false);
         setPendingChoice(null);
@@ -1376,7 +1391,8 @@ export default function ParchisGamePage() {
             overrideBet?: number,
             overridePlayers?: MaxPlayers,
             overrideTeamMode?: "ffa" | "2v2",
-            overridePartyCode?: string
+            overridePartyCode?: string,
+            silentMatchmakingRetry = false
         ) => {
             if (isConnecting || socketRef.current) {
                 showAlert(
@@ -1417,9 +1433,21 @@ export default function ParchisGamePage() {
                 partySocketRef.current = null;
             }
 
+            const preservedDeadline = silentMatchmakingRetry
+                ? matchSearchDeadlineRef.current
+                : 0;
+            const preservedParams = silentMatchmakingRetry
+                ? matchSearchParamsRef.current
+                : null;
             clearAllTimers();
+            if (silentMatchmakingRetry && preservedDeadline > Date.now()) {
+                matchSearchDeadlineRef.current = preservedDeadline;
+                matchSearchParamsRef.current = preservedParams;
+                setIsSearchingMatch(true);
+            } else {
+                setIsSearchingMatch(false);
+            }
             closingByUserRef.current = false;
-            setIsSearchingMatch(false);
             setIsConnecting(true);
             setIsConnected(false);
 
@@ -1470,6 +1498,13 @@ export default function ParchisGamePage() {
                         const data = JSON.parse(event.data);
 
                         if (data.type === "PARCHIS_STATE") {
+                            if (matchSearchTimerRef.current) {
+                                clearTimeout(matchSearchTimerRef.current);
+                                matchSearchTimerRef.current = null;
+                            }
+                            matchSearchDeadlineRef.current = 0;
+                            matchSearchParamsRef.current = null;
+                            setIsSearchingMatch(false);
                             applyIncomingGameState(data);
                             if (data.room_id) {
                                 setRoomId(String(data.room_id));
@@ -1515,7 +1550,101 @@ export default function ParchisGamePage() {
 
                     const wasUserClose = closingByUserRef.current;
                     closingByUserRef.current = false;
+
+                    const hadActiveGame = Boolean(gameStateRef.current);
+                    const remainingSearchMs =
+                        !wasUserClose && !hadActiveGame
+                            ? matchSearchDeadlineRef.current - Date.now()
+                            : 0;
+                    const retryCfg = matchSearchParamsRef.current;
+
                     resetSessionState();
+
+                    if (remainingSearchMs > 250 && retryCfg && userId && accessToken) {
+                        setIsInGame(true);
+                        setIsSearchingMatch(true);
+                        setConnectionMessage(
+                            retryCfg.teamModeValue === "2v2"
+                                ? "Buscando sala 2v2 en equipo..."
+                                : "Buscando sala pública..."
+                        );
+
+                        const attemptSearch = async () => {
+                            if (Date.now() > matchSearchDeadlineRef.current) {
+                                matchSearchDeadlineRef.current = 0;
+                                matchSearchParamsRef.current = null;
+                                setIsSearchingMatch(false);
+                                setIsInGame(false);
+                                void loadUserBalances();
+                                return;
+                            }
+
+                            try {
+                                const query = new URLSearchParams({
+                                    bet: String(retryCfg.betAmount),
+                                    max_players: String(retryCfg.playersCount),
+                                    team_mode: retryCfg.teamModeValue,
+                                });
+                                if (retryCfg.activeCode) {
+                                    query.set("party_code", retryCfg.activeCode);
+                                }
+                                const res = await fetch(
+                                    `${API_BASE}/parchis/matchmaking/find?${query.toString()}`,
+                                    {
+                                        headers: {
+                                            Authorization: `Bearer ${accessToken}`,
+                                        },
+                                    }
+                                );
+                                if (res.ok) {
+                                    const found = await res.json().catch(() => ({}));
+                                    if (found.room_id) {
+                                        connectToRoom(
+                                            String(found.room_id),
+                                            retryCfg.pwd,
+                                            retryCfg.betAmount,
+                                            retryCfg.playersCount,
+                                            retryCfg.teamModeValue,
+                                            retryCfg.activeCode,
+                                            true
+                                        );
+                                        return;
+                                    }
+                                }
+                            } catch {}
+
+                            if (Date.now() <= matchSearchDeadlineRef.current) {
+                                const fallbackRoomId =
+                                    retryCfg.teamModeValue === "2v2" && retryCfg.activeCode
+                                        ? `auto-2v2-${retryCfg.betAmount}-${retryCfg.activeCode}`
+                                        : `auto-${retryCfg.teamModeValue}-${retryCfg.playersCount}-${retryCfg.betAmount}`;
+                                connectToRoom(
+                                    fallbackRoomId,
+                                    retryCfg.pwd,
+                                    retryCfg.betAmount,
+                                    retryCfg.playersCount,
+                                    retryCfg.teamModeValue,
+                                    retryCfg.activeCode,
+                                    true
+                                );
+                            } else {
+                                matchSearchDeadlineRef.current = 0;
+                                matchSearchParamsRef.current = null;
+                                setIsSearchingMatch(false);
+                                setIsInGame(false);
+                                void loadUserBalances();
+                            }
+                        };
+
+                        matchSearchTimerRef.current = setTimeout(() => {
+                            matchSearchTimerRef.current = null;
+                            void attemptSearch();
+                        }, 1500);
+                        return;
+                    }
+
+                    matchSearchDeadlineRef.current = 0;
+                    matchSearchParamsRef.current = null;
 
                     if (!wasUserClose) {
                         showAlert(
@@ -1585,6 +1714,14 @@ export default function ParchisGamePage() {
             setPartyCode(activeCode);
         }
 
+        matchSearchDeadlineRef.current = Date.now() + 20000;
+        matchSearchParamsRef.current = {
+            betAmount,
+            playersCount,
+            teamModeValue,
+            activeCode,
+            pwd: "",
+        };
         setBusyAction(true);
         setIsSearchingMatch(true);
 
@@ -1616,7 +1753,8 @@ export default function ParchisGamePage() {
                         betAmount,
                         playersCount,
                         teamModeValue,
-                        activeCode
+                        activeCode,
+                        true
                     );
                     return;
                 }
@@ -1633,7 +1771,8 @@ export default function ParchisGamePage() {
                 betAmount,
                 playersCount,
                 teamModeValue,
-                activeCode
+                activeCode,
+                true
             );
         } catch {
             const fallbackRoomId =
@@ -1647,7 +1786,8 @@ export default function ParchisGamePage() {
                 betAmount,
                 playersCount,
                 teamModeValue,
-                activeCode
+                activeCode,
+                true
             );
         } finally {
             setBusyAction(false);
