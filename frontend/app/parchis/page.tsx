@@ -1498,13 +1498,15 @@ export default function ParchisGamePage() {
                         const data = JSON.parse(event.data);
 
                         if (data.type === "PARCHIS_STATE") {
-                            if (matchSearchTimerRef.current) {
-                                clearTimeout(matchSearchTimerRef.current);
-                                matchSearchTimerRef.current = null;
+                            if (data.status === "playing" || data.status === "finished") {
+                                if (matchSearchTimerRef.current) {
+                                    clearTimeout(matchSearchTimerRef.current);
+                                    matchSearchTimerRef.current = null;
+                                }
+                                matchSearchDeadlineRef.current = 0;
+                                matchSearchParamsRef.current = null;
+                                setIsSearchingMatch(false);
                             }
-                            matchSearchDeadlineRef.current = 0;
-                            matchSearchParamsRef.current = null;
-                            setIsSearchingMatch(false);
                             applyIncomingGameState(data);
                             if (data.room_id) {
                                 setRoomId(String(data.room_id));
@@ -1518,6 +1520,14 @@ export default function ParchisGamePage() {
                         }
 
                         if (data.type === "ERROR") {
+                            if (matchSearchDeadlineRef.current > Date.now()) {
+                                setRollingDice(false);
+                                setIsConnecting(false);
+                                try {
+                                    ws.close(1000, "Reintentando búsqueda");
+                                } catch {}
+                                return;
+                            }
                             clearAllTimers();
                             setRollingDice(false);
                             setIsConnecting(false);
@@ -1551,9 +1561,11 @@ export default function ParchisGamePage() {
                     const wasUserClose = closingByUserRef.current;
                     closingByUserRef.current = false;
 
-                    const hadActiveGame = Boolean(gameStateRef.current);
+                    const curStatus = gameStateRef.current?.status;
+                    const hadStartedGame =
+                        curStatus === "playing" || curStatus === "finished";
                     const remainingSearchMs =
-                        !wasUserClose && !hadActiveGame
+                        !wasUserClose && !hadStartedGame
                             ? matchSearchDeadlineRef.current - Date.now()
                             : 0;
                     const retryCfg = matchSearchParamsRef.current;
@@ -1575,6 +1587,10 @@ export default function ParchisGamePage() {
                                 matchSearchParamsRef.current = null;
                                 setIsSearchingMatch(false);
                                 setIsInGame(false);
+                                showAlert(
+                                    "Sin jugadores disponibles",
+                                    "No se encontraron rivales en 25 segundos. Intenta nuevamente."
+                                );
                                 void loadUserBalances();
                                 return;
                             }
@@ -1632,6 +1648,10 @@ export default function ParchisGamePage() {
                                 matchSearchParamsRef.current = null;
                                 setIsSearchingMatch(false);
                                 setIsInGame(false);
+                                showAlert(
+                                    "Sin jugadores disponibles",
+                                    "No se encontraron rivales en 25 segundos. Intenta nuevamente."
+                                );
                                 void loadUserBalances();
                             }
                         };
@@ -1714,7 +1734,7 @@ export default function ParchisGamePage() {
             setPartyCode(activeCode);
         }
 
-        matchSearchDeadlineRef.current = Date.now() + 20000;
+        matchSearchDeadlineRef.current = Date.now() + 25000;
         matchSearchParamsRef.current = {
             betAmount,
             playersCount,
