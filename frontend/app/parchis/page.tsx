@@ -606,11 +606,9 @@ function StarStyleDie({
             type="button"
             disabled={!isClickable}
             onClick={handleDieClick}
-            className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl p-0.5 flex items-center justify-center shadow-md transition-all duration-150 ${
-                used || dimmed ? "opacity-40 cursor-default" : "opacity-100"
-            } ${isClickable ? "cursor-pointer hover:scale-105 active:scale-95" : ""} ${
-                selected ? "ring-2 ring-amber-300 scale-105" : ""
-            } ${rolling ? "rotate-12 scale-105" : "rotate-0 scale-100"}`}
+            className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl p-0.5 flex items-center justify-center shadow-md transition-all duration-150 ${used || dimmed ? "opacity-40 cursor-default" : "opacity-100"
+                } ${isClickable ? "cursor-pointer hover:scale-105 active:scale-95" : ""} ${selected ? "ring-2 ring-amber-300 scale-105" : ""
+                } ${rolling ? "rotate-12 scale-105" : "rotate-0 scale-100"}`}
         >
             <svg viewBox="0 0 100 100" className="w-full h-full block">
                 <defs>
@@ -732,9 +730,8 @@ function StarPlayerHud({
                 backgroundColor: palette.trayBg,
                 borderColor: isActiveTurn ? palette.trayBorder : "#3f3f46",
             }}
-            className={`border-2 rounded-xl px-2 py-1.5 flex items-center gap-1.5 shadow-lg transition-all ${
-                canRollNow ? "ring-2 ring-emerald-400/70" : ""
-            }`}
+            className={`border-2 rounded-xl px-2 py-1.5 flex items-center gap-1.5 shadow-lg transition-all ${canRollNow ? "ring-2 ring-emerald-400/70" : ""
+                }`}
         >
             <StarStyleDie
                 num={shownPair[0]}
@@ -986,11 +983,11 @@ export default function ParchisGamePage() {
                         walkedDiff > 0
                             ? walkedDiff
                             : Math.max(
-                                  1,
-                                  Math.abs(
-                                      (toPiece.pos || 0) - (fromPiece.pos || 0)
-                                  )
-                              );
+                                1,
+                                Math.abs(
+                                    (toPiece.pos || 0) - (fromPiece.pos || 0)
+                                )
+                            );
                 }
             }
 
@@ -1112,8 +1109,8 @@ export default function ParchisGamePage() {
             const list: RoomListing[] = Array.isArray(data)
                 ? data
                 : Array.isArray(data?.rooms)
-                  ? data.rooms
-                  : [];
+                    ? data.rooms
+                    : [];
             setRooms(list);
         } catch (err) {
             console.error("Error cargando salas de Parchís:", err);
@@ -1169,7 +1166,7 @@ export default function ParchisGamePage() {
             if (partySocketRef.current) {
                 try {
                     partySocketRef.current.close(1000, "Desmontado");
-                } catch {}
+                } catch { }
                 partySocketRef.current = null;
             }
             const ws = socketRef.current;
@@ -1183,7 +1180,7 @@ export default function ParchisGamePage() {
                 ) {
                     try {
                         ws.close(1000, "Componente desmontado");
-                    } catch {}
+                    } catch { }
                 }
             }
         };
@@ -1211,7 +1208,7 @@ export default function ParchisGamePage() {
         if (partySocketRef.current) {
             try {
                 partySocketRef.current.close(1000, "Saliendo de búsqueda");
-            } catch {}
+            } catch { }
             partySocketRef.current = null;
         }
 
@@ -1235,7 +1232,7 @@ export default function ParchisGamePage() {
                         room_id: activeRoomId,
                     })
                 );
-            } catch {}
+            } catch { }
         }
 
         if (hostClosing && activeRoomId && accessToken) {
@@ -1252,7 +1249,7 @@ export default function ParchisGamePage() {
                         },
                     }
                 );
-            } catch {}
+            } catch { }
         }
 
         resetSessionState();
@@ -1301,7 +1298,7 @@ export default function ParchisGamePage() {
                         reason: "no_moves",
                     })
                 );
-            } catch {}
+            } catch { }
         }
 
         const players = curState.players || [];
@@ -1335,7 +1332,7 @@ export default function ParchisGamePage() {
                 showAlert(
                     "Sala cerrada",
                     nextState.last_event ||
-                        "El anfitrión cerró la sala y se eliminó la partida."
+                    "El anfitrión cerró la sala y se eliminó la partida."
                 );
                 return;
             }
@@ -1477,7 +1474,7 @@ export default function ParchisGamePage() {
             if (partySocketRef.current) {
                 try {
                     partySocketRef.current.close(1000, "Entrando a partida");
-                } catch {}
+                } catch { }
                 partySocketRef.current = null;
             }
 
@@ -1514,14 +1511,14 @@ export default function ParchisGamePage() {
 
             const wsUrl = getWebSocketUrl(
                 `/ws/parchis/${encodeURIComponent(targetRoomId)}` +
-                    `?user_id=${encodeURIComponent(userId)}` +
-                    `&access_token=${encodeURIComponent(accessToken)}` +
-                    `&player_name=${encodeURIComponent(cleanName)}` +
-                    `&bet=${encodeURIComponent(String(betAmount))}` +
-                    `&max_players=${encodeURIComponent(String(playersCount))}` +
-                    `&team_mode=${encodeURIComponent(teamModeValue)}` +
-                    `&wallet=${encodeURIComponent(selectedWallet)}` +
-                    `&password=${encodeURIComponent(pwd)}${partyParam}`
+                `?user_id=${encodeURIComponent(userId)}` +
+                `&access_token=${encodeURIComponent(accessToken)}` +
+                `&player_name=${encodeURIComponent(cleanName)}` +
+                `&bet=${encodeURIComponent(String(betAmount))}` +
+                `&max_players=${encodeURIComponent(String(playersCount))}` +
+                `&team_mode=${encodeURIComponent(teamModeValue)}` +
+                `&wallet=${encodeURIComponent(selectedWallet)}` +
+                `&password=${encodeURIComponent(pwd)}${partyParam}`
             );
 
             try {
@@ -1535,7 +1532,7 @@ export default function ParchisGamePage() {
                         if (ws.readyState === WebSocket.OPEN) {
                             try {
                                 ws.send(JSON.stringify({ type: "PING" }));
-                            } catch {}
+                            } catch { }
                         }
                     }, 20000);
                     setConnectionMessage("Esperando estado de la partida...");
@@ -1573,7 +1570,7 @@ export default function ParchisGamePage() {
                                 setIsConnecting(false);
                                 try {
                                     ws.close(1000, "Reintentando búsqueda");
-                                } catch {}
+                                } catch { }
                                 return;
                             }
                             clearAllTimers();
@@ -1582,7 +1579,7 @@ export default function ParchisGamePage() {
                             showAlert(
                                 "Aviso",
                                 data.message ||
-                                    "No se pudo completar la acción."
+                                "No se pudo completar la acción."
                             );
                             if (!gameStateRef.current) {
                                 resetSessionState();
@@ -1675,7 +1672,7 @@ export default function ParchisGamePage() {
                                         return;
                                     }
                                 }
-                            } catch {}
+                            } catch { }
 
                             if (Date.now() <= matchSearchDeadlineRef.current) {
                                 const fallbackRoomId =
@@ -1718,7 +1715,7 @@ export default function ParchisGamePage() {
                         showAlert(
                             "Sala cerrada",
                             event.reason ||
-                                `Se cerró la sala (${event.code}).`
+                            `Se cerró la sala (${event.code}).`
                         );
                     }
 
@@ -2269,12 +2266,12 @@ export default function ParchisGamePage() {
                 const options =
                     isMyTurnNow && p.user_id === currentUid
                         ? getMovableOptionsForPiece(
-                              piece,
-                              state.dice_remaining,
-                              state.bonus_steps || 0,
-                              p.seat_index,
-                              players
-                          )
+                            piece,
+                            state.dice_remaining,
+                            state.bonus_steps || 0,
+                            p.seat_index,
+                            players
+                        )
                         : [];
 
                 drawablePieces.push({
@@ -2300,17 +2297,17 @@ export default function ParchisGamePage() {
                 item.activePiece.stage === -1
                     ? [i]
                     : drawablePieces
-                          .map((other, idx) => ({ other, idx }))
-                          .filter(
-                              ({ other }) =>
-                                  other.activePiece.stage !== -1 &&
-                                  Math.hypot(
-                                      other.pt.x - item.pt.x,
-                                      other.pt.y - item.pt.y
-                                  ) <
-                                      baseRadius * 0.65
-                          )
-                          .map(({ idx }) => idx);
+                        .map((other, idx) => ({ other, idx }))
+                        .filter(
+                            ({ other }) =>
+                                other.activePiece.stage !== -1 &&
+                                Math.hypot(
+                                    other.pt.x - item.pt.x,
+                                    other.pt.y - item.pt.y
+                                ) <
+                                baseRadius * 0.65
+                        )
+                        .map(({ idx }) => idx);
 
             const countInSpot = Math.min(2, sameSpotIndices.length);
             const indexInSpot = Math.min(1, sameSpotIndices.indexOf(i));
@@ -2638,16 +2635,16 @@ export default function ParchisGamePage() {
     const pendingPiece =
         pendingChoice !== null && myPlayer
             ? myPlayer.pieces.find((p) => p.id === pendingChoice.pieceId) ||
-              null
+            null
             : null;
     const pendingOptions = pendingPiece
         ? getMovableOptionsForPiece(
-              pendingPiece,
-              activeDiceRemaining,
-              viewState?.bonus_steps || 0,
-              myPlayer?.seat_index ?? 0,
-              activePlayers
-          )
+            pendingPiece,
+            activeDiceRemaining,
+            viewState?.bonus_steps || 0,
+            myPlayer?.seat_index ?? 0,
+            activePlayers
+        )
         : [];
 
     const bonusStepsValue = Number(viewState?.bonus_steps || 0);
@@ -2684,11 +2681,10 @@ export default function ParchisGamePage() {
             <Header />
 
             <main
-                className={`flex-1 w-full mx-auto flex flex-col ${
-                    isInGame
-                        ? "max-w-lg px-2.5 sm:px-5 py-2 sm:py-3 items-center justify-center"
-                        : "max-w-3xl px-2 sm:px-4 py-3 sm:py-5 items-center justify-center"
-                }`}
+                className={`flex-1 w-full mx-auto flex flex-col ${isInGame
+                    ? "max-w-lg px-2.5 sm:px-5 py-2 sm:py-3 items-center justify-center"
+                    : "max-w-3xl px-2 sm:px-4 py-3 sm:py-5 items-center justify-center"
+                    }`}
             >
                 {!isInGame ? (
                     <div className="w-full max-w-md mx-auto rounded-2xl border border-zinc-800 bg-zinc-950 p-3 sm:p-4 space-y-3">
@@ -2713,22 +2709,20 @@ export default function ParchisGamePage() {
                                 <button
                                     type="button"
                                     onClick={() => setSelectedWallet("play")}
-                                    className={`rounded-lg border px-2 py-2 text-xs font-bold ${
-                                        selectedWallet === "play"
-                                            ? "border-emerald-400 bg-emerald-500 text-black"
-                                            : "border-zinc-800 bg-black text-zinc-400"
-                                    }`}
+                                    className={`rounded-lg border px-2 py-2 text-xs font-bold ${selectedWallet === "play"
+                                        ? "border-emerald-400 bg-emerald-500 text-black"
+                                        : "border-zinc-800 bg-black text-zinc-400"
+                                        }`}
                                 >
                                     Jugar · {money(playBalance)}
                                 </button>
                                 <button
                                     type="button"
                                     onClick={() => setSelectedWallet("bonus")}
-                                    className={`rounded-lg border px-2 py-2 text-xs font-bold ${
-                                        selectedWallet === "bonus"
-                                            ? "border-yellow-300 bg-yellow-400 text-black"
-                                            : "border-zinc-800 bg-black text-zinc-400"
-                                    }`}
+                                    className={`rounded-lg border px-2 py-2 text-xs font-bold ${selectedWallet === "bonus"
+                                        ? "border-yellow-300 bg-yellow-400 text-black"
+                                        : "border-zinc-800 bg-black text-zinc-400"
+                                        }`}
                                 >
                                     Bono · {money(bonusBalance)}
                                 </button>
@@ -2743,11 +2737,10 @@ export default function ParchisGamePage() {
                                 <button
                                     type="button"
                                     onClick={() => setMatchMode("solo")}
-                                    className={`rounded-lg border px-2 py-2 text-xs font-bold ${
-                                        matchMode === "solo"
-                                            ? "border-emerald-400 bg-emerald-500 text-black"
-                                            : "border-zinc-800 bg-black text-zinc-400"
-                                    }`}
+                                    className={`rounded-lg border px-2 py-2 text-xs font-bold ${matchMode === "solo"
+                                        ? "border-emerald-400 bg-emerald-500 text-black"
+                                        : "border-zinc-800 bg-black text-zinc-400"
+                                        }`}
                                 >
                                     Individual
                                 </button>
@@ -2760,11 +2753,10 @@ export default function ParchisGamePage() {
                                             setPartyCode(makePartyCode());
                                         }
                                     }}
-                                    className={`rounded-lg border px-2 py-2 text-xs font-bold ${
-                                        matchMode === "duo"
-                                            ? "border-amber-300 bg-amber-400 text-black"
-                                            : "border-zinc-800 bg-black text-zinc-400"
-                                    }`}
+                                    className={`rounded-lg border px-2 py-2 text-xs font-bold ${matchMode === "duo"
+                                        ? "border-amber-300 bg-amber-400 text-black"
+                                        : "border-zinc-800 bg-black text-zinc-400"
+                                        }`}
                                 >
                                     Equipo 2v2
                                 </button>
@@ -2835,11 +2827,10 @@ export default function ParchisGamePage() {
                                             key={amt}
                                             type="button"
                                             onClick={() => setSelectedBet(amt)}
-                                            className={`rounded-lg border py-2 text-[11px] font-bold ${
-                                                selectedBet === amt
-                                                    ? "border-emerald-400 bg-emerald-500 text-black"
-                                                    : "border-zinc-800 bg-black text-zinc-400"
-                                            }`}
+                                            className={`rounded-lg border py-2 text-[11px] font-bold ${selectedBet === amt
+                                                ? "border-emerald-400 bg-emerald-500 text-black"
+                                                : "border-zinc-800 bg-black text-zinc-400"
+                                                }`}
                                         >
                                             ${amt}
                                         </button>
@@ -2862,11 +2853,10 @@ export default function ParchisGamePage() {
                                                 type="button"
                                                 disabled={disabledCnt}
                                                 onClick={() => setMaxPlayers(cnt)}
-                                                className={`rounded-lg border py-2 text-[11px] font-bold ${
-                                                    isActive
-                                                        ? "border-emerald-400 bg-emerald-500 text-black"
-                                                        : "border-zinc-800 bg-black text-zinc-400"
-                                                } disabled:opacity-35`}
+                                                className={`rounded-lg border py-2 text-[11px] font-bold ${isActive
+                                                    ? "border-emerald-400 bg-emerald-500 text-black"
+                                                    : "border-zinc-800 bg-black text-zinc-400"
+                                                    } disabled:opacity-35`}
                                             >
                                                 {cnt}
                                             </button>
@@ -2917,8 +2907,8 @@ export default function ParchisGamePage() {
                                 {busyAction || isConnecting
                                     ? "Creando sala..."
                                     : isPrivate
-                                      ? "Crear sala privada"
-                                      : "Crear sala pública"}
+                                        ? "Crear sala privada"
+                                        : "Crear sala pública"}
                             </button>
                         </div>
 
@@ -2950,8 +2940,8 @@ export default function ParchisGamePage() {
                                         const activeCode =
                                             matchMode === "duo"
                                                 ? (partyCode || joinPartyCode)
-                                                      .trim()
-                                                      .toUpperCase()
+                                                    .trim()
+                                                    .toUpperCase()
                                                 : "";
                                         return (
                                             <div
@@ -3136,16 +3126,15 @@ export default function ParchisGamePage() {
                                             const isExtraTurn =
                                                 viewState.status === "playing" &&
                                                 viewState.turn_seat ===
-                                                    ep.seat_index;
+                                                ep.seat_index;
                                             const epTeam = formatTeamBadge(ep);
                                             return (
                                                 <div
                                                     key={ep.user_id}
-                                                    className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 border ${
-                                                        isExtraTurn
-                                                            ? "bg-zinc-900 border-amber-400"
-                                                            : "bg-black/40 border-white/10"
-                                                    }`}
+                                                    className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 border ${isExtraTurn
+                                                        ? "bg-zinc-900 border-amber-400"
+                                                        : "bg-black/40 border-white/10"
+                                                        }`}
                                                 >
                                                     <span
                                                         className="w-2.5 h-2.5 rounded-full"

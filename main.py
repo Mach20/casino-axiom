@@ -2655,7 +2655,6 @@ async def snake_game_endpoint(
 PARCHIS_BETS = (0.25, 1.00, 10.00)
 PARCHIS_TRACK_LEN = 68
 PARCHIS_HOME_STRETCH_LEN = 8
-# Casillas seguras y salidas oficiales del tablero de 68 casillas
 PARCHIS_SAFE_SPOTS = {0, 5, 12, 17, 22, 29, 34, 39, 46, 51, 56, 63}
 PARCHIS_START_SPOTS = {0: 5, 1: 22, 2: 39, 3: 56}
 PARCHIS_COMMISSION_RATE = Decimal("0.06")
@@ -2729,7 +2728,7 @@ def _parchis_public_rooms() -> list[dict]:
 
 async def _parchis_broadcast(room: dict):
     pot_players = max(int(room.get("pot_players_count") or 0), len(room["players"]))
-    gross_pot = (Decimal(str(room["bet"])) * Decimal(str(pot_players))).quantize(Decimal("0.01"))   
+    gross_pot = (Decimal(str(room["bet"])) * Decimal(str(pot_players))).quantize(Decimal("0.01"))
     commission_total = (gross_pot * PARCHIS_COMMISSION_RATE).quantize(Decimal("0.01"))
     net_pot = max(Decimal("0.00"), gross_pot - commission_total).quantize(Decimal("0.01"))
 
