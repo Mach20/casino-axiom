@@ -87,7 +87,6 @@ const API_BASE =
 
 const STEP_ANIM_MS = 50;
 const DICE_VIEW_HOLD_MS = 950;
-const TURN_SECONDS = 10;
 
 const PARCHIS_BETS: Record<ParchisBet, number> = {
     "0.25": 0.25,
@@ -644,7 +643,6 @@ function StarPlayerHud({
     onSelectDie,
     rolling,
     isActiveTurn,
-    secondsLeft,
     canRoll,
     isMovingPiece,
     onRoll,
@@ -659,7 +657,6 @@ function StarPlayerHud({
     onSelectDie?: (dieVal: number) => void;
     rolling: boolean;
     isActiveTurn: boolean;
-    secondsLeft: number;
     canRoll: boolean;
     isMovingPiece: boolean;
     onRoll: () => void;
@@ -718,18 +715,6 @@ function StarPlayerHud({
         </div>
     );
 
-    const turnBadge = isActiveTurn ? (
-        <span
-            className={`px-2 py-0.5 rounded-full text-[10px] font-black tabular-nums border ${
-                secondsLeft <= 3
-                    ? "bg-red-500/20 border-red-400 text-red-300 animate-pulse"
-                    : "bg-zinc-900/90 border-amber-400/70 text-amber-300"
-            }`}
-        >
-            {Math.max(0, secondsLeft)}s
-        </span>
-    ) : null;
-
     const diceTray = (
         <div
             style={{
@@ -769,7 +754,6 @@ function StarPlayerHud({
         return (
             <div className="w-full flex flex-col items-end pr-1">
                 <div className="flex items-center gap-2">
-                    {turnBadge}
                     {diceTray}
                     {colorBadge}
                 </div>
@@ -798,7 +782,6 @@ function StarPlayerHud({
                         {teamLabel}
                     </span>
                 )}
-                {turnBadge}
                 {canRollNow && !rolling && (
                     <span className="text-[10px] font-black uppercase bg-emerald-500 text-black px-2 py-0.5 rounded-full animate-pulse">
                         Toca un dado
@@ -849,7 +832,6 @@ export default function ParchisGamePage() {
     const [displayedState, setDisplayedState] = useState<ParchisState | null>(null);
     const [lastPairShown, setLastPairShown] = useState<[number, number]>([4, 6]);
     const [selectedDieValue, setSelectedDieValue] = useState<number | null>(null);
-    const [turnSecondsLeft, setTurnSecondsLeft] = useState<number>(TURN_SECONDS);
     const [pendingChoice, setPendingChoice] = useState<{
         pieceId: number;
         xPct: number;
@@ -874,8 +856,6 @@ export default function ParchisGamePage() {
     const socketRef = useRef<WebSocket | null>(null);
     const partySocketRef = useRef<WebSocket | null>(null);
     const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    const turnDeadlineRef = useRef<number>(0);
-    const turnTimeoutSentKeyRef = useRef<string>("");
     const closingByUserRef = useRef(false);
     const animTickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const turnHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -913,9 +893,6 @@ export default function ParchisGamePage() {
             turnHoldTimerRef.current = null;
         }
         activeAnimsRef.current = {};
-        turnDeadlineRef.current = 0;
-        turnTimeoutSentKeyRef.current = "";
-        setTurnSecondsLeft(TURN_SECONDS);
         setIsMovingPiece(false);
         setPendingChoice(null);
         setSelectedDieValue(null);
@@ -1240,18 +1217,13 @@ export default function ParchisGamePage() {
         roomId,
     ]);
 
-    const passTurnByTimeout = useCallback(() => {
+    const passTurnWhenNoMoves = useCallback(() => {
         const curState = gameStateRef.current;
         const currentUid = userIdRef.current;
         if (!curState || !currentUid || curState.status !== "playing") return;
 
         const me = curState.players?.find((p) => p.user_id === currentUid);
         if (!me || curState.turn_seat !== me.seat_index) return;
-
-        const remKey = JSON.stringify(curState.dice_remaining || []);
-        const turnKey = `${curState.turn_seat}:${curState.must_move ? 1 : 0}:${curState.bonus_steps || 0}:${remKey}`;
-        if (turnTimeoutSentKeyRef.current === turnKey) return;
-        turnTimeoutSentKeyRef.current = turnKey;
 
         setRollingDice(false);
         setPendingChoice(null);
@@ -1263,7 +1235,7 @@ export default function ParchisGamePage() {
                 ws.send(
                     JSON.stringify({
                         type: "PASS_TURN",
-                        reason: "timeout",
+                        reason: "no_moves",
                     })
                 );
             } catch {}
@@ -1286,7 +1258,7 @@ export default function ParchisGamePage() {
             dice_remaining: [],
             bonus_steps: 0,
             penalty_pending: false,
-            last_event: `${getCleanPlayerLabel(me, "Jugador")} perdió el turno por tiempo (10s).`,
+            last_event: `${getCleanPlayerLabel(me, "Jugador")} no tiene movimientos disponibles.`,
         };
         gameStateRef.current = fallbackState;
         setGameState(fallbackState);
@@ -1361,20 +1333,6 @@ export default function ParchisGamePage() {
                 ]);
             }
 
-            const turnChanged =
-                !prevState ||
-                prevState.turn_seat !== nextState.turn_seat ||
-                prevState.status !== nextState.status;
-
-            if (turnChanged && nextState.status === "playing") {
-                turnDeadlineRef.current = Date.now() + TURN_SECONDS * 1000;
-                turnTimeoutSentKeyRef.current = "";
-                setTurnSecondsLeft(TURN_SECONDS);
-            } else if (nextState.status !== "playing") {
-                turnDeadlineRef.current = 0;
-                setTurnSecondsLeft(TURN_SECONDS);
-            }
-
             gameStateRef.current = nextState;
             setGameState(nextState);
 
@@ -1410,30 +1368,6 @@ export default function ParchisGamePage() {
         },
         [queuePieceStepAnimation, resetSessionState, showAlert]
     );
-
-    const activeStateForTimer = displayedState || gameState;
-    const timerStatus = activeStateForTimer?.status || "";
-    const timerTurnSeat = activeStateForTimer?.turn_seat ?? -1;
-
-    useEffect(() => {
-        if (!isInGame || timerStatus !== "playing") return;
-
-        if (!turnDeadlineRef.current) {
-            turnDeadlineRef.current = Date.now() + TURN_SECONDS * 1000;
-        }
-
-        const interval = setInterval(() => {
-            const remainingMs = turnDeadlineRef.current - Date.now();
-            const secs = Math.max(0, Math.ceil(remainingMs / 1000));
-            setTurnSecondsLeft(secs);
-
-            if (remainingMs <= 0) {
-                passTurnByTimeout();
-            }
-        }, 250);
-
-        return () => clearInterval(interval);
-    }, [isInGame, timerStatus, timerTurnSeat, passTurnByTimeout]);
 
     const connectToRoom = useCallback(
         (
@@ -2333,7 +2267,7 @@ export default function ParchisGamePage() {
         );
 
         if (!hasAnyValidMove) {
-            passTurnByTimeout();
+            passTurnWhenNoMoves();
             return;
         }
 
@@ -2930,11 +2864,6 @@ export default function ParchisGamePage() {
                                                             {epTeam}
                                                         </span>
                                                     )}
-                                                    {isExtraTurn && (
-                                                        <span className="text-[10px] font-black text-amber-300 tabular-nums">
-                                                            {turnSecondsLeft}s
-                                                        </span>
-                                                    )}
                                                 </div>
                                             );
                                         })}
@@ -2952,7 +2881,6 @@ export default function ParchisGamePage() {
                                     selectedDieValue={null}
                                     rolling={rollingDice && topIsTurn}
                                     isActiveTurn={topIsTurn}
-                                    secondsLeft={turnSecondsLeft}
                                     canRoll={false}
                                     isMovingPiece={isMovingPiece}
                                     onRoll={sendRollDice}
@@ -3023,7 +2951,6 @@ export default function ParchisGamePage() {
                                     }
                                     rolling={rollingDice && bottomIsTurn}
                                     isActiveTurn={bottomIsTurn}
-                                    secondsLeft={turnSecondsLeft}
                                     canRoll={
                                         bottomPlayer !== null &&
                                         bottomPlayer.user_id === userId &&
